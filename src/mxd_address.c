@@ -99,40 +99,34 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         zeros++;
     }
 
-    // Prepare conversion buffer
-    size_t size = data_len * 2;
-    uint8_t *source = calloc(size, sizeof(uint8_t));
-    uint8_t *digits = calloc(size, sizeof(uint8_t));
-    if (!source || !digits) {
-        free(source);
-        free(digits);
-        return -1;
-    }
-
-    // Copy input data
-    memcpy(source, data, data_len);
-
     // Convert to base58 digits
-    size_t digitslen = 0;
-    for (size_t i = 0; i < data_len; i++) {
-        unsigned int carry = source[i];
-        // Convert existing digits
+    uint8_t digits[512] = {0}; // Large enough for any reasonable input
+    size_t digitslen = 1;
+
+    // Process each input byte
+    for (size_t i = zeros; i < data_len; i++) {
+        // Multiply existing result by 256 and add new digit
+        uint32_t carry = data[i];
         for (size_t j = 0; j < digitslen; j++) {
-            carry += (unsigned int)digits[j] * 256;
+            carry += (uint32_t)digits[j] * 256;
             digits[j] = carry % 58;
             carry /= 58;
         }
-        // Add new digits
-        while (carry > 0 && digitslen < size) {
+
+        // Add remaining carry to result
+        while (carry > 0) {
             digits[digitslen++] = carry % 58;
             carry /= 58;
         }
     }
 
+    // Handle special case for zero-value input
+    if (data_len == zeros) {
+        digitslen = 0;
+    }
+
     // Check output buffer size
     if (zeros + digitslen + 1 > max_length) {
-        free(source);
-        free(digits);
         return -1;
     }
 
@@ -144,9 +138,6 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         output[zeros + i] = BASE58_ALPHABET[digits[digitslen - 1 - i]];
     }
     output[zeros + digitslen] = '\0';
-
-    free(source);
-    free(digits);
 
     return 0;
 }
