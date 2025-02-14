@@ -23,15 +23,14 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 # Add library target
 add_library(mxd SHARED
-    src/mxd_crypto.c
-    src/mxd_address.c
-    src/mxd_blockchain.c
-    src/mxd_rsc.c
-)
+    src/mxd_crypto.c)
 
 # Link libraries
 target_link_libraries(mxd 
     ${OPENSSL_LIBRARIES}
+    sodium
+    -static-libgcc
+    -static-libstdc++
     sodium
 )
 

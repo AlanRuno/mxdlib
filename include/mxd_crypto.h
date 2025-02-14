@@ -9,13 +9,13 @@ extern "C" {
 #include <stddef.h>
 
 // SHA-512 hashing
-void mxd_sha512(const uint8_t *input, size_t length, uint8_t output[64]);
+int mxd_sha512(const uint8_t *input, size_t length, uint8_t output[64]);
 
 // RIPEMD-160 hashing
-void mxd_ripemd160(const uint8_t *input, size_t length, uint8_t output[20]);
+int mxd_ripemd160(const uint8_t *input, size_t length, uint8_t output[20]);
 
 // Argon2 key derivation
-void mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output, size_t output_length);
+int mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output, size_t output_length);
 
 // Dilithium5 functions
 int mxd_dilithium_keygen(uint8_t *public_key, uint8_t *secret_key);

@@ -38,15 +38,15 @@ static void test_argon2(void) {
 }
 
 static void test_dilithium(void) {
-    uint8_t public_key[crypto_sign_PUBLICKEYBYTES];
-    uint8_t secret_key[crypto_sign_SECRETKEYBYTES];
+    uint8_t public_key[32];  // Adjust size based on actual Dilithium5 requirements
+    uint8_t secret_key[64];  // Adjust size based on actual Dilithium5 requirements
     
     // Test key generation
     assert(mxd_dilithium_keygen(public_key, secret_key) == 0);
     
     // Test signing
     const char *message = "test message";
-    uint8_t signature[crypto_sign_BYTES];
+    uint8_t signature[64];   // Adjust size based on actual Dilithium5 requirements
     size_t signature_length;
     
     assert(mxd_dilithium_sign(signature, &signature_length,

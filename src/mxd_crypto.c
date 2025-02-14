@@ -1,34 +1,54 @@
 #include "../include/mxd_crypto.h"
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 #include <openssl/ripemd.h>
 #include <sodium.h>
+#include <sodium/crypto_sign.h>
 #include <string.h>
 
-// SHA-512 hashing implementation
-void mxd_sha512(const uint8_t *input, size_t length, uint8_t output[64]) {
-    SHA512_CTX ctx;
-    SHA512_Init(&ctx);
-    SHA512_Update(&ctx, input, length);
-    SHA512_Final(output, &ctx);
+// SHA-512 hashing implementation using OpenSSL 3.0 EVP interface
+int mxd_sha512(const uint8_t *input, size_t length, uint8_t output[64]) {
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) return -1;
+
+    if (!EVP_DigestInit_ex(ctx, EVP_sha512(), NULL) ||
+        !EVP_DigestUpdate(ctx, input, length) ||
+        !EVP_DigestFinal_ex(ctx, output, NULL)) {
+        EVP_MD_CTX_free(ctx);
+        return -1;
+    }
+
+    EVP_MD_CTX_free(ctx);
+    return 0;
 }
 
-// RIPEMD-160 hashing implementation
-void mxd_ripemd160(const uint8_t *input, size_t length, uint8_t output[20]) {
-    RIPEMD160_CTX ctx;
-    RIPEMD160_Init(&ctx);
-    RIPEMD160_Update(&ctx, input, length);
-    RIPEMD160_Final(output, &ctx);
+// RIPEMD-160 hashing implementation using OpenSSL 3.0 EVP interface
+int mxd_ripemd160(const uint8_t *input, size_t length, uint8_t output[20]) {
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (!ctx) return -1;
+
+    if (!EVP_DigestInit_ex(ctx, EVP_ripemd160(), NULL) ||
+        !EVP_DigestUpdate(ctx, input, length) ||
+        !EVP_DigestFinal_ex(ctx, output, NULL)) {
+        EVP_MD_CTX_free(ctx);
+        return -1;
+    }
+
+    EVP_MD_CTX_free(ctx);
+    return 0;
 }
 
 // Argon2 key derivation implementation
-void mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output, size_t output_length) {
+int mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output, size_t output_length) {
     // Using Argon2id variant as recommended for highest security
-    crypto_pwhash(output, output_length,
-                  input, strlen(input),
-                  salt,
-                  crypto_pwhash_OPSLIMIT_SENSITIVE, // High security parameters
-                  crypto_pwhash_MEMLIMIT_SENSITIVE,
-                  crypto_pwhash_ALG_ARGON2ID13);
+    if (crypto_pwhash(output, output_length,
+                      input, strlen(input),
+                      salt,
+                      crypto_pwhash_OPSLIMIT_SENSITIVE,
+                      crypto_pwhash_MEMLIMIT_SENSITIVE,
+                      crypto_pwhash_ALG_ARGON2ID13) != 0) {
+        return -1; // Memory allocation or other error
+    }
+    return 0;
 }
 
 // Dilithium5 key generation
