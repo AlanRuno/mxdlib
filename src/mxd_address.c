@@ -109,33 +109,44 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         return 0;
     }
 
+    // For all-zero input, just output the appropriate number of '1's
+    if (zeros == data_len) {
+        if (zeros + 1 > max_length) {
+            return -1;
+        }
+        memset(output, '1', zeros);
+        output[zeros] = '\0';
+        return 0;
+    }
+
     // Initialize result array with zeros
     uint8_t b58[512] = {0};
-    size_t b58_len = 0;
+    size_t b58_len = 1;  // Start with length 1 to handle zero properly
 
     // Convert from base256 to base58
     for (size_t i = zeros; i < data_len; i++) {
         uint32_t carry = data[i];
-        size_t j;
 
         // Apply base conversion for each byte
-        for (j = 0; j < b58_len; j++) {
+        for (size_t j = 0; j < b58_len; j++) {
             carry += (uint32_t)b58[j] * 256;
             b58[j] = carry % 58;
             carry /= 58;
         }
 
         // Add new digits
-        while (carry > 0 && b58_len < sizeof(b58)) {
+        while (carry > 0) {
             b58[b58_len++] = carry % 58;
             carry /= 58;
         }
     }
 
-    // If no non-zero bytes found, b58_len will be 0
-    if (b58_len == 0) {
-        b58_len = 1;  // Ensure we have at least one digit for non-zero inputs
+    // Skip leading zeros in the result
+    size_t i = b58_len;
+    while (i > 0 && b58[i - 1] == 0) {
+        i--;
     }
+    b58_len = i || zeros ? i : 1;  // Keep at least one digit
 
     // Check output buffer size
     if (zeros + b58_len + 1 > max_length) {
