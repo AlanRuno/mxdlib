@@ -140,9 +140,6 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
 
     free(buffer);
     return 0;
-
-    free(buffer);
-    return 0;
 }
 
 int mxd_generate_address(const uint8_t public_key[256],
@@ -151,13 +148,19 @@ int mxd_generate_address(const uint8_t public_key[256],
         return -1;
     }
 
-    uint8_t sha_output[64];
-    uint8_t ripemd_output[20];
-    uint8_t address_bytes[25]; // Version(1) + RIPEMD160(20) + Checksum(4)
+    uint8_t sha_output[64] = {0};
+    uint8_t ripemd_output[20] = {0};
+    uint8_t address_bytes[25] = {0}; // Version(1) + RIPEMD160(20) + Checksum(4)
 
     // Double SHA-512 on public key
-    if (mxd_sha512(public_key, 256, sha_output) != 0 ||
-        mxd_sha512(sha_output, 64, sha_output) != 0) {
+    if (mxd_sha512(public_key, 256, sha_output) != 0) {
+        return -1;
+    }
+
+    // Second SHA-512
+    uint8_t temp_sha[64];
+    memcpy(temp_sha, sha_output, 64);
+    if (mxd_sha512(temp_sha, 64, sha_output) != 0) {
         return -1;
     }
 
@@ -173,8 +176,12 @@ int mxd_generate_address(const uint8_t public_key[256],
     memcpy(address_bytes + 1, ripemd_output, 20);
 
     // Calculate checksum (double SHA-512 of version + hash)
-    if (mxd_sha512(address_bytes, 21, sha_output) != 0 ||
-        mxd_sha512(sha_output, 64, sha_output) != 0) {
+    if (mxd_sha512(address_bytes, 21, sha_output) != 0) {
+        return -1;
+    }
+
+    memcpy(temp_sha, sha_output, 64);
+    if (mxd_sha512(temp_sha, 64, sha_output) != 0) {
         return -1;
     }
 
