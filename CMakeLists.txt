@@ -12,18 +12,19 @@ include_directories(${OPENSSL_INCLUDE_DIR})
 include_directories(/usr/local/include)
 link_directories(/usr/local/lib)
 
-# Create project structure
+# Set output directories
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-# Source files
+# Create project structure
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 # Add library target
 add_library(mxd SHARED
-    src/mxd_crypto.c)
+    src/mxd_crypto.c
+    src/mxd_address.c)
 
 # Link libraries
 target_link_libraries(mxd 
