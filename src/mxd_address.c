@@ -111,46 +111,45 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
 
     // Initialize result array with zeros
     uint8_t b58[512] = {0};
-    size_t b58_len = 1;
+    size_t b58_len = 0;
 
     // Convert from base256 to base58
     for (size_t i = zeros; i < data_len; i++) {
         uint32_t carry = data[i];
-        
+        size_t j;
+
         // Apply base conversion for each byte
-        for (size_t j = 0; j < b58_len; j++) {
+        for (j = 0; j < b58_len; j++) {
             carry += (uint32_t)b58[j] * 256;
             b58[j] = carry % 58;
             carry /= 58;
         }
-        
+
         // Add new digits
-        while (carry > 0) {
+        while (carry > 0 && b58_len < sizeof(b58)) {
             b58[b58_len++] = carry % 58;
             carry /= 58;
         }
     }
 
-    // Skip leading zeros in the converted result
-    size_t leading_zeros = 0;
-    while (leading_zeros < b58_len && b58[b58_len - 1 - leading_zeros] == 0) {
-        leading_zeros++;
+    // If no non-zero bytes found, b58_len will be 0
+    if (b58_len == 0) {
+        b58_len = 1;  // Ensure we have at least one digit for non-zero inputs
     }
 
     // Check output buffer size
-    size_t actual_len = zeros + (b58_len - leading_zeros);
-    if (actual_len + 1 > max_length) {
+    if (zeros + b58_len + 1 > max_length) {
         return -1;
     }
 
     // Write leading '1's for zeros
     memset(output, '1', zeros);
 
-    // Convert digits to Base58 alphabet
-    for (size_t i = leading_zeros; i < b58_len; i++) {
-        output[zeros + b58_len - 1 - i] = BASE58_ALPHABET[b58[i]];
+    // Convert digits to Base58 alphabet in reverse order
+    for (size_t i = 0; i < b58_len; i++) {
+        output[zeros + i] = BASE58_ALPHABET[b58[b58_len - 1 - i]];
     }
-    output[actual_len] = '\0';
+    output[zeros + b58_len] = '\0';
 
     return 0;
 }
