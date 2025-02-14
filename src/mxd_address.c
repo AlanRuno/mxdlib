@@ -99,39 +99,59 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         zeros++;
     }
 
-    // Convert to base58 digits
-    uint8_t digits[512] = {0}; // Large enough for any reasonable input
-    size_t digitslen = 1;
+    // Prepare conversion buffer
+    size_t size = data_len * 2;
+    uint8_t *source = calloc(size, sizeof(uint8_t));
+    uint8_t *digits = calloc(size, sizeof(uint8_t));
+    if (!source || !digits) {
+        free(source);
+        free(digits);
+        return -1;
+    }
 
-    for (size_t i = zeros; i < data_len; i++) {
-        // Multiply existing digits by 256 and add new digit
-        unsigned int carry = data[i];
+    // Copy input data
+    memcpy(source + size - data_len, data, data_len);
+
+    // Convert to base58 digits
+    size_t digitslen = 0;
+    for (size_t i = size - data_len; i < size; i++) {
+        unsigned int carry = source[i];
         for (size_t j = 0; j < digitslen; j++) {
             carry += (unsigned int)digits[j] * 256;
             digits[j] = carry % 58;
             carry /= 58;
         }
-        
-        // Add new digits
         while (carry > 0) {
             digits[digitslen++] = carry % 58;
             carry /= 58;
         }
     }
 
+    // Skip leading zeros in digits
+    size_t first_nonzero = 0;
+    while (first_nonzero < digitslen && digits[first_nonzero] == 0) {
+        first_nonzero++;
+    }
+
     // Check output buffer size
-    if (zeros + digitslen + 1 > max_length) {
+    size_t actual_len = zeros + (digitslen - first_nonzero);
+    if (actual_len + 1 > max_length) {
+        free(source);
+        free(digits);
         return -1;
     }
 
     // Write leading '1's for zeros
     memset(output, '1', zeros);
 
-    // Convert digits to Base58 alphabet in reverse order
-    for (size_t i = 0; i < digitslen; i++) {
-        output[zeros + i] = BASE58_ALPHABET[digits[digitslen - 1 - i]];
+    // Convert digits to Base58 alphabet
+    for (size_t i = first_nonzero; i < digitslen; i++) {
+        output[zeros + i - first_nonzero] = BASE58_ALPHABET[digits[digitslen - 1 - (i - first_nonzero)]];
     }
-    output[zeros + digitslen] = '\0';
+    output[actual_len] = '\0';
+
+    free(source);
+    free(digits);
 
     return 0;
 }
@@ -146,12 +166,11 @@ int mxd_generate_address(const uint8_t public_key[256],
     uint8_t ripemd_output[20] = {0};
     uint8_t address_bytes[25] = {0}; // Version(1) + RIPEMD160(20) + Checksum(4)
 
-    // First SHA-512 on public key
+    // Double SHA-512 on public key
     if (mxd_sha512(public_key, 256, sha_output) != 0) {
         return -1;
     }
 
-    // Second SHA-512
     uint8_t temp_sha[64];
     memcpy(temp_sha, sha_output, 64);
     if (mxd_sha512(temp_sha, 64, sha_output) != 0) {
@@ -170,7 +189,10 @@ int mxd_generate_address(const uint8_t public_key[256],
     memcpy(address_bytes + 1, ripemd_output, 20);
 
     // Calculate checksum (double SHA-512 of version + hash)
-    if (mxd_sha512(address_bytes, 21, sha_output) != 0) {
+    uint8_t checksum_input[21];
+    memcpy(checksum_input, address_bytes, 21);
+    
+    if (mxd_sha512(checksum_input, 21, sha_output) != 0) {
         return -1;
     }
 
@@ -183,17 +205,7 @@ int mxd_generate_address(const uint8_t public_key[256],
     memcpy(address_bytes + 21, sha_output, 4);
 
     // Encode in Base58Check
-    int result = base58_encode(address_bytes, 25, address, max_length);
-    if (result != 0) {
-        return -1;
-    }
-
-    // Verify the address is valid
-    if (mxd_validate_address(address) != 0) {
-        return -1;
-    }
-
-    return 0;
+    return base58_encode(address_bytes, 25, address, max_length);
 }
 
 static int base58_decode(const char *input, uint8_t *output, size_t *output_len) {
