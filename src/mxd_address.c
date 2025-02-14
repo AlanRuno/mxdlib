@@ -107,18 +107,28 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
     // Convert to base 58
     size_t buf_len = 0;
     for (size_t i = zeros; i < data_len; i++) {
-        unsigned int carry = data[i];
+        uint32_t carry = data[i];
+        size_t j;
+        
         // Apply base conversion to all existing digits
-        for (size_t j = 0; j < buf_len; j++) {
-            carry += (unsigned int)buf[j] * 256;
+        for (j = 0; j < buf_len; j++) {
+            carry += (uint32_t)buf[j] * 256;
             buf[j] = carry % 58;
             carry /= 58;
         }
+        
         // Add new digits
         while (carry > 0 && buf_len < buf_size) {
             buf[buf_len++] = carry % 58;
             carry /= 58;
         }
+    }
+    
+    // Reverse the buffer for correct byte order
+    for (size_t i = 0; i < buf_len / 2; i++) {
+        uint8_t temp = buf[i];
+        buf[i] = buf[buf_len - 1 - i];
+        buf[buf_len - 1 - i] = temp;
     }
 
     // Check output buffer size
@@ -252,14 +262,10 @@ static int base58_decode(const char *input, uint8_t *output, size_t *output_len)
 
     // Write output
     memset(output, 0, zeros);
-    for (size_t i = 0; i < length; i++) {
-        output[zeros + i] = buffer[length - 1 - i];
-    }
+    memcpy(output + zeros, buffer, length);
     *output_len = zeros + length;
 
     free(buffer);
-    return 0;
-
     return 0;
 }
 
