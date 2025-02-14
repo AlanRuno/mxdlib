@@ -15,9 +15,7 @@ int mxd_generate_passphrase(char *output, size_t max_length) {
     }
 
     uint8_t entropy[16];
-    if (randombytes_buf(entropy, sizeof(entropy)) != 0) {
-        return -1;
-    }
+    randombytes_buf(entropy, sizeof(entropy));
 
     // Generate 12 random words
     size_t offset = 0;
