@@ -141,7 +141,7 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
     free(buffer);
     return 0;
 
-    free(digits);
+    free(buffer);
     return 0;
 }
 
