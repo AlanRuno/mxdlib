@@ -111,54 +111,50 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
 
     // Initialize result array with zeros
     uint8_t b58[512] = {0};
-    size_t b58_len = 0;
-
-    // Handle special case for all zeros
-    if (zeros == data_len) {
-        if (zeros + 1 > max_length) {
-            return -1;
-        }
-        memset(output, '1', zeros);
-        output[zeros] = '\0';
-        return 0;
-    }
+    size_t b58_len = 1;  // Start with length 1 to handle zero properly
 
     // Convert from base256 to base58
     for (size_t i = zeros; i < data_len; i++) {
         uint32_t carry = data[i];
+        size_t j;
 
         // Apply base conversion for each byte
-        for (size_t j = 0; j < b58_len; j++) {
+        for (j = 0; j < b58_len; j++) {
             carry += (uint32_t)b58[j] * 256;
             b58[j] = carry % 58;
             carry /= 58;
         }
 
         // Add new digits
-        while (carry > 0) {
+        while (carry > 0 && b58_len < sizeof(b58)) {
             b58[b58_len++] = carry % 58;
             carry /= 58;
         }
     }
 
-    // Ensure at least one digit for non-zero inputs
-    if (b58_len == 0 && zeros < data_len) {
-        b58_len = 1;
+    // Handle special case for all zeros
+    if (zeros == data_len) {
+        b58_len = 0;  // Reset length for all-zero input
     }
 
-    // Check output buffer size
-    if (zeros + b58_len + 1 > max_length) {
+    // Calculate output length
+    size_t output_len = zeros + (b58_len > 0 ? b58_len : 1);
+    if (output_len + 1 > max_length) {
         return -1;
     }
 
     // Write leading '1's for zeros
     memset(output, '1', zeros);
 
-    // Convert digits to Base58 alphabet in reverse order
-    for (size_t i = 0; i < b58_len; i++) {
-        output[zeros + i] = BASE58_ALPHABET[b58[b58_len - 1 - i]];
+    // Write remaining digits
+    if (b58_len > 0) {
+        for (size_t i = 0; i < b58_len; i++) {
+            output[zeros + i] = BASE58_ALPHABET[b58[b58_len - 1 - i]];
+        }
+    } else {
+        // For all-zero input, we've already written all '1's
     }
-    output[zeros + b58_len] = '\0';
+    output[output_len] = '\0';
 
     return 0;
 }
