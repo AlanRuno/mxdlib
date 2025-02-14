@@ -129,7 +129,7 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         j++;
     }
 
-    // Check output buffer size
+    // Calculate output length
     size_t out_len = zeros + (buf_size - j);
     if (out_len + 1 > max_length) {
         free(buf);
@@ -140,10 +140,13 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
     memset(output, '1', zeros);
 
     // Convert to actual Base58 characters
-    for (size_t i = 0; i < buf_size - j; i++) {
-        output[zeros + i] = BASE58_ALPHABET[buf[j + i]];
+    size_t k = 0;
+    while (j < buf_size) {
+        output[zeros + k] = BASE58_ALPHABET[buf[j]];
+        k++;
+        j++;
     }
-    output[out_len] = '\0';
+    output[zeros + k] = '\0';
 
     free(buf);
 
