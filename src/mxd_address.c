@@ -99,55 +99,44 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         zeros++;
     }
 
-    // Prepare work buffer (big enough for the worst case)
-    size_t work_size = data_len * 2;
-    uint8_t *work = calloc(work_size, sizeof(uint8_t));
-    if (!work) return -1;
+    // Prepare conversion buffer
+    size_t buf_size = data_len * 2;
+    uint8_t *buf = calloc(buf_size, sizeof(uint8_t));
+    if (!buf) return -1;
 
-    // Copy input to work buffer, leaving room at the start
-    memcpy(work + work_size - data_len, data, data_len);
-    size_t work_len = data_len;
-    size_t work_pos = work_size - work_len;
-
-    // Convert to base58 string
-    size_t out_pos = zeros;
-    size_t size = 0;
-
-    // Process all bytes
-    while (work_len > 0) {
-        uint32_t carry = 0;
-        size_t i;
-
-        // Convert each byte from base 256 to base 58
-        for (i = work_pos; i < work_size; i++) {
-            carry = carry * 256 + work[i];
-            work[i] = carry % 58;
+    // Convert to base 58
+    size_t buf_len = 0;
+    for (size_t i = zeros; i < data_len; i++) {
+        unsigned int carry = data[i];
+        // Apply base conversion to all existing digits
+        for (size_t j = 0; j < buf_len; j++) {
+            carry += (unsigned int)buf[j] * 256;
+            buf[j] = carry % 58;
             carry /= 58;
         }
-
-        // Remove leading zeros from work buffer
-        while (work_len > 0 && work[work_pos] == 0) {
-            work_pos++;
-            work_len--;
+        // Add new digits
+        while (carry > 0 && buf_len < buf_size) {
+            buf[buf_len++] = carry % 58;
+            carry /= 58;
         }
     }
 
     // Check output buffer size
-    if (zeros + work_len + 1 > max_length) {
-        free(work);
+    if (zeros + buf_len + 1 > max_length) {
+        free(buf);
         return -1;
     }
 
-    // Add leading '1's for zeros
+    // Write leading '1's for zeros
     memset(output, '1', zeros);
 
-    // Convert to actual Base58 characters
-    for (size_t i = 0; i < work_len; i++) {
-        output[zeros + i] = BASE58_ALPHABET[work[work_pos + i]];
+    // Write base58 digits in reverse order
+    for (size_t i = 0; i < buf_len; i++) {
+        output[zeros + i] = BASE58_ALPHABET[buf[buf_len - 1 - i]];
     }
-    output[zeros + work_len] = '\0';
+    output[zeros + buf_len] = '\0';
 
-    free(work);
+    free(buf);
     return 0;
 }
 
