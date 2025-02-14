@@ -108,11 +108,16 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
     size_t length = 0;
     for (size_t i = zeros; i < data_len; i++) {
         uint32_t carry = data[i];
-        for (size_t j = 0; j < length; j++) {
-            carry += (uint32_t)buffer[j] << 8;
+        size_t j;
+        
+        // Apply base conversion for each byte
+        for (j = 0; j < length; j++) {
+            carry += (uint32_t)buffer[j] * 256;
             buffer[j] = carry % 58;
             carry /= 58;
         }
+        
+        // Process remaining carry
         while (carry > 0 && length < size) {
             buffer[length++] = carry % 58;
             carry /= 58;
@@ -223,16 +228,27 @@ static int base58_decode(const char *input, uint8_t *output, size_t *output_len)
         }
 
         uint32_t value = pos - BASE58_ALPHABET;
-        for (size_t j = 0; j < length; j++) {
-            value += buffer[j] * 58;
+        size_t j;
+        
+        // Apply base conversion for each digit
+        for (j = 0; j < length; j++) {
+            value += (uint32_t)buffer[j] * 58;
             buffer[j] = value & 0xFF;
             value >>= 8;
         }
-
+        
+        // Process remaining value
         while (value > 0 && length < size) {
             buffer[length++] = value & 0xFF;
             value >>= 8;
         }
+    }
+
+    // Reverse the output bytes to correct order
+    for (size_t i = 0; i < length / 2; i++) {
+        uint8_t temp = buffer[i];
+        buffer[i] = buffer[length - 1 - i];
+        buffer[length - 1 - i] = temp;
     }
 
     // Check output buffer size
