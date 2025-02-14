@@ -110,32 +110,27 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
     }
 
     // Copy input data
-    memcpy(source + size - data_len, data, data_len);
+    memcpy(source, data, data_len);
 
     // Convert to base58 digits
     size_t digitslen = 0;
-    for (size_t i = size - data_len; i < size; i++) {
+    for (size_t i = 0; i < data_len; i++) {
         unsigned int carry = source[i];
+        // Convert existing digits
         for (size_t j = 0; j < digitslen; j++) {
             carry += (unsigned int)digits[j] * 256;
             digits[j] = carry % 58;
             carry /= 58;
         }
-        while (carry > 0) {
+        // Add new digits
+        while (carry > 0 && digitslen < size) {
             digits[digitslen++] = carry % 58;
             carry /= 58;
         }
     }
 
-    // Skip leading zeros in digits
-    size_t first_nonzero = 0;
-    while (first_nonzero < digitslen && digits[first_nonzero] == 0) {
-        first_nonzero++;
-    }
-
     // Check output buffer size
-    size_t actual_len = zeros + (digitslen - first_nonzero);
-    if (actual_len + 1 > max_length) {
+    if (zeros + digitslen + 1 > max_length) {
         free(source);
         free(digits);
         return -1;
@@ -144,11 +139,11 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
     // Write leading '1's for zeros
     memset(output, '1', zeros);
 
-    // Convert digits to Base58 alphabet
-    for (size_t i = first_nonzero; i < digitslen; i++) {
-        output[zeros + i - first_nonzero] = BASE58_ALPHABET[digits[digitslen - 1 - (i - first_nonzero)]];
+    // Convert digits to Base58 alphabet in reverse order
+    for (size_t i = 0; i < digitslen; i++) {
+        output[zeros + i] = BASE58_ALPHABET[digits[digitslen - 1 - i]];
     }
-    output[actual_len] = '\0';
+    output[zeros + digitslen] = '\0';
 
     free(source);
     free(digits);
