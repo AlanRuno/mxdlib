@@ -5,6 +5,18 @@
 #include <sodium/crypto_sign.h>
 #include <string.h>
 
+// Initialize libsodium if not already initialized
+static int ensure_sodium_init(void) {
+    static int sodium_initialized = 0;
+    if (!sodium_initialized) {
+        if (sodium_init() < 0) {
+            return -1;
+        }
+        sodium_initialized = 1;
+    }
+    return 0;
+}
+
 // SHA-512 hashing implementation using OpenSSL 3.0 EVP interface
 int mxd_sha512(const uint8_t *input, size_t length, uint8_t output[64]) {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
@@ -39,6 +51,10 @@ int mxd_ripemd160(const uint8_t *input, size_t length, uint8_t output[20]) {
 
 // Argon2 key derivation implementation
 int mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output, size_t output_length) {
+    if (ensure_sodium_init() < 0) {
+        return -1;
+    }
+
     // Using Argon2id variant as recommended for highest security
     if (crypto_pwhash(output, output_length,
                       input, strlen(input),
@@ -53,8 +69,7 @@ int mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output, size_t o
 
 // Dilithium5 key generation
 int mxd_dilithium_keygen(uint8_t *public_key, uint8_t *secret_key) {
-    // Initialize sodium if not already initialized
-    if (sodium_init() < 0) {
+    if (ensure_sodium_init() < 0) {
         return -1;
     }
     
