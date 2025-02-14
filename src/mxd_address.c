@@ -89,39 +89,59 @@ int mxd_generate_keypair(const uint8_t property_key[64],
 static const char BASE58_ALPHABET[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 static int base58_encode(const uint8_t *data, size_t data_len, char *output, size_t max_length) {
-    // Implementation of Base58Check encoding
-    // This is a simplified version - in production we would need a more robust implementation
-    uint8_t count = 0;
-    size_t i, j;
-    uint32_t carry;
-    uint8_t *digits = calloc(data_len * 2, sizeof(uint8_t));
-    
+    if (!data || !output || data_len == 0 || max_length == 0) {
+        return -1;
+    }
+
+    // Count leading zeros
+    size_t zeros = 0;
+    while (zeros < data_len && data[zeros] == 0) {
+        zeros++;
+    }
+
+    // Allocate enough space for the worst case
+    size_t size = (data_len - zeros) * 138 / 100 + 1;
+    uint8_t *digits = calloc(size, sizeof(uint8_t));
     if (!digits) return -1;
+
+    size_t digits_len = 0;
     
-    for (i = 0; i < data_len; ++i) {
-        carry = data[i];
-        for (j = 0; j < count; ++j) {
-            carry += digits[j] * 256;
+    // Convert to base-58 digits
+    for (size_t i = zeros; i < data_len; i++) {
+        uint32_t carry = data[i];
+        for (size_t j = 0; j < digits_len; j++) {
+            carry += (uint32_t)digits[j] << 8;
             digits[j] = carry % 58;
             carry /= 58;
         }
         while (carry > 0) {
-            digits[count++] = carry % 58;
+            if (digits_len >= size) {
+                free(digits);
+                return -1;
+            }
+            digits[digits_len++] = carry % 58;
             carry /= 58;
         }
     }
-    
-    if (count >= max_length) {
+
+    // Check output buffer size
+    if (zeros + digits_len + 1 > max_length) {
         free(digits);
         return -1;
     }
-    
-    // Convert to actual Base58 characters
-    for (i = 0; i < count; ++i) {
-        output[i] = BASE58_ALPHABET[digits[count - 1 - i]];
+
+    // Write leading '1's for zeros
+    size_t out_pos = 0;
+    for (size_t i = 0; i < zeros; i++) {
+        output[out_pos++] = '1';
     }
-    output[count] = '\0';
-    
+
+    // Convert digits to characters
+    for (size_t i = 0; i < digits_len; i++) {
+        output[out_pos + digits_len - 1 - i] = BASE58_ALPHABET[digits[i]];
+    }
+    output[out_pos + digits_len] = '\0';
+
     free(digits);
     return 0;
 }
@@ -134,7 +154,7 @@ int mxd_generate_address(const uint8_t public_key[256],
 
     uint8_t sha_output[64];
     uint8_t ripemd_output[20];
-    uint8_t address_bytes[22];
+    uint8_t address_bytes[25]; // Version(1) + RIPEMD160(20) + Checksum(4)
 
     // Double SHA-512 on public key
     if (mxd_sha512(public_key, 256, sha_output) != 0 ||
@@ -147,13 +167,23 @@ int mxd_generate_address(const uint8_t public_key[256],
         return -1;
     }
 
-    // Prepare address bytes with "mx" prefix
-    address_bytes[0] = 'm';
-    address_bytes[1] = 'x';
-    memcpy(address_bytes + 2, ripemd_output, 20);
+    // Version byte
+    address_bytes[0] = 0x32; // MXD version byte
+
+    // RIPEMD-160 hash
+    memcpy(address_bytes + 1, ripemd_output, 20);
+
+    // Calculate checksum (double SHA-512 of version + hash)
+    if (mxd_sha512(address_bytes, 21, sha_output) != 0 ||
+        mxd_sha512(sha_output, 64, sha_output) != 0) {
+        return -1;
+    }
+
+    // Add 4-byte checksum
+    memcpy(address_bytes + 21, sha_output, 4);
 
     // Encode in Base58Check
-    return base58_encode(address_bytes, 22, address, max_length);
+    return base58_encode(address_bytes, 25, address, max_length);
 }
 
 int mxd_validate_address(const char *address) {
