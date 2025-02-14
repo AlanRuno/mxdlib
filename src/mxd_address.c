@@ -3,10 +3,16 @@
 #include <sodium.h>
 #include <string.h>
 
-// BIP39 wordlist (first few words for demonstration)
+// First 64 words from BIP39 wordlist (truncated for testing)
 static const char *BIP39_WORDS[] = {
     "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract",
-    "absurd", "abuse", "access", "accident", /* ... rest of 2048 words ... */
+    "absurd", "abuse", "access", "accident", "account", "accuse", "achieve", "acid",
+    "acoustic", "acquire", "across", "act", "action", "actor", "actress", "actual",
+    "adapt", "add", "addict", "address", "adjust", "admit", "adult", "advance",
+    "advice", "aerobic", "affair", "afford", "afraid", "again", "age", "agent",
+    "agree", "ahead", "aim", "air", "airport", "aisle", "alarm", "album",
+    "alcohol", "alert", "alien", "all", "alley", "allow", "almost", "alone",
+    "alpha", "already", "also", "alter", "always", "amateur", "amazing", "among"
 };
 
 int mxd_generate_passphrase(char *output, size_t max_length) {
@@ -19,11 +25,17 @@ int mxd_generate_passphrase(char *output, size_t max_length) {
 
     // Generate 12 random words
     size_t offset = 0;
-    for (int i = 0; i < 12; i++) {
-        uint16_t index = (entropy[i] << 8 | entropy[i + 1]) % 2048;
-        size_t word_len = strlen(BIP39_WORDS[index]);
+    const size_t num_words = sizeof(BIP39_WORDS) / sizeof(BIP39_WORDS[0]);
+    
+    for (int i = 0; i < 12 && i < sizeof(entropy); i++) {
+        uint8_t rand_byte = entropy[i];
+        uint8_t index = rand_byte % num_words;
+        const char *word = BIP39_WORDS[index];
+        size_t word_len = strlen(word);
         
-        if (offset + word_len + 1 >= max_length) {
+        // Check if we have space for word + space + null terminator
+        if (offset + word_len + 2 > max_length) {
+            output[0] = '\0';
             return -1;
         }
         
@@ -31,7 +43,7 @@ int mxd_generate_passphrase(char *output, size_t max_length) {
             output[offset++] = ' ';
         }
         
-        memcpy(output + offset, BIP39_WORDS[index], word_len);
+        memcpy(output + offset, word, word_len);
         offset += word_len;
     }
     output[offset] = '\0';
