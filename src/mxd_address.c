@@ -109,7 +109,11 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         return 0;
     }
 
-    // For all-zero input, just output the appropriate number of '1's
+    // Initialize result array with zeros
+    uint8_t b58[512] = {0};
+    size_t b58_len = 0;
+
+    // Handle special case for all zeros
     if (zeros == data_len) {
         if (zeros + 1 > max_length) {
             return -1;
@@ -118,10 +122,6 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         output[zeros] = '\0';
         return 0;
     }
-
-    // Initialize result array with zeros
-    uint8_t b58[512] = {0};
-    size_t b58_len = 1;  // Start with length 1 to handle zero properly
 
     // Convert from base256 to base58
     for (size_t i = zeros; i < data_len; i++) {
@@ -141,12 +141,10 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         }
     }
 
-    // Skip leading zeros in the result
-    size_t i = b58_len;
-    while (i > 0 && b58[i - 1] == 0) {
-        i--;
+    // Ensure at least one digit for non-zero inputs
+    if (b58_len == 0 && zeros < data_len) {
+        b58_len = 1;
     }
-    b58_len = i || zeros ? i : 1;  // Keep at least one digit
 
     // Check output buffer size
     if (zeros + b58_len + 1 > max_length) {
@@ -175,13 +173,9 @@ int mxd_generate_address(const uint8_t public_key[256],
     uint8_t ripemd_output[20] = {0};
     uint8_t address_bytes[25] = {0}; // Version(1) + RIPEMD160(20) + Checksum(4)
 
-    // First SHA-512 on public key
-    if (mxd_sha512(public_key, 256, sha_output) != 0) {
-        return -1;
-    }
-
-    // Second SHA-512
-    if (mxd_sha512(sha_output, 64, sha_output) != 0) {
+    // Double SHA-512 on public key
+    if (mxd_sha512(public_key, 256, sha_output) != 0 ||
+        mxd_sha512(sha_output, 64, sha_output) != 0) {
         return -1;
     }
 
@@ -197,16 +191,13 @@ int mxd_generate_address(const uint8_t public_key[256],
     memcpy(address_bytes + 1, ripemd_output, 20);
 
     // Calculate checksum (double SHA-512 of version + hash)
-    uint8_t checksum[64];
-    if (mxd_sha512(address_bytes, 21, checksum) != 0) {
-        return -1;
-    }
-    if (mxd_sha512(checksum, 64, checksum) != 0) {
+    if (mxd_sha512(address_bytes, 21, sha_output) != 0 ||
+        mxd_sha512(sha_output, 64, sha_output) != 0) {
         return -1;
     }
 
     // Add 4-byte checksum
-    memcpy(address_bytes + 21, checksum, 4);
+    memcpy(address_bytes + 21, sha_output, 4);
 
     // Encode in Base58Check
     return base58_encode(address_bytes, 25, address, max_length);
