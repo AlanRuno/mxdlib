@@ -107,10 +107,10 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
     size_t digits_len = 0;
     
     // Convert to base-58 digits
-    for (size_t i = zeros; i < data_len; i++) {
+    for (size_t i = data_len - 1; i >= zeros && i < data_len; i--) {
         uint32_t carry = data[i];
         for (size_t j = 0; j < digits_len; j++) {
-            carry += (uint32_t)digits[j] << 8;
+            carry += (uint32_t)digits[j] * 256;
             digits[j] = carry % 58;
             carry /= 58;
         }
@@ -137,10 +137,10 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
     }
 
     // Convert digits to characters
-    for (size_t i = 0; i < digits_len; i++) {
-        output[out_pos + digits_len - 1 - i] = BASE58_ALPHABET[digits[i]];
+    for (size_t i = digits_len; i > 0; i--) {
+        output[out_pos++] = BASE58_ALPHABET[digits[i - 1]];
     }
-    output[out_pos + digits_len] = '\0';
+    output[out_pos] = '\0';
 
     free(digits);
     return 0;
@@ -190,39 +190,36 @@ static int base58_decode(const char *input, uint8_t *output, size_t *output_len)
     size_t input_len = strlen(input);
     if (input_len == 0) return -1;
 
-    // Initialize output array
-    memset(output, 0, *output_len);
-    size_t out_pos = 0;
-
-    // Process each input character
-    for (size_t i = 0; i < input_len; i++) {
-        unsigned char c = input[i];
-        const char *pos = strchr(BASE58_ALPHABET, c);
-        if (!pos) return -1; // Invalid character
-
-        int val = pos - BASE58_ALPHABET;
-        for (size_t j = 0; j < out_pos; j++) {
-            int carry = output[j] * 58 + val;
-            output[j] = carry & 0xff;
-            val = carry >> 8;
-        }
-        if (val > 0) {
-            if (out_pos >= *output_len) return -1;
-            output[out_pos++] = val;
-        }
-    }
-
-    // Count leading zeros in input
+    // Count leading '1's
     size_t zeros = 0;
     while (zeros < input_len && input[zeros] == '1') {
         zeros++;
     }
 
-    // Add leading zeros to output
-    if (zeros + out_pos > *output_len) return -1;
-    memmove(output + zeros, output, out_pos);
-    memset(output, 0, zeros);
-    *output_len = zeros + out_pos;
+    // Initialize output array
+    memset(output, 0, *output_len);
+    size_t out_pos = zeros;
+
+    // Process each input character
+    for (size_t i = zeros; i < input_len; i++) {
+        unsigned char c = input[i];
+        const char *pos = strchr(BASE58_ALPHABET, c);
+        if (!pos) return -1; // Invalid character
+
+        uint32_t val = pos - BASE58_ALPHABET;
+        for (size_t j = zeros; j < out_pos; j++) {
+            val += (uint32_t)output[j] * 58;
+            output[j] = val & 0xff;
+            val >>= 8;
+        }
+        while (val > 0) {
+            if (out_pos >= *output_len) return -1;
+            output[out_pos++] = val & 0xff;
+            val >>= 8;
+        }
+    }
+
+    *output_len = out_pos;
 
     return 0;
 }
