@@ -99,58 +99,60 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         zeros++;
     }
 
-    // Prepare conversion buffer (each byte becomes ~1.37 base58 digits)
-    size_t buf_size = data_len * 138 / 100 + 1;
-    uint8_t *buf = calloc(buf_size, sizeof(uint8_t));
-    if (!buf) return -1;
+    // Prepare work buffer
+    size_t work_size = data_len * 2;
+    uint8_t *work = calloc(work_size, sizeof(uint8_t));
+    if (!work) return -1;
 
-    // Process all bytes
-    size_t high = buf_size - 1;
+    // Copy input data
+    memcpy(work, data, data_len);
+    size_t work_len = data_len;
+
+    // Convert to base58 digits
+    size_t out_len = 0;
+    uint8_t *out_digits = calloc(work_size * 2, sizeof(uint8_t));
+    if (!out_digits) {
+        free(work);
+        return -1;
+    }
+
+    // Process each byte
     for (size_t i = zeros; i < data_len; i++) {
-        // Add current byte to buffer
-        uint32_t carry = data[i];
-        size_t j = buf_size - 1;
-        
-        while (j > high || carry) {
-            if (j > high) {
-                carry += buf[j] * 256;
-            }
-            buf[j] = carry % 58;
+        uint32_t carry = work[i];
+        size_t j;
+
+        // Multiply existing result by 256 and add new digit
+        for (j = 0; j < out_len; j++) {
+            carry += (uint32_t)out_digits[j] * 256;
+            out_digits[j] = carry % 58;
             carry /= 58;
-            if (j == 0) break;
-            j--;
         }
-        high = j;
+
+        // Add remaining carry to result
+        while (carry > 0) {
+            out_digits[out_len++] = carry % 58;
+            carry /= 58;
+        }
     }
 
-    // Skip leading zeros in buffer
-    size_t j = 0;
-    while (j < buf_size && buf[j] == 0) {
-        j++;
-    }
-
-    // Calculate output length
-    size_t out_len = zeros + (buf_size - j);
-    if (out_len + 1 > max_length) {
-        free(buf);
+    // Check if we have enough space in output buffer
+    if (zeros + out_len + 1 > max_length) {
+        free(work);
+        free(out_digits);
         return -1;
     }
 
     // Write leading '1's for zeros
     memset(output, '1', zeros);
 
-    // Convert to actual Base58 characters
-    size_t k = 0;
-    while (j < buf_size) {
-        output[zeros + k] = BASE58_ALPHABET[buf[j]];
-        k++;
-        j++;
+    // Convert digits to Base58 alphabet in reverse order
+    for (size_t i = 0; i < out_len; i++) {
+        output[zeros + i] = BASE58_ALPHABET[out_digits[out_len - 1 - i]];
     }
-    output[zeros + k] = '\0';
+    output[zeros + out_len] = '\0';
 
-    free(buf);
-
-    return 0;
+    free(work);
+    free(out_digits);
     return 0;
 }
 
