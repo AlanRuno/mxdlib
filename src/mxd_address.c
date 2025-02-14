@@ -95,52 +95,51 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
 
     // Count leading zeros
     size_t zeros = 0;
-    while (zeros < data_len && data[zeros] == 0) {
+    for (size_t i = 0; i < data_len && data[i] == 0; i++) {
         zeros++;
     }
 
-    // Allocate enough space for the worst case
-    size_t size = (data_len - zeros) * 138 / 100 + 1;
-    uint8_t *digits = calloc(size, sizeof(uint8_t));
-    if (!digits) return -1;
+    // Prepare conversion buffer
+    size_t size = data_len * 138 / 100 + 1; // Log(256)/Log(58)
+    uint8_t *buffer = calloc(size, sizeof(uint8_t));
+    if (!buffer) return -1;
 
-    size_t digits_len = 0;
-    
-    // Convert to base-58 digits
-    for (size_t i = data_len - 1; i >= zeros && i < data_len; i--) {
+    // Convert to base 58
+    size_t length = 0;
+    for (size_t i = zeros; i < data_len; i++) {
         uint32_t carry = data[i];
-        for (size_t j = 0; j < digits_len; j++) {
-            carry += (uint32_t)digits[j] * 256;
-            digits[j] = carry % 58;
+        for (size_t j = 0; j < length; j++) {
+            carry += (uint32_t)buffer[j] << 8;
+            buffer[j] = carry % 58;
             carry /= 58;
         }
-        while (carry > 0) {
-            if (digits_len >= size) {
-                free(digits);
-                return -1;
-            }
-            digits[digits_len++] = carry % 58;
+        while (carry > 0 && length < size) {
+            buffer[length++] = carry % 58;
             carry /= 58;
         }
     }
 
     // Check output buffer size
-    if (zeros + digits_len + 1 > max_length) {
-        free(digits);
+    if (zeros + length + 1 > max_length) {
+        free(buffer);
         return -1;
     }
 
-    // Write leading '1's for zeros
+    // Write output
     size_t out_pos = 0;
-    for (size_t i = 0; i < zeros; i++) {
-        output[out_pos++] = '1';
-    }
 
-    // Convert digits to characters
-    for (size_t i = digits_len; i > 0; i--) {
-        output[out_pos++] = BASE58_ALPHABET[digits[i - 1]];
+    // Add leading '1's for zeros
+    memset(output, '1', zeros);
+    out_pos = zeros;
+
+    // Add base58 digits in reverse order
+    for (size_t i = length; i > 0; i--) {
+        output[out_pos++] = BASE58_ALPHABET[buffer[i - 1]];
     }
     output[out_pos] = '\0';
+
+    free(buffer);
+    return 0;
 
     free(digits);
     return 0;
@@ -187,39 +186,63 @@ int mxd_generate_address(const uint8_t public_key[256],
 }
 
 static int base58_decode(const char *input, uint8_t *output, size_t *output_len) {
+    if (!input || !output || !output_len || *output_len == 0) {
+        return -1;
+    }
+
     size_t input_len = strlen(input);
-    if (input_len == 0) return -1;
+    if (input_len == 0) {
+        return -1;
+    }
 
     // Count leading '1's
     size_t zeros = 0;
-    while (zeros < input_len && input[zeros] == '1') {
+    for (size_t i = 0; i < input_len && input[i] == '1'; i++) {
         zeros++;
     }
 
-    // Initialize output array
-    memset(output, 0, *output_len);
-    size_t out_pos = zeros;
+    // Prepare conversion buffer
+    size_t size = input_len;
+    uint8_t *buffer = calloc(size, sizeof(uint8_t));
+    if (!buffer) return -1;
 
-    // Process each input character
+    // Convert from base 58
+    size_t length = 0;
     for (size_t i = zeros; i < input_len; i++) {
-        unsigned char c = input[i];
-        const char *pos = strchr(BASE58_ALPHABET, c);
-        if (!pos) return -1; // Invalid character
-
-        uint32_t val = pos - BASE58_ALPHABET;
-        for (size_t j = zeros; j < out_pos; j++) {
-            val += (uint32_t)output[j] * 58;
-            output[j] = val & 0xff;
-            val >>= 8;
+        const char *pos = strchr(BASE58_ALPHABET, input[i]);
+        if (!pos) {
+            free(buffer);
+            return -1;
         }
-        while (val > 0) {
-            if (out_pos >= *output_len) return -1;
-            output[out_pos++] = val & 0xff;
-            val >>= 8;
+
+        uint32_t value = pos - BASE58_ALPHABET;
+        for (size_t j = 0; j < length; j++) {
+            value += buffer[j] * 58;
+            buffer[j] = value & 0xFF;
+            value >>= 8;
+        }
+
+        while (value > 0 && length < size) {
+            buffer[length++] = value & 0xFF;
+            value >>= 8;
         }
     }
 
-    *output_len = out_pos;
+    // Check output buffer size
+    if (zeros + length > *output_len) {
+        free(buffer);
+        return -1;
+    }
+
+    // Write output
+    memset(output, 0, zeros);
+    for (size_t i = 0; i < length; i++) {
+        output[zeros + i] = buffer[length - 1 - i];
+    }
+    *output_len = zeros + length;
+
+    free(buffer);
+    return 0;
 
     return 0;
 }
