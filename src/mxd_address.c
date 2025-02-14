@@ -99,37 +99,53 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
         zeros++;
     }
 
-    // Prepare conversion buffer
-    size_t buf_size = data_len * 2;
+    // Prepare conversion buffer (each byte becomes ~1.37 base58 digits)
+    size_t buf_size = data_len * 138 / 100 + 1;
     uint8_t *buf = calloc(buf_size, sizeof(uint8_t));
     if (!buf) return -1;
 
-    // Convert to base 58
-    size_t buf_len = 0;
+    // Process all bytes
+    size_t high = buf_size - 1;
     for (size_t i = zeros; i < data_len; i++) {
+        // Add current byte to buffer
         uint32_t carry = data[i];
-        size_t j;
+        size_t j = buf_size - 1;
         
-        // Apply base conversion to all existing digits
-        for (j = 0; j < buf_len; j++) {
-            carry += (uint32_t)buf[j] * 256;
+        while (j > high || carry) {
+            if (j > high) {
+                carry += buf[j] * 256;
+            }
             buf[j] = carry % 58;
             carry /= 58;
+            if (j == 0) break;
+            j--;
         }
-        
-        // Add new digits
-        while (carry > 0 && buf_len < buf_size) {
-            buf[buf_len++] = carry % 58;
-            carry /= 58;
-        }
+        high = j;
     }
-    
-    // Reverse the buffer for correct byte order
-    for (size_t i = 0; i < buf_len / 2; i++) {
-        uint8_t temp = buf[i];
-        buf[i] = buf[buf_len - 1 - i];
-        buf[buf_len - 1 - i] = temp;
+
+    // Skip leading zeros in buffer
+    size_t j = 0;
+    while (j < buf_size && buf[j] == 0) {
+        j++;
     }
+
+    // Check output buffer size
+    size_t out_len = zeros + (buf_size - j);
+    if (out_len + 1 > max_length) {
+        free(buf);
+        return -1;
+    }
+
+    // Write leading '1's for zeros
+    memset(output, '1', zeros);
+
+    // Convert to actual Base58 characters
+    for (size_t i = 0; i < buf_size - j; i++) {
+        output[zeros + i] = BASE58_ALPHABET[buf[j + i]];
+    }
+    output[out_len] = '\0';
+
+    free(buf);
 
     // Check output buffer size
     if (zeros + buf_len + 1 > max_length) {
@@ -160,7 +176,7 @@ int mxd_generate_address(const uint8_t public_key[256],
     uint8_t ripemd_output[20] = {0};
     uint8_t address_bytes[25] = {0}; // Version(1) + RIPEMD160(20) + Checksum(4)
 
-    // Double SHA-512 on public key
+    // First SHA-512 on public key
     if (mxd_sha512(public_key, 256, sha_output) != 0) {
         return -1;
     }
@@ -177,8 +193,8 @@ int mxd_generate_address(const uint8_t public_key[256],
         return -1;
     }
 
-    // Version byte
-    address_bytes[0] = 0x32; // MXD version byte
+    // Version byte (0x32 = 50 in decimal, unique to MXD)
+    address_bytes[0] = 0x32;
 
     // RIPEMD-160 hash
     memcpy(address_bytes + 1, ripemd_output, 20);
@@ -197,7 +213,17 @@ int mxd_generate_address(const uint8_t public_key[256],
     memcpy(address_bytes + 21, sha_output, 4);
 
     // Encode in Base58Check
-    return base58_encode(address_bytes, 25, address, max_length);
+    int result = base58_encode(address_bytes, 25, address, max_length);
+    if (result != 0) {
+        return -1;
+    }
+
+    // Verify the address is valid
+    if (mxd_validate_address(address) != 0) {
+        return -1;
+    }
+
+    return 0;
 }
 
 static int base58_decode(const char *input, uint8_t *output, size_t *output_len) {
