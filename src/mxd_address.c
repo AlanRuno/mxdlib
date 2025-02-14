@@ -150,22 +150,7 @@ static int base58_encode(const uint8_t *data, size_t data_len, char *output, siz
 
     free(buf);
 
-    // Check output buffer size
-    if (zeros + buf_len + 1 > max_length) {
-        free(buf);
-        return -1;
-    }
-
-    // Write leading '1's for zeros
-    memset(output, '1', zeros);
-
-    // Write base58 digits in reverse order
-    for (size_t i = 0; i < buf_len; i++) {
-        output[zeros + i] = BASE58_ALPHABET[buf[buf_len - 1 - i]];
-    }
-    output[zeros + buf_len] = '\0';
-
-    free(buf);
+    return 0;
     return 0;
 }
 
