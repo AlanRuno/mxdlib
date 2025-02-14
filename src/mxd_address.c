@@ -263,24 +263,6 @@ static int base58_decode(const char *input, uint8_t *output, size_t *output_len)
     }
 
     *output_len = zeros + digitslen;
-    for (size_t i = 0; i < length / 2; i++) {
-        uint8_t temp = buffer[i];
-        buffer[i] = buffer[length - 1 - i];
-        buffer[length - 1 - i] = temp;
-    }
-
-    // Check output buffer size
-    if (zeros + length > *output_len) {
-        free(buffer);
-        return -1;
-    }
-
-    // Write output
-    memset(output, 0, zeros);
-    memcpy(output + zeros, buffer, length);
-    *output_len = zeros + length;
-
-    free(buffer);
     return 0;
 }
 
