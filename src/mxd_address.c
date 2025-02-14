@@ -186,17 +186,72 @@ int mxd_generate_address(const uint8_t public_key[256],
     return base58_encode(address_bytes, 25, address, max_length);
 }
 
-int mxd_validate_address(const char *address) {
-    if (!address || strlen(address) > 42) {
-        return -1;
+static int base58_decode(const char *input, uint8_t *output, size_t *output_len) {
+    size_t input_len = strlen(input);
+    if (input_len == 0) return -1;
+
+    // Initialize output array
+    memset(output, 0, *output_len);
+    size_t out_pos = 0;
+
+    // Process each input character
+    for (size_t i = 0; i < input_len; i++) {
+        unsigned char c = input[i];
+        const char *pos = strchr(BASE58_ALPHABET, c);
+        if (!pos) return -1; // Invalid character
+
+        int val = pos - BASE58_ALPHABET;
+        for (size_t j = 0; j < out_pos; j++) {
+            int carry = output[j] * 58 + val;
+            output[j] = carry & 0xff;
+            val = carry >> 8;
+        }
+        if (val > 0) {
+            if (out_pos >= *output_len) return -1;
+            output[out_pos++] = val;
+        }
     }
 
-    // Check prefix
-    if (address[0] != '1' || // Base58 encoding of 'mx' prefix
-        strlen(address) < 25) { // Minimum length for valid address
-        return -1;
+    // Count leading zeros in input
+    size_t zeros = 0;
+    while (zeros < input_len && input[zeros] == '1') {
+        zeros++;
     }
 
-    // TODO: Implement full Base58Check decoding and validation
+    // Add leading zeros to output
+    if (zeros + out_pos > *output_len) return -1;
+    memmove(output + zeros, output, out_pos);
+    memset(output, 0, zeros);
+    *output_len = zeros + out_pos;
+
     return 0;
+}
+
+int mxd_validate_address(const char *address) {
+    if (!address) return -1;
+
+    size_t address_len = strlen(address);
+    if (address_len < 25 || address_len > 42) return -1;
+
+    // Decode Base58 address
+    uint8_t decoded[25];
+    size_t decoded_len = sizeof(decoded);
+    if (base58_decode(address, decoded, &decoded_len) != 0 || decoded_len != 25) {
+        return -1;
+    }
+
+    // Check version byte
+    if (decoded[0] != 0x32) { // MXD version byte
+        return -1;
+    }
+
+    // Verify checksum
+    uint8_t sha_output[64];
+    if (mxd_sha512(decoded, 21, sha_output) != 0 ||
+        mxd_sha512(sha_output, 64, sha_output) != 0) {
+        return -1;
+    }
+
+    // Compare checksum
+    return memcmp(decoded + 21, sha_output, 4) == 0 ? 0 : -1;
 }

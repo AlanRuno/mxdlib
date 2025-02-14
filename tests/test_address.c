@@ -56,14 +56,31 @@ static void test_keypair_generation(void) {
 }
 
 static void test_address_generation(void) {
-    uint8_t public_key[256] = {1}; // Test public key
+    uint8_t public_key[256];
     char address[42];
     
+    // Initialize public key with some test data
+    for (int i = 0; i < 256; i++) {
+        public_key[i] = (uint8_t)(i & 0xFF);
+    }
+    
+    // Generate address
     assert(mxd_generate_address(public_key, address, sizeof(address)) == 0);
     assert(strlen(address) > 25); // Minimum length for valid address
     
     // Validate the generated address
     assert(mxd_validate_address(address) == 0);
+    
+    // Test invalid addresses
+    assert(mxd_validate_address(NULL) == -1);
+    assert(mxd_validate_address("") == -1);
+    assert(mxd_validate_address("invalid") == -1);
+    
+    // Modify checksum to test validation
+    char invalid_address[42];
+    strcpy(invalid_address, address);
+    invalid_address[strlen(invalid_address) - 1]++; // Modify last character
+    assert(mxd_validate_address(invalid_address) == -1);
     
     printf("Address generation test passed\n");
 }
