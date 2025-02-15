@@ -69,6 +69,17 @@ target_link_libraries(mxd_mempool_tests
     sodium
 )
 
+add_executable(mxd_p2p_tests
+    test_p2p.c
+)
+
+target_link_libraries(mxd_p2p_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
 add_test(NAME crypto_tests COMMAND mxd_crypto_tests)
 add_test(NAME address_tests COMMAND mxd_address_tests)
 add_test(NAME blockchain_tests COMMAND mxd_blockchain_tests)
@@ -76,3 +87,4 @@ add_test(NAME rsc_tests COMMAND mxd_rsc_tests)
 add_test(NAME transaction_tests COMMAND mxd_transaction_tests)
 add_test(NAME utxo_tests COMMAND mxd_utxo_tests)
 add_test(NAME mempool_tests COMMAND mxd_mempool_tests)
+add_test(NAME p2p_tests COMMAND mxd_p2p_tests)

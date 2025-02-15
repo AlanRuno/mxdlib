@@ -32,7 +32,8 @@ add_library(mxd SHARED
     src/blockchain/mxd_rsc.c
     src/mxd_transaction.c
     src/mxd_utxo.c
-    src/mxd_mempool.c)
+    src/mxd_mempool.c
+    src/mxd_p2p.c)
 
 # Link libraries
 target_link_libraries(mxd 
