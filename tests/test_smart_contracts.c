@@ -3,18 +3,16 @@
 #include <assert.h>
 #include "../include/mxd_smart_contracts.h"
 
-// Test WebAssembly code (simple adder)
+// Test WebAssembly code (minimal module)
 static const uint8_t test_wasm[] = {
     0x00, 0x61, 0x73, 0x6D,  // magic
     0x01, 0x00, 0x00, 0x00,  // version
     // Type section
-    0x01, 0x07,              // section code, section size
+    0x01, 0x04,              // section code, section size
     0x01,                    // num types
     0x60,                    // func
-    0x02,                    // num params
-    0x7F, 0x7F,             // i32, i32
-    0x01,                    // num results
-    0x7F,                    // i32
+    0x00,                    // num params
+    0x00,                    // num results
     // Function section
     0x03, 0x02,             // section code, section size
     0x01,                    // num functions
@@ -27,13 +25,10 @@ static const uint8_t test_wasm[] = {
     0x00,                    // export kind
     0x00,                    // export func index
     // Code section
-    0x0A, 0x09,             // section code, section size
+    0x0A, 0x04,             // section code, section size
     0x01,                    // num functions
-    0x07,                    // function body size
+    0x02,                    // function body size
     0x00,                    // local decl count
-    0x20, 0x00,             // local.get 0
-    0x20, 0x01,             // local.get 1
-    0x6A,                    // i32.add
     0x0B                     // end
 };
 
