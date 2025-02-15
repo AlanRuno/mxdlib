@@ -3,7 +3,7 @@
 #include <assert.h>
 #include "../include/mxd_smart_contracts.h"
 
-// Test WebAssembly code (simple counter)
+// Test WebAssembly code (simple adder)
 static const uint8_t test_wasm[] = {
     0x00, 0x61, 0x73, 0x6D,  // magic
     0x01, 0x00, 0x00, 0x00,  // version
@@ -44,6 +44,10 @@ static void test_contract_initialization(void) {
 
 static void test_contract_deployment(void) {
     mxd_contract_state_t state;
+    memset(&state, 0, sizeof(state));
+    
+    // Initialize contracts module
+    assert(mxd_init_contracts() == 0);
     
     // Deploy contract
     assert(mxd_deploy_contract(test_wasm, sizeof(test_wasm), &state) == 0);

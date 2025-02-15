@@ -49,6 +49,13 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
     state->storage = NULL;
     state->storage_size = 0;
 
+    // Reset runtime
+    m3_FreeRuntime(wasm_state.runtime);
+    wasm_state.runtime = m3_NewRuntime(wasm_state.env, 64*1024, NULL);
+    if (!wasm_state.runtime) {
+        return -1;
+    }
+
     // Load WASM module
     IM3Module module;
     M3Result result = m3_ParseModule(wasm_state.env, &module, code, code_size);
@@ -64,9 +71,12 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
     }
 
     // Link required functions
-    // TODO: Link host functions
+    result = m3_LinkRawFunctionEx(module, "*", "main", "(i32,i32)->i32", NULL, NULL);
+    if (result) {
+        m3_FreeModule(module);
+        return -1;
+    }
 
-    m3_FreeModule(module);
     return 0;
 }
 
