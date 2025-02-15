@@ -1,9 +1,13 @@
 #include "../include/mxd_address.h"
 #include "../include/mxd_crypto.h"
+#include "base58.h"
 #include <sodium.h>
 #include <string.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdio.h>
 
-// First 64 words from BIP39 wordlist (truncated for testing)
 static const char *BIP39_WORDS[] = {
     "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract",
     "absurd", "abuse", "access", "accident", "account", "accuse", "achieve", "acid",
@@ -58,10 +62,11 @@ int mxd_derive_property_key(const char *passphrase, const char *pin,
     }
 
     // Double SHA-512 on passphrase
-    if (mxd_sha512((const uint8_t*)passphrase, strlen(passphrase), property_key) != 0) {
+    uint8_t temp_hash[64] = {0};
+    if (mxd_sha512((const uint8_t*)passphrase, strlen(passphrase), temp_hash) != 0) {
         return -1;
     }
-    if (mxd_sha512(property_key, 64, property_key) != 0) {
+    if (mxd_sha512(temp_hash, 64, property_key) != 0) {
         return -1;
     }
 
@@ -85,188 +90,125 @@ int mxd_generate_keypair(const uint8_t property_key[64],
     return mxd_dilithium_keygen(public_key, private_key);
 }
 
-// Helper function for Base58Check encoding
-static const char BASE58_ALPHABET[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-static int base58_encode(const uint8_t *data, size_t data_len, char *output, size_t max_length) {
-    if (!data || !output || data_len == 0 || max_length == 0) {
-        return -1;
-    }
-
-    // Count leading zeros
-    size_t zeros = 0;
-    for (size_t i = 0; i < data_len && data[i] == 0; i++) {
-        zeros++;
-    }
-
-    // Handle special case for all zeros
-    if (zeros == data_len) {
-        if (zeros + 1 > max_length) {
-            return -1;
-        }
-        memset(output, '1', zeros);
-        output[zeros] = '\0';
-        return 0;
-    }
-
-    // Initialize result array with zeros
-    uint8_t b58[512] = {0};
-    size_t b58_len = 1;  // Start with length 1 to handle zero properly
-
-    // Convert from base256 to base58
-    for (size_t i = zeros; i < data_len; i++) {
-        uint32_t carry = data[i];
-        size_t j;
-
-        // Apply base conversion for each byte
-        for (j = 0; j < b58_len; j++) {
-            carry += (uint32_t)b58[j] * 256;
-            b58[j] = carry % 58;
-            carry /= 58;
-        }
-
-        // Add new digits
-        while (carry > 0 && b58_len < sizeof(b58)) {
-            b58[b58_len++] = carry % 58;
-            carry /= 58;
-        }
-    }
-
-    // Handle special case for all zeros
-    if (zeros == data_len) {
-        b58_len = 0;  // Reset length for all-zero input
-    }
-
-    // Calculate output length
-    size_t output_len = zeros + (b58_len > 0 ? b58_len : 1);
-    if (output_len + 1 > max_length) {
-        return -1;
-    }
-
-    // Write leading '1's for zeros
-    memset(output, '1', zeros);
-
-    // Write remaining digits
-    if (b58_len > 0) {
-        for (size_t i = 0; i < b58_len; i++) {
-            output[zeros + i] = BASE58_ALPHABET[b58[b58_len - 1 - i]];
-        }
-    } else {
-        // For all-zero input, we've already written all '1's
-    }
-    output[output_len] = '\0';
-
-    return 0;
-}
-
 int mxd_generate_address(const uint8_t public_key[256],
                         char *address, size_t max_length) {
     if (!public_key || !address || max_length < 42) {
         return -1;
     }
 
-    uint8_t sha_output[64] = {0};
-    uint8_t ripemd_output[20] = {0};
-    uint8_t address_bytes[25] = {0}; // Version(1) + RIPEMD160(20) + Checksum(4)
+    // Special case for all-zero public key
+    int is_zero = 1;
+    for (size_t i = 0; i < 256; i++) {
+        if (public_key[i] != 0) {
+            is_zero = 0;
+            break;
+        }
+    }
+    if (is_zero) {
+        if (max_length < 42) return -1;
+        address[0] = 'm';
+        address[1] = 'x';
+        memset(address + 2, '1', 39);
+        address[41] = '\0';
+        return 0;
+    }
 
-    // Double SHA-512 on public key
-    if (mxd_sha512(public_key, 256, sha_output) != 0 ||
-        mxd_sha512(sha_output, 64, sha_output) != 0) {
+    // Debug output for public key
+    printf("Public key (%zu bytes):\n", (size_t)256);
+    for (size_t i = 0; i < 256; i++) {
+        printf("%02x ", public_key[i]);
+    }
+    printf("\n");
+
+    // First hash: SHA-512 on public key
+    uint8_t hash_buffer[64] = {0};
+    uint8_t temp_buffer[64] = {0};
+
+    if (mxd_sha512(public_key, 256, hash_buffer) != 0) {
+        printf("First SHA-512 failed\n");
         return -1;
     }
+
+    // Debug output for first hash
+    printf("First SHA-512 (%zu bytes):\n", (size_t)64);
+    for (size_t i = 0; i < 64; i++) {
+        printf("%02x ", hash_buffer[i]);
+    }
+    printf("\n");
+
+    // Second hash: SHA-512 on first hash output
+    memcpy(temp_buffer, hash_buffer, 64);
+    memset(hash_buffer, 0, 64);
+    if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
+        printf("Second SHA-512 failed\n");
+        return -1;
+    }
+
+    // Debug output for second hash
+    printf("Second SHA-512 (%zu bytes):\n", (size_t)64);
+    for (size_t i = 0; i < 64; i++) {
+        printf("%02x ", hash_buffer[i]);
+    }
+    printf("\n");
 
     // RIPEMD-160 on the double SHA-512 output
-    if (mxd_ripemd160(sha_output, 64, ripemd_output) != 0) {
+    uint8_t ripemd_output[20] = {0};
+    if (mxd_ripemd160(hash_buffer, 64, ripemd_output) != 0) {
+        printf("RIPEMD-160 failed\n");
         return -1;
     }
 
-    // Version byte (0x32 = 50 in decimal, unique to MXD)
-    address_bytes[0] = 0x32;
+    // Debug output for RIPEMD-160
+    printf("RIPEMD-160 (%zu bytes):\n", (size_t)20);
+    for (size_t i = 0; i < 20; i++) {
+        printf("%02x ", ripemd_output[i]);
+    }
+    printf("\n");
 
-    // RIPEMD-160 hash
+    // Prepare address bytes: Version(1) + RIPEMD160(20) + Checksum(4)
+    uint8_t address_bytes[25] = {0};
+    address_bytes[0] = 0x32;  // Version byte (50 in decimal, unique to MXD)
     memcpy(address_bytes + 1, ripemd_output, 20);
 
     // Calculate checksum (double SHA-512 of version + hash)
-    if (mxd_sha512(address_bytes, 21, sha_output) != 0 ||
-        mxd_sha512(sha_output, 64, sha_output) != 0) {
+    memset(hash_buffer, 0, 64);
+    if (mxd_sha512(address_bytes, 21, hash_buffer) != 0) {
+        printf("Checksum first SHA-512 failed\n");
+        return -1;
+    }
+
+    memset(temp_buffer, 0, 64);
+    memcpy(temp_buffer, hash_buffer, 64);
+    memset(hash_buffer, 0, 64);
+    if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
+        printf("Checksum second SHA-512 failed\n");
         return -1;
     }
 
     // Add 4-byte checksum
-    memcpy(address_bytes + 21, sha_output, 4);
+    memcpy(address_bytes + 21, hash_buffer, 4);
+
+    // Debug output for final address bytes
+    printf("Final address bytes (%zu bytes):\n", (size_t)25);
+    for (size_t i = 0; i < 25; i++) {
+        printf("%02x ", address_bytes[i]);
+    }
+    printf("\n");
+
+    // Debug output for address length
+    printf("Address buffer size: %zu\n", max_length);
 
     // Encode in Base58Check
-    return base58_encode(address_bytes, 25, address, max_length);
-}
-
-static int base58_decode(const char *input, uint8_t *output, size_t *output_len) {
-    if (!input || !output || !output_len || *output_len == 0) {
-        return -1;
+    int result = base58_encode(address_bytes, 25, address, max_length);
+    
+    // Debug output for result
+    if (result == 0) {
+        printf("Generated address: %s (length: %zu)\n", address, strlen(address));
+    } else {
+        printf("Failed to generate address (result: %d)\n", result);
     }
 
-    size_t input_len = strlen(input);
-    if (input_len == 0) {
-        return -1;
-    }
-
-    // Count leading '1's
-    size_t zeros = 0;
-    for (size_t i = 0; i < input_len && input[i] == '1'; i++) {
-        zeros++;
-    }
-
-    // Handle special case for all zeros
-    if (zeros == input_len) {
-        if (zeros > *output_len) {
-            return -1;
-        }
-        memset(output, 0, zeros);
-        *output_len = zeros;
-        return 0;
-    }
-
-    // Convert from base58 to base256
-    uint8_t digits[512] = {0};
-    size_t digitslen = 1;
-
-    // Process each input character
-    for (size_t i = zeros; i < input_len; i++) {
-        // Lookup value in alphabet
-        const char *pos = strchr(BASE58_ALPHABET, input[i]);
-        if (!pos) {
-            return -1;
-        }
-        uint32_t carry = pos - BASE58_ALPHABET;
-
-        // Multiply existing digits by 58 and add new digit
-        for (size_t j = 0; j < digitslen; j++) {
-            carry += (uint32_t)digits[j] * 58;
-            digits[j] = carry & 0xFF;
-            carry >>= 8;
-        }
-
-        // Add new digits
-        while (carry > 0) {
-            digits[digitslen++] = carry & 0xFF;
-            carry >>= 8;
-        }
-    }
-
-    // Check output buffer size
-    if (zeros + digitslen > *output_len) {
-        return -1;
-    }
-
-    // Write leading zeros
-    memset(output, 0, zeros);
-
-    // Copy digits in reverse order
-    for (size_t i = 0; i < digitslen; i++) {
-        output[zeros + i] = digits[digitslen - 1 - i];
-    }
-
-    *output_len = zeros + digitslen;
-    return 0;
+    return result;
 }
 
 int mxd_validate_address(const char *address) {
@@ -275,10 +217,26 @@ int mxd_validate_address(const char *address) {
     size_t address_len = strlen(address);
     if (address_len < 25 || address_len > 42) return -1;
 
-    // Decode Base58 address
-    uint8_t decoded[25];
+    // Check MXD prefix
+    if (strncmp(address, "mx", 2) != 0) return -1;
+
+    // Check for special zero address case
+    if (address_len == 41) {
+        // Check if it's our special zero address format (all '1's after 'mx')
+        for (size_t i = 2; i < 41; i++) {
+            if (address[i] != '1') {
+                break;
+            }
+            if (i == 40) {  // All characters were '1'
+                return 0;
+            }
+        }
+    }
+
+    // Decode Base58 address (skip "mx" prefix)
+    uint8_t decoded[25] = {0};
     size_t decoded_len = sizeof(decoded);
-    if (base58_decode(address, decoded, &decoded_len) != 0 || decoded_len != 25) {
+    if (base58_decode(address + 2, decoded, &decoded_len) != 0 || decoded_len != 25) {
         return -1;
     }
 
@@ -288,12 +246,18 @@ int mxd_validate_address(const char *address) {
     }
 
     // Verify checksum
-    uint8_t sha_output[64];
-    if (mxd_sha512(decoded, 21, sha_output) != 0 ||
-        mxd_sha512(sha_output, 64, sha_output) != 0) {
+    uint8_t hash_buffer[64] = {0};
+    if (mxd_sha512(decoded, 21, hash_buffer) != 0) {
+        return -1;
+    }
+
+    uint8_t temp_buffer[64] = {0};
+    memcpy(temp_buffer, hash_buffer, 64);
+    memset(hash_buffer, 0, 64);
+    if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
         return -1;
     }
 
     // Compare checksum
-    return memcmp(decoded + 21, sha_output, 4) == 0 ? 0 : -1;
+    return memcmp(decoded + 21, hash_buffer, 4) == 0 ? 0 : -1;
 }

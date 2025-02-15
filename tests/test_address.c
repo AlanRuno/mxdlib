@@ -60,6 +60,7 @@ static void test_address_generation(void) {
     uint8_t zero_key[256] = {0};
     char zero_address[42];
     assert(mxd_generate_address(zero_key, zero_address, sizeof(zero_address)) == 0);
+    printf("Zero address: %s\n", zero_address);
     assert(strlen(zero_address) > 25);
     assert(mxd_validate_address(zero_address) == 0);
     
@@ -68,6 +69,7 @@ static void test_address_generation(void) {
     memset(one_key, 0xFF, sizeof(one_key));
     char one_address[42];
     assert(mxd_generate_address(one_key, one_address, sizeof(one_address)) == 0);
+    printf("One address: %s\n", one_address);
     assert(strlen(one_address) > 25);
     assert(mxd_validate_address(one_address) == 0);
     
@@ -78,6 +80,7 @@ static void test_address_generation(void) {
     }
     char inc_address[42];
     assert(mxd_generate_address(inc_key, inc_address, sizeof(inc_address)) == 0);
+    printf("Inc address: %s\n", inc_address);
     assert(strlen(inc_address) > 25);
     assert(mxd_validate_address(inc_address) == 0);
     

@@ -3,6 +3,8 @@ project(mxd_library)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g3 -O0")
 
 # Find OpenSSL and Libsodium
 find_package(OpenSSL REQUIRED)
@@ -24,7 +26,8 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 # Add library target
 add_library(mxd SHARED
     src/mxd_crypto.c
-    src/mxd_address.c)
+    src/mxd_address.c
+    src/base58.c)
 
 # Link libraries
 target_link_libraries(mxd 
@@ -32,7 +35,7 @@ target_link_libraries(mxd
     sodium
     -static-libgcc
     -static-libstdc++
-    sodium
+    gmp
 )
 
 # Include directories
