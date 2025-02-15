@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <wasm3.h>
-#include <m3_env.h>
 
 // WASM runtime state
 static struct {
@@ -15,6 +14,16 @@ static struct {
 
 // Initialize smart contracts module
 int mxd_init_contracts(void) {
+    // Free existing environment if any
+    if (wasm_state.env) {
+        if (wasm_state.runtime) {
+            m3_FreeRuntime(wasm_state.runtime);
+            wasm_state.runtime = NULL;
+        }
+        m3_FreeEnvironment(wasm_state.env);
+        wasm_state.env = NULL;
+    }
+
     // Initialize WASM environment
     wasm_state.env = m3_NewEnvironment();
     if (!wasm_state.env) {
@@ -25,6 +34,7 @@ int mxd_init_contracts(void) {
     wasm_state.runtime = m3_NewRuntime(wasm_state.env, 64*1024, NULL);
     if (!wasm_state.runtime) {
         m3_FreeEnvironment(wasm_state.env);
+        wasm_state.env = NULL;
         return -1;
     }
 
@@ -52,16 +62,25 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
     // Calculate contract hash
     mxd_sha512(code, code_size, state->contract_hash);
 
+    // Ensure runtime is initialized
+    if (!wasm_state.env || !wasm_state.runtime) {
+        if (mxd_init_contracts() != 0) {
+            return -1;
+        }
+    }
+
     // Parse WASM module
     IM3Module module = NULL;
     M3Result result = m3_ParseModule(wasm_state.env, &module, code, code_size);
     if (!module || result) {
+        printf("Parse error: %s\n", result);
         return -1;
     }
 
     // Load module into runtime
     result = m3_LoadModule(wasm_state.runtime, module);
     if (result) {
+        printf("Load error: %s\n", result);
         m3_FreeModule(module);
         return -1;
     }
@@ -70,6 +89,14 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
     IM3Function func;
     result = m3_FindFunction(&func, wasm_state.runtime, "main");
     if (result) {
+        printf("Find function error: %s\n", result);
+        m3_FreeModule(module);
+        return -1;
+    }
+
+    // Validate function signature
+    if (func->funcType->numArgs != 1 || func->funcType->numRets != 1) {
+        printf("Invalid function signature\n");
         m3_FreeModule(module);
         return -1;
     }

@@ -88,7 +88,9 @@ target_link_libraries(mxd_smart_contracts_tests
     mxd
     ${OPENSSL_LIBRARIES}
     sodium
-    wasm3
+    ${WASM3_LIBRARY}
+    ${UVWASI_LIBRARY}
+    ${UV_LIBRARY}
 )
 
 add_test(NAME crypto_tests COMMAND mxd_crypto_tests)
