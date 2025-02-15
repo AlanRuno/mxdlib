@@ -4,36 +4,11 @@
 #include "../include/mxd_smart_contracts.h"
 
 // Test WebAssembly code (minimal module)
-static const uint8_t test_wasm[] = {
-    0x00, 0x61, 0x73, 0x6D,  // magic
-    0x01, 0x00, 0x00, 0x00,  // version
-    // Type section
-    0x01, 0x06,              // section code, section size
-    0x01,                    // num types
-    0x60,                    // func
-    0x01,                    // num params
-    0x7F,                    // i32
-    0x01,                    // num results
-    0x7F,                    // i32
-    // Function section
-    0x03, 0x02,             // section code, section size
-    0x01,                    // num functions
-    0x00,                    // type index
-    // Export section
-    0x07, 0x07,             // section code, section size
-    0x01,                    // num exports
-    0x04,                    // string length
-    0x6D, 0x61, 0x69, 0x6E,  // "main"
-    0x00,                    // export kind
-    0x00,                    // export func index
-    // Code section
-    0x0A, 0x06,             // section code, section size
-    0x01,                    // num functions
-    0x04,                    // function body size
-    0x00,                    // local decl count
-    0x20, 0x00,             // local.get 0
-    0x0B                     // end
-};
+#include "wasm_binary.h"
+
+// Test input/output values
+#define TEST_INPUT_VALUE 5
+#define EXPECTED_OUTPUT_VALUE 47  // 5 + 42 (from WebAssembly code)
 
 static void test_contract_initialization(void) {
     assert(mxd_init_contracts() == 0);
@@ -67,17 +42,17 @@ static void test_contract_deployment(void) {
 static void test_contract_execution(void) {
     mxd_contract_state_t state;
     mxd_execution_result_t result;
-    uint32_t input[2] = {5, 3};  // Test adding 5 + 3
+    uint32_t input = TEST_INPUT_VALUE;
     
     // Deploy and execute contract
-    assert(mxd_deploy_contract(test_wasm, sizeof(test_wasm), &state) == 0);
-    assert(mxd_execute_contract(&state, (uint8_t*)input, sizeof(input),
+    assert(mxd_deploy_contract(test_wasm, test_wasm_len, &state) == 0);
+    assert(mxd_execute_contract(&state, (uint8_t*)&input, sizeof(input),
                                &result) == 0);
     
     // Verify result
     assert(result.success);
     assert(result.gas_used > 0);
-    assert(*(uint32_t*)result.return_data == 8);  // 5 + 3 = 8
+    assert(*(uint32_t*)result.return_data == EXPECTED_OUTPUT_VALUE);
     
     mxd_free_contract_state(&state);
     printf("Contract execution test passed\n");
@@ -108,13 +83,18 @@ static void test_contract_storage(void) {
 }
 
 static void test_state_transition(void) {
-    mxd_contract_state_t old_state, new_state;
+    mxd_contract_state_t old_state = {0}, new_state = {0};
     uint8_t key[4] = {1, 2, 3, 4};
     uint8_t value[4] = {5, 6, 7, 8};
     
     // Deploy contract
-    assert(mxd_deploy_contract(test_wasm, sizeof(test_wasm), &old_state) == 0);
+    assert(mxd_deploy_contract(test_wasm, test_wasm_len, &old_state) == 0);
+    
+    // Create new state with deep copy
     memcpy(&new_state, &old_state, sizeof(mxd_contract_state_t));
+    new_state.storage = NULL;
+    new_state.storage_size = 0;
+    new_state.module = old_state.module;  // Share the module between states
     
     // Modify state
     assert(mxd_set_contract_storage(&new_state, key, sizeof(key),

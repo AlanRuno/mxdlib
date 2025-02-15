@@ -22,6 +22,7 @@ typedef struct {
     uint64_t gas_limit;           // Gas limit for contract
     uint8_t *storage;             // Contract storage
     size_t storage_size;          // Storage size
+    void *module;                 // WebAssembly module handle
 } mxd_contract_state_t;
 
 // Contract execution result

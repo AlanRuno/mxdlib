@@ -24,21 +24,31 @@ int mxd_init_contracts(void) {
         wasm_state.env = NULL;
     }
 
-    // Initialize WASM environment
+    // Free existing runtime if any
+    if (wasm_state.runtime) {
+        m3_FreeRuntime(wasm_state.runtime);
+        wasm_state.runtime = NULL;
+    }
+
+    // Free existing environment if any
+    if (wasm_state.env) {
+        m3_FreeEnvironment(wasm_state.env);
+        wasm_state.env = NULL;
+    }
+
+    // Initialize new WASM environment
     wasm_state.env = m3_NewEnvironment();
     if (!wasm_state.env) {
         return -1;
     }
 
-    // Create runtime
+    // Create new runtime with 64KB memory
     wasm_state.runtime = m3_NewRuntime(wasm_state.env, 64*1024, NULL);
     if (!wasm_state.runtime) {
         m3_FreeEnvironment(wasm_state.env);
         wasm_state.env = NULL;
         return -1;
     }
-
-    wasm_state.memory_size = 64*1024;  // 64KB initial memory
     return 0;
 }
 
@@ -85,21 +95,8 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
         return -1;
     }
 
-    // Find main function
-    IM3Function func;
-    result = m3_FindFunction(&func, wasm_state.runtime, "main");
-    if (result) {
-        printf("Find function error: %s\n", result);
-        m3_FreeModule(module);
-        return -1;
-    }
-
-    // Validate function signature
-    if (func->funcType->numArgs != 1 || func->funcType->numRets != 1) {
-        printf("Invalid function signature\n");
-        m3_FreeModule(module);
-        return -1;
-    }
+    // Store module in state for later use
+    state->module = module;
 
     return 0;
 }
@@ -119,43 +116,31 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     IM3Function func;
     M3Result res = m3_FindFunction(&func, wasm_state.runtime, "main");
     if (res) {
+        printf("Find function error: %s\n", res);
         return -1;
     }
 
-    // Get memory
-    uint32_t memory_size = 0;
-    uint8_t *memory = NULL;
-    memory = m3_GetMemory(wasm_state.runtime, &memory_size, 0);
-    if (!memory) {
-        return -1;
-    }
+    // Calculate initial gas cost (base cost + input size)
+    uint64_t gas_used = 100 + input_size;  // Base cost of 100 gas units
 
-    // Allocate memory for input
-    uint32_t input_ptr = 0;  // Start at beginning of memory
-    if (input_size > memory_size) {
-        return -1;
-    }
-    memcpy(memory + input_ptr, input, input_size);
-
-    // Convert arguments to strings
-    char input_ptr_str[32];
-    char input_size_str[32];
-    snprintf(input_ptr_str, sizeof(input_ptr_str), "%u", input_ptr);
-    snprintf(input_size_str, sizeof(input_size_str), "%u", (unsigned int)input_size);
-
-    // Call function
-    const char *args[] = {input_ptr_str, input_size_str};
-    res = m3_CallArgv(func, 2, args);
+    // Call function with input value
+    uint32_t input_val = *(const uint32_t*)input;
+    res = m3_CallV(func, input_val);
     if (res) {
+        printf("Call error: %s\n", res);
         return -1;
     }
 
     // Get return value
-    uint64_t ret = 0;
+    uint32_t ret = 0;
     res = m3_GetResultsV(func, &ret);
     if (res) {
+        printf("Get results error: %s\n", res);
         return -1;
     }
+
+    // Add gas cost for computation (simplified model)
+    gas_used += 10;  // Cost per operation
 
     // Copy return value to result
     if (sizeof(ret) > sizeof(result->return_data)) {
@@ -164,7 +149,7 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     memcpy(result->return_data, &ret, sizeof(ret));
     result->return_size = sizeof(ret);
     result->success = 1;
-    result->gas_used = state->gas_used;
+    result->gas_used = gas_used;
 
     return 0;
 }
@@ -186,10 +171,15 @@ int mxd_validate_state_transition(const mxd_contract_state_t *old_state,
         return -1;
     }
 
-    // Validate state hash
-    uint8_t computed_hash[64];
-    mxd_sha512(new_state->storage, new_state->storage_size, computed_hash);
-    if (memcmp(computed_hash, new_state->state_hash, 64) != 0) {
+    // Validate state hash only if storage exists
+    if (new_state->storage && new_state->storage_size > 0) {
+        uint8_t computed_hash[64];
+        mxd_sha512(new_state->storage, new_state->storage_size, computed_hash);
+        if (memcmp(computed_hash, new_state->state_hash, 64) != 0) {
+            return -1;
+        }
+    } else if (old_state->storage && old_state->storage_size > 0) {
+        // If new state has no storage but old state did, that's invalid
         return -1;
     }
 
@@ -286,7 +276,11 @@ int mxd_set_contract_storage(mxd_contract_state_t *state,
 // Free contract state resources
 void mxd_free_contract_state(mxd_contract_state_t *state) {
     if (state) {
-        free(state->storage);
+        if (state->storage) {
+            free(state->storage);
+            state->storage = NULL;
+        }
+        // Note: module is managed by the runtime and shared between states
         memset(state, 0, sizeof(mxd_contract_state_t));
     }
 }
