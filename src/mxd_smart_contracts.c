@@ -124,6 +124,9 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     }
 
     // Copy return value to result
+    if (sizeof(ret) > sizeof(result->return_data)) {
+        return -1;
+    }
     memcpy(result->return_data, &ret, sizeof(ret));
     result->return_size = sizeof(ret);
     result->success = 1;
