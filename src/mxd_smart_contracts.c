@@ -133,18 +133,6 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     result->gas_used = state->gas_used;
 
     return 0;
-    
-    if (return_size > sizeof(result->return_data)) {
-        return -1;
-    }
-
-    // Copy return data
-    memcpy(result->return_data, memory + return_ptr, return_size);
-    result->return_size = return_size;
-    result->success = 1;
-    result->gas_used = state->gas_used;  // TODO: Implement gas metering
-
-    return 0;
 }
 
 // Validate contract state transition
