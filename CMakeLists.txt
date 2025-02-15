@@ -54,7 +54,8 @@ add_library(mxd SHARED
     src/mxd_utxo.c
     src/mxd_mempool.c
     src/mxd_p2p.c
-    src/mxd_smart_contracts.c)
+    src/mxd_smart_contracts.c
+    src/checkpoints/mxd_checkpoints.c)
 
 # Link libraries
 target_link_libraries(mxd 

@@ -102,3 +102,15 @@ add_test(NAME utxo_tests COMMAND mxd_utxo_tests)
 add_test(NAME mempool_tests COMMAND mxd_mempool_tests)
 add_test(NAME p2p_tests COMMAND mxd_p2p_tests)
 add_test(NAME smart_contracts_tests COMMAND mxd_smart_contracts_tests)
+
+add_executable(mxd_checkpoints_tests
+    test_checkpoints.c
+)
+
+target_link_libraries(mxd_checkpoints_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+)
+
+add_test(NAME checkpoints_tests COMMAND mxd_checkpoints_tests)
