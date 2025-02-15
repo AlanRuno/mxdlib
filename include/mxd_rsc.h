@@ -5,15 +5,15 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 // Node stake information
 typedef struct {
-    char node_id[64];
-    double stake_amount;
-    uint32_t response_time;
-    uint8_t public_key[256];
+  char node_id[64];
+  double stake_amount;
+  uint32_t response_time;
+  uint8_t public_key[256];
 } mxd_node_stake_t;
 
 // Validate if a node meets Rapid Stake requirements

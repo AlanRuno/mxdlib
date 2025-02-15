@@ -5,18 +5,18 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
 #include "mxd_transaction.h"
+#include <stdint.h>
 
 // UTXO entry structure
 typedef struct {
-    uint8_t tx_hash[64];           // Transaction hash
-    uint32_t output_index;         // Output index in transaction
-    uint8_t owner_key[256];        // Owner's public key
-    double amount;                 // Amount of coins
-    uint32_t required_signatures;   // Number of required signatures (multi-sig)
-    uint8_t *cosigner_keys;        // Array of cosigner public keys
-    uint32_t cosigner_count;       // Number of cosigners
+  uint8_t tx_hash[64];          // Transaction hash
+  uint32_t output_index;        // Output index in transaction
+  uint8_t owner_key[256];       // Owner's public key
+  double amount;                // Amount of coins
+  uint32_t required_signatures; // Number of required signatures (multi-sig)
+  uint8_t *cosigner_keys;       // Array of cosigner public keys
+  uint32_t cosigner_count;      // Number of cosigners
 } mxd_utxo_t;
 
 // Initialize UTXO database
@@ -40,10 +40,9 @@ int mxd_verify_utxo(const uint8_t tx_hash[64], uint32_t output_index,
                     const uint8_t public_key[256]);
 
 // Create multi-signature UTXO
-int mxd_create_multisig_utxo(mxd_utxo_t *utxo,
-                            const uint8_t *cosigner_keys,
-                            uint32_t cosigner_count,
-                            uint32_t required_signatures);
+int mxd_create_multisig_utxo(mxd_utxo_t *utxo, const uint8_t *cosigner_keys,
+                             uint32_t cosigner_count,
+                             uint32_t required_signatures);
 
 // Free UTXO resources
 void mxd_free_utxo(mxd_utxo_t *utxo);
