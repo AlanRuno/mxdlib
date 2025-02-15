@@ -14,6 +14,16 @@ include_directories(${OPENSSL_INCLUDE_DIR})
 include_directories(/usr/local/include)
 link_directories(/usr/local/lib)
 
+# Find wasm3
+find_library(WASM3_LIBRARY m3 PATHS /usr/local/lib)
+find_path(WASM3_INCLUDE_DIR m3_env.h PATHS /usr/local/include)
+
+if(NOT WASM3_LIBRARY OR NOT WASM3_INCLUDE_DIR)
+    message(FATAL_ERROR "wasm3 library not found")
+endif()
+
+include_directories(${WASM3_INCLUDE_DIR})
+
 # Set output directories
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -33,7 +43,8 @@ add_library(mxd SHARED
     src/mxd_transaction.c
     src/mxd_utxo.c
     src/mxd_mempool.c
-    src/mxd_p2p.c)
+    src/mxd_p2p.c
+    src/mxd_smart_contracts.c)
 
 # Link libraries
 target_link_libraries(mxd 
@@ -42,6 +53,8 @@ target_link_libraries(mxd
     -static-libgcc
     -static-libstdc++
     gmp
+    ${WASM3_LIBRARY}
+    m
 )
 
 # Include directories

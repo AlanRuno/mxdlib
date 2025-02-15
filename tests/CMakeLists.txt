@@ -80,6 +80,17 @@ target_link_libraries(mxd_p2p_tests
     pthread
 )
 
+add_executable(mxd_smart_contracts_tests
+    test_smart_contracts.c
+)
+
+target_link_libraries(mxd_smart_contracts_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    wasm3
+)
+
 add_test(NAME crypto_tests COMMAND mxd_crypto_tests)
 add_test(NAME address_tests COMMAND mxd_address_tests)
 add_test(NAME blockchain_tests COMMAND mxd_blockchain_tests)
@@ -88,3 +99,4 @@ add_test(NAME transaction_tests COMMAND mxd_transaction_tests)
 add_test(NAME utxo_tests COMMAND mxd_utxo_tests)
 add_test(NAME mempool_tests COMMAND mxd_mempool_tests)
 add_test(NAME p2p_tests COMMAND mxd_p2p_tests)
+add_test(NAME smart_contracts_tests COMMAND mxd_smart_contracts_tests)

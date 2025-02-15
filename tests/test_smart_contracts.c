@@ -1,0 +1,149 @@
+#include <stdio.h>
+#include <string.h>
+#include <assert.h>
+#include "../include/mxd_smart_contracts.h"
+
+// Test WebAssembly code (simple counter)
+static const uint8_t test_wasm[] = {
+    0x00, 0x61, 0x73, 0x6D,  // magic
+    0x01, 0x00, 0x00, 0x00,  // version
+    // Type section
+    0x01, 0x07,              // section code, section size
+    0x01,                    // num types
+    0x60,                    // func
+    0x02,                    // num params
+    0x7F, 0x7F,             // i32, i32
+    0x01,                    // num results
+    0x7F,                    // i32
+    // Function section
+    0x03, 0x02,             // section code, section size
+    0x01,                    // num functions
+    0x00,                    // type index
+    // Export section
+    0x07, 0x07,             // section code, section size
+    0x01,                    // num exports
+    0x04,                    // string length
+    0x6D, 0x61, 0x69, 0x6E,  // "main"
+    0x00,                    // export kind
+    0x00,                    // export func index
+    // Code section
+    0x0A, 0x09,             // section code, section size
+    0x01,                    // num functions
+    0x07,                    // function body size
+    0x00,                    // local decl count
+    0x20, 0x00,             // local.get 0
+    0x20, 0x01,             // local.get 1
+    0x6A,                    // i32.add
+    0x0B                     // end
+};
+
+static void test_contract_initialization(void) {
+    assert(mxd_init_contracts() == 0);
+    printf("Contract initialization test passed\n");
+}
+
+static void test_contract_deployment(void) {
+    mxd_contract_state_t state;
+    
+    // Deploy contract
+    assert(mxd_deploy_contract(test_wasm, sizeof(test_wasm), &state) == 0);
+    
+    // Verify contract hash
+    int is_zero = 1;
+    for (int i = 0; i < 64; i++) {
+        if (state.contract_hash[i] != 0) {
+            is_zero = 0;
+            break;
+        }
+    }
+    assert(!is_zero);
+    
+    mxd_free_contract_state(&state);
+    printf("Contract deployment test passed\n");
+}
+
+static void test_contract_execution(void) {
+    mxd_contract_state_t state;
+    mxd_execution_result_t result;
+    uint32_t input[2] = {5, 3};  // Test adding 5 + 3
+    
+    // Deploy and execute contract
+    assert(mxd_deploy_contract(test_wasm, sizeof(test_wasm), &state) == 0);
+    assert(mxd_execute_contract(&state, (uint8_t*)input, sizeof(input),
+                               &result) == 0);
+    
+    // Verify result
+    assert(result.success);
+    assert(result.gas_used > 0);
+    assert(*(uint32_t*)result.return_data == 8);  // 5 + 3 = 8
+    
+    mxd_free_contract_state(&state);
+    printf("Contract execution test passed\n");
+}
+
+static void test_contract_storage(void) {
+    mxd_contract_state_t state;
+    uint8_t key[4] = {1, 2, 3, 4};
+    uint8_t value[4] = {5, 6, 7, 8};
+    uint8_t retrieved[4];
+    size_t value_size = sizeof(retrieved);
+    
+    // Deploy contract
+    assert(mxd_deploy_contract(test_wasm, sizeof(test_wasm), &state) == 0);
+    
+    // Set storage
+    assert(mxd_set_contract_storage(&state, key, sizeof(key),
+                                  value, sizeof(value)) == 0);
+    
+    // Get storage
+    assert(mxd_get_contract_storage(&state, key, sizeof(key),
+                                  retrieved, &value_size) == 0);
+    assert(value_size == sizeof(value));
+    assert(memcmp(value, retrieved, value_size) == 0);
+    
+    mxd_free_contract_state(&state);
+    printf("Contract storage test passed\n");
+}
+
+static void test_state_transition(void) {
+    mxd_contract_state_t old_state, new_state;
+    uint8_t key[4] = {1, 2, 3, 4};
+    uint8_t value[4] = {5, 6, 7, 8};
+    
+    // Deploy contract
+    assert(mxd_deploy_contract(test_wasm, sizeof(test_wasm), &old_state) == 0);
+    memcpy(&new_state, &old_state, sizeof(mxd_contract_state_t));
+    
+    // Modify state
+    assert(mxd_set_contract_storage(&new_state, key, sizeof(key),
+                                  value, sizeof(value)) == 0);
+    
+    // Validate transition
+    assert(mxd_validate_state_transition(&old_state, &new_state) == 0);
+    
+    mxd_free_contract_state(&old_state);
+    mxd_free_contract_state(&new_state);
+    printf("State transition test passed\n");
+}
+
+static void test_gas_calculation(void) {
+    uint64_t gas = mxd_calculate_gas(test_wasm, sizeof(test_wasm));
+    assert(gas > 0);
+    assert(gas <= MXD_MAX_GAS);
+    
+    printf("Gas calculation test passed\n");
+}
+
+int main(void) {
+    printf("Starting smart contracts tests...\n");
+    
+    test_contract_initialization();
+    test_contract_deployment();
+    test_contract_execution();
+    test_contract_storage();
+    test_state_transition();
+    test_gas_calculation();
+    
+    printf("All smart contracts tests passed\n");
+    return 0;
+}
