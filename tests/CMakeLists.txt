@@ -114,3 +114,15 @@ target_link_libraries(mxd_checkpoints_tests
 )
 
 add_test(NAME checkpoints_tests COMMAND mxd_checkpoints_tests)
+
+add_executable(mxd_data_quantization_tests
+    test_data_quantization.c
+)
+
+target_link_libraries(mxd_data_quantization_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+)
+
+add_test(NAME data_quantization_tests COMMAND mxd_data_quantization_tests)
