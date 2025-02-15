@@ -27,7 +27,12 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_library(mxd SHARED
     src/mxd_crypto.c
     src/mxd_address.c
-    src/base58.c)
+    src/base58.c
+    src/blockchain/mxd_blockchain.c
+    src/blockchain/mxd_rsc.c
+    src/mxd_transaction.c
+    src/mxd_utxo.c
+    src/mxd_mempool.c)
 
 # Link libraries
 target_link_libraries(mxd 
