@@ -237,8 +237,16 @@ static int test_p2p_networking(void) {
   return 0;
 }
 
+#include "../include/mxd_ntp.h"
+
 int main(void) {
   printf("Starting P2P networking tests...\n");
+
+  // Initialize NTP for timestamp synchronization
+  if (mxd_init_ntp() != 0) {
+    printf("Failed to initialize NTP\n");
+    return 1;
+  }
 
   // Set up signal handler for timeouts
   signal(SIGALRM, SIG_DFL);

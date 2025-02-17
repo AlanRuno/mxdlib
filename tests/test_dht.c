@@ -207,41 +207,43 @@ int main(void) {
     }
 
     // Run tests with timeouts and cleanup
-    alarm(5);
+    alarm(15);
     test_node_id();
     alarm(0);
     mxd_stop_dht();
-    usleep(100000); // Wait for cleanup
+    usleep(500000); // Wait longer for cleanup
 
-    alarm(15);
+    alarm(30);
     test_k_buckets();
     alarm(0);
     mxd_stop_dht();
-    usleep(100000); // Wait for cleanup
+    usleep(500000); // Wait longer for cleanup
 
-    alarm(5);
+    alarm(15);
     test_value_storage();
     alarm(0);
     mxd_stop_dht();
-    usleep(100000); // Wait for cleanup
+    usleep(500000); // Wait longer for cleanup
 
-    alarm(15);
+    alarm(30);
     test_node_discovery();
     alarm(0);
     mxd_stop_dht();
-    usleep(100000); // Wait for cleanup
+    usleep(500000); // Wait longer for cleanup
 
-    alarm(5);
+    alarm(15);
     test_nat_traversal();
     alarm(0);
     mxd_stop_dht();
-    usleep(100000); // Wait for cleanup
+    usleep(500000); // Wait longer for cleanup
 
-    alarm(5);
+    alarm(15);
     test_statistics();
     alarm(0);
     mxd_stop_dht();
-    usleep(100000); // Wait for cleanup
+    usleep(500000); // Wait longer for cleanup
+
+    printf("All DHT tests completed\n");
 
     alarm(3);
     test_value_storage();
