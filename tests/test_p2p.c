@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -235,10 +236,16 @@ static void test_p2p_networking(void) {
 int main(void) {
   printf("Starting P2P networking tests...\n");
 
+  // Set global test timeout using alarm
+  alarm(30); // 30 second timeout for entire test suite
+
   test_p2p_initialization();
   test_peer_management();
   test_message_handling();
   test_p2p_networking();
+
+  // Clear alarm
+  alarm(0);
 
   printf("All P2P networking tests passed\n");
   return 0;
