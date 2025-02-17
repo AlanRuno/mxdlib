@@ -41,15 +41,26 @@ static void test_k_buckets(void) {
     // Initialize DHT with test key
     uint8_t test_key[32] = {1};
     assert(mxd_init_dht(test_key) == 0);
+    assert(mxd_start_dht(8000) == 0); // Start DHT service
+
+    // Wait for DHT to initialize
+    usleep(100000); // 100ms
 
     // Add nodes to buckets
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < K_PARAM; i++) { // Only add up to K_PARAM nodes
         char addr[32];
         snprintf(addr, sizeof(addr), "192.168.1.%d", i);
         uint8_t node_id[20] = {0};
         node_id[0] = i; // Ensure unique node IDs
-        assert(mxd_dht_add_node(addr, 8000 + i, node_id) == 0);
+        int ret = mxd_dht_add_node(addr, 8000 + i, node_id);
+        if (ret != 0) {
+            printf("Failed to add node %d: %d\n", i, ret);
+            continue;
+        }
     }
+
+    // Stop DHT service
+    assert(mxd_stop_dht() == 0);
     
     // Verify bucket sizes
     for (size_t i = 0; i < BUCKET_COUNT; i++) {

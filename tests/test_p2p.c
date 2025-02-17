@@ -125,7 +125,7 @@ static int test_peer_management(void) {
   }
   if (connect_retries < 0) {
     printf("Peer connection timeout\n");
-    return;
+    return 1;
   }
 
   // Get peer information
@@ -161,7 +161,7 @@ static int test_message_handling(void) {
   }
   if (!echo_server_running) {
     printf("Echo server failed to start\n");
-    return;
+    return 1;
   }
 
   // Set message handler
@@ -181,7 +181,7 @@ static int test_message_handling(void) {
   }
   if (connect_retries < 0) {
     printf("Peer connection timeout\n");
-    return;
+    return 1;
   }
 
   // Send test message
