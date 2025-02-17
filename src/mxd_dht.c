@@ -22,10 +22,6 @@ typedef struct {
     uint8_t distance[20];
 } node_distance_t;
 
-// Kademlia constants
-// Global DHT state
-mxd_dht_state_t dht_state = {0};
-
 // Calculate distance between two node IDs (XOR metric)
 static void calculate_distance(const mxd_node_id_t *a, const mxd_node_id_t *b, uint8_t *distance) {
     for (int i = 0; i < 20; i++) {
