@@ -248,6 +248,7 @@ static int test_p2p_networking(void) {
 
 int main(void) {
   printf("Starting P2P networking tests...\n");
+  printf("Test timeouts set to 120 seconds\n");
 
   // Initialize NTP for timestamp synchronization
   if (mxd_init_ntp() != 0) {
