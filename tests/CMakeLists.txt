@@ -138,3 +138,15 @@ target_link_libraries(mxd_voluntary_tip_tests
 )
 
 add_test(NAME voluntary_tip_tests COMMAND mxd_voluntary_tip_tests)
+
+add_executable(mxd_ntp_tests
+    test_ntp.c
+)
+
+target_link_libraries(mxd_ntp_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+)
+
+add_test(NAME ntp_tests COMMAND mxd_ntp_tests)
