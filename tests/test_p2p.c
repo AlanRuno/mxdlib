@@ -1,4 +1,5 @@
 #include "../include/mxd_p2p.h"
+#include "../include/mxd_ntp.h"
 #include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
@@ -250,6 +251,10 @@ int main(void) {
 
   // Set up signal handler for timeouts
   signal(SIGALRM, SIG_DFL);
+
+  // Ensure P2P is stopped before starting tests
+  mxd_stop_p2p();
+  usleep(500000); // Wait for cleanup
 
   // Run tests with timeouts and cleanup
   alarm(10);

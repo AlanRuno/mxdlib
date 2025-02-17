@@ -212,6 +212,10 @@ int main(void) {
         return 1;
     }
 
+    // Ensure DHT is stopped before starting tests
+    mxd_stop_dht();
+    usleep(500000); // Wait for cleanup
+
     // Run tests with timeouts and cleanup
     alarm(15);
     int ret = test_node_id();
