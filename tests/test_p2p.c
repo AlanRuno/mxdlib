@@ -24,14 +24,21 @@ static void test_message_handler(const char *address, uint16_t port,
 
 // Echo server thread function
 static void *echo_server_thread_func(void *arg) {
-  // Create socket
-  echo_server_socket = socket(AF_INET, SOCK_STREAM, 0);
+  // Create non-blocking socket
+  echo_server_socket = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
   assert(echo_server_socket >= 0);
 
   // Set socket options
   int opt = 1;
   assert(setsockopt(echo_server_socket, SOL_SOCKET, SO_REUSEADDR, &opt,
                     sizeof(opt)) >= 0);
+  
+  // Set send/receive timeouts
+  struct timeval tv;
+  tv.tv_sec = 1;
+  tv.tv_usec = 0;
+  assert(setsockopt(echo_server_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) >= 0);
+  assert(setsockopt(echo_server_socket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) >= 0);
 
   // Bind socket
   struct sockaddr_in server_addr = {0};
