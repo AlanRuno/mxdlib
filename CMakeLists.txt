@@ -58,7 +58,9 @@ add_library(mxd SHARED
     src/checkpoints/mxd_checkpoints.c
     src/quantization/mxd_data_quantization.c
     src/mxd_ntp.c
+    src/mxd_metrics.c)
     src/mxd_dht.c)
+
 
 # Link libraries
 target_link_libraries(mxd 
