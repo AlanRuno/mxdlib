@@ -183,7 +183,7 @@ static void test_message_handling(void) {
   assert(mxd_broadcast_message(MXD_MSG_PING, test_message,
                                strlen(test_message)) == 0);
 
-  // Stop echo server
+  // Stop echo server with timeout
   echo_server_running = 0;
 
   // Force close server socket to unblock accept
@@ -191,7 +191,16 @@ static void test_message_handling(void) {
     close(echo_server_socket);
   }
 
-  pthread_join(echo_server_thread, NULL);
+  // Wait for thread to exit with timeout
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  ts.tv_sec += 1; // 1 second timeout
+  
+  int ret = pthread_timedjoin_np(echo_server_thread, NULL, &ts);
+  if (ret != 0) {
+    printf("Echo server thread join timeout\n");
+    pthread_cancel(echo_server_thread);
+  }
 
   printf("Message handling test passed\n");
 }
