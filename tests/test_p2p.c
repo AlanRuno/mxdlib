@@ -81,8 +81,8 @@ static void test_p2p_initialization(void) {
   // Start P2P networking
   assert(mxd_start_p2p() == 0);
 
-  // Wait for network to initialize
-  sleep(1);
+  // Wait for network to initialize (100ms)
+  usleep(100000);
 
   printf("P2P initialization test passed\n");
 }
@@ -91,8 +91,19 @@ static void test_peer_management(void) {
   // Add peer
   assert(mxd_add_peer("127.0.0.1", 12346) == 0);
 
-  // Wait for peer connection
-  sleep(1);
+  // Wait for peer connection (max 1 second)
+  int retries = 10;
+  while (retries-- > 0) {
+    mxd_peer_t peer;
+    if (mxd_get_peer("127.0.0.1", 12346, &peer) == 0) {
+      break;
+    }
+    usleep(100000); // Sleep 100ms
+  }
+  if (retries < 0) {
+    printf("Peer connection timeout\n");
+    return;
+  }
 
   // Get peer information
   mxd_peer_t peer;
@@ -119,9 +130,14 @@ static void test_message_handling(void) {
                         NULL);
   assert(ret == 0);
 
-  // Wait for echo server to start
-  while (!echo_server_running) {
+  // Wait for echo server to start (max 1 second)
+  int retries = 10;
+  while (!echo_server_running && retries-- > 0) {
     usleep(100000); // Sleep 100ms
+  }
+  if (!echo_server_running) {
+    printf("Echo server failed to start\n");
+    return;
   }
 
   // Set message handler
@@ -130,8 +146,19 @@ static void test_message_handling(void) {
   // Add test peer
   assert(mxd_add_peer("127.0.0.1", 12347) == 0);
 
-  // Wait for peer connection
-  sleep(1);
+  // Wait for peer connection (max 1 second)
+  int retries = 10;
+  while (retries-- > 0) {
+    mxd_peer_t peer;
+    if (mxd_get_peer("127.0.0.1", 12346, &peer) == 0) {
+      break;
+    }
+    usleep(100000); // Sleep 100ms
+  }
+  if (retries < 0) {
+    printf("Peer connection timeout\n");
+    return;
+  }
 
   // Send test message
   const char *test_message = "Hello, P2P!";
@@ -159,8 +186,8 @@ static void test_p2p_networking(void) {
   // Test peer discovery
   assert(mxd_start_peer_discovery() == 0);
   
-  // Wait for DHT to initialize
-  sleep(1);
+  // Wait for DHT to initialize (100ms)
+  usleep(100000);
   
   // Test NAT traversal
   assert(mxd_enable_nat_traversal() == 0);
