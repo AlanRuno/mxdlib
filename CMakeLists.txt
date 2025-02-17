@@ -57,7 +57,8 @@ add_library(mxd SHARED
     src/mxd_smart_contracts.c
     src/checkpoints/mxd_checkpoints.c
     src/quantization/mxd_data_quantization.c
-    src/mxd_ntp.c)
+    src/mxd_ntp.c
+    src/mxd_metrics.c)
 
 # Link libraries
 target_link_libraries(mxd 
