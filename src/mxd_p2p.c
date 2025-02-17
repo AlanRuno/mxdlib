@@ -1,5 +1,6 @@
 #include "../include/mxd_p2p.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_dht.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -14,26 +15,35 @@
 
 // P2P network state
 static struct {
-  int server_socket;
-  uint16_t port;
-  pthread_t server_thread;
-  pthread_t discovery_thread;
-  volatile int running;
-  mxd_peer_t *peers;
-  size_t peer_count;
-  pthread_mutex_t peers_mutex;
-  mxd_message_handler_t message_handler;
+    int server_socket;
+    uint16_t port;
+    pthread_t server_thread;
+    pthread_t discovery_thread;
+    volatile int running;
+    mxd_peer_t *peers;
+    size_t peer_count;
+    pthread_mutex_t peers_mutex;
+    mxd_message_handler_t message_handler;
+    uint8_t public_key[32];
+    mxd_node_id_t local_id;
 } p2p_state = {0};
 
 // Initialize P2P networking
-int mxd_init_p2p(uint16_t port) {
-  if (p2p_state.running) {
+int mxd_init_p2p(uint16_t port, const uint8_t *public_key) {
+  if (p2p_state.running || !public_key) {
     return -1;
   }
 
   // Initialize state
   memset(&p2p_state, 0, sizeof(p2p_state));
   p2p_state.port = port;
+  memcpy(p2p_state.public_key, public_key, 32);
+  
+  // Calculate node ID from public key
+  if (mxd_sha1(public_key, 32, p2p_state.local_id.id) != 0) {
+    return -1;
+  }
+  
   p2p_state.peers = malloc(MXD_MAX_PEERS * sizeof(mxd_peer_t));
   if (!p2p_state.peers) {
     return -1;
@@ -142,11 +152,24 @@ static void *server_thread_func(void *arg) {
 
 // Discovery thread function
 static void *discovery_thread_func(void *arg) {
-  while (p2p_state.running) {
-    // TODO: Implement DHT-based peer discovery
-    sleep(1);
-  }
-  return NULL;
+    while (p2p_state.running) {
+        // Get nodes from DHT
+        mxd_dht_node_t nodes[MXD_MAX_PEERS];
+        size_t node_count = MXD_MAX_PEERS;
+        
+        // Use our node ID as target to find nearby nodes
+        if (mxd_dht_find_nodes(&p2p_state.local_id, nodes, &node_count) == 0) {
+            // Add discovered nodes to peer list
+            for (size_t i = 0; i < node_count; i++) {
+                if (nodes[i].active) {
+                    mxd_add_peer(nodes[i].address, nodes[i].port);
+                }
+            }
+        }
+        
+        sleep(60); // Update every minute
+    }
+    return NULL;
 }
 
 // Start P2P networking
@@ -413,24 +436,46 @@ int mxd_set_message_handler(mxd_message_handler_t handler) {
 
 // Start DHT-based peer discovery
 int mxd_start_peer_discovery(void) {
-  // TODO: Implement DHT-based peer discovery
-  return -1;
+    if (!p2p_state.running) {
+        return -1;
+    }
+    
+    // Initialize DHT with our public key
+    if (mxd_init_dht(p2p_state.public_key) != 0) {
+        return -1;
+    }
+    
+    // Start DHT on the same port
+    if (mxd_start_dht(p2p_state.port) != 0) {
+        return -1;
+    }
+    
+    return 0;
 }
 
 // Stop DHT-based peer discovery
 int mxd_stop_peer_discovery(void) {
-  // TODO: Implement DHT-based peer discovery
-  return -1;
+    if (!p2p_state.running) {
+        return -1;
+    }
+    
+    return mxd_stop_dht();
 }
 
 // Enable NAT traversal
 int mxd_enable_nat_traversal(void) {
-  // TODO: Implement NAT traversal
-  return -1;
+    if (!p2p_state.running) {
+        return -1;
+    }
+    
+    return mxd_dht_enable_nat_traversal();
 }
 
 // Disable NAT traversal
 int mxd_disable_nat_traversal(void) {
-  // TODO: Implement NAT traversal
-  return -1;
+    if (!p2p_state.running) {
+        return -1;
+    }
+    
+    return mxd_dht_disable_nat_traversal();
 }

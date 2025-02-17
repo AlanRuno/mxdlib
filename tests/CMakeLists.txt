@@ -101,6 +101,7 @@ add_test(NAME transaction_tests COMMAND mxd_transaction_tests)
 add_test(NAME utxo_tests COMMAND mxd_utxo_tests)
 add_test(NAME mempool_tests COMMAND mxd_mempool_tests)
 add_test(NAME p2p_tests COMMAND mxd_p2p_tests)
+set_tests_properties(p2p_tests PROPERTIES TIMEOUT 120)
 add_test(NAME smart_contracts_tests COMMAND mxd_smart_contracts_tests)
 
 add_executable(mxd_checkpoints_tests
@@ -187,3 +188,17 @@ target_link_libraries(mxd_enhanced_consensus_tests
 )
 
 add_test(NAME enhanced_consensus_tests COMMAND mxd_enhanced_consensus_tests)
+
+add_executable(mxd_dht_tests
+    test_dht.c
+)
+
+target_link_libraries(mxd_dht_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME dht_tests COMMAND mxd_dht_tests)
+set_tests_properties(dht_tests PROPERTIES TIMEOUT 120)

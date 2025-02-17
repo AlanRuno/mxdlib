@@ -59,6 +59,8 @@ add_library(mxd SHARED
     src/quantization/mxd_data_quantization.c
     src/mxd_ntp.c
     src/mxd_metrics.c)
+    src/mxd_dht.c)
+
 
 # Link libraries
 target_link_libraries(mxd 
@@ -69,6 +71,7 @@ target_link_libraries(mxd
     gmp
     ${WASM3_LIBRARY}
     m
+    pthread
 )
 
 # Include directories
