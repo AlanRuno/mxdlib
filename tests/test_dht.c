@@ -239,48 +239,50 @@ int main(void) {
     }
     printf("K-bucket test completed\n");
 
-    alarm(15);
-    test_value_storage();
+    alarm(30);
+    ret = test_value_storage();
     alarm(0);
     mxd_stop_dht();
-    usleep(500000); // Wait longer for cleanup
+    usleep(1000000); // Wait longer for cleanup
+    if (ret != 0) {
+        printf("Value storage test failed\n");
+        return 1;
+    }
+    printf("Value storage test completed\n");
+
+    alarm(60);
+    ret = test_node_discovery();
+    alarm(0);
+    mxd_stop_dht();
+    usleep(1000000); // Wait longer for cleanup
+    if (ret != 0) {
+        printf("Node discovery test failed\n");
+        return 1;
+    }
+    printf("Node discovery test completed\n");
 
     alarm(30);
-    test_node_discovery();
+    ret = test_nat_traversal();
     alarm(0);
     mxd_stop_dht();
-    usleep(500000); // Wait longer for cleanup
+    usleep(1000000); // Wait longer for cleanup
+    if (ret != 0) {
+        printf("NAT traversal test failed\n");
+        return 1;
+    }
+    printf("NAT traversal test completed\n");
 
-    alarm(15);
-    test_nat_traversal();
+    alarm(30);
+    ret = test_statistics();
     alarm(0);
     mxd_stop_dht();
-    usleep(500000); // Wait longer for cleanup
+    usleep(1000000); // Wait longer for cleanup
+    if (ret != 0) {
+        printf("Statistics test failed\n");
+        return 1;
+    }
+    printf("Statistics test completed\n");
 
-    alarm(15);
-    test_statistics();
-    alarm(0);
-    mxd_stop_dht();
-    usleep(500000); // Wait longer for cleanup
-
-    printf("All DHT tests completed\n");
-
-    alarm(3);
-    test_value_storage();
-    alarm(0);
-
-    alarm(5);
-    test_node_discovery();
-    alarm(0);
-
-    alarm(2);
-    test_nat_traversal();
-    alarm(0);
-
-    alarm(2);
-    test_statistics();
-    alarm(0);
-    
-    printf("All DHT tests passed!\n");
+    printf("All DHT tests completed successfully!\n");
     return 0;
 }
