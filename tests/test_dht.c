@@ -186,12 +186,37 @@ static void test_statistics(void) {
 int main(void) {
     printf("Starting DHT tests...\n");
     
+    // Set up signal handler for timeouts
+    struct sigaction sa;
+    sa.sa_handler = SIG_DFL;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGALRM, &sa, NULL);
+
+    // Run tests with timeouts
+    alarm(2);
     test_node_id();
+    alarm(0);
+
+    alarm(5);
     test_k_buckets();
+    alarm(0);
+
+    alarm(3);
     test_value_storage();
+    alarm(0);
+
+    alarm(5);
     test_node_discovery();
+    alarm(0);
+
+    alarm(2);
     test_nat_traversal();
+    alarm(0);
+
+    alarm(2);
     test_statistics();
+    alarm(0);
     
     printf("All DHT tests passed!\n");
     return 0;
