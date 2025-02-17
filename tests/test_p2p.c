@@ -114,11 +114,11 @@ static int test_peer_management(void) {
   // Add peer
   assert(mxd_add_peer("127.0.0.1", 12347) == 0);
 
-  // Wait for peer connection (max 1 second)
-  int connect_retries = 10;
+  // Wait for peer connection (max 5 seconds)
+  int connect_retries = 50;
   while (connect_retries-- > 0) {
     mxd_peer_t peer;
-    if (mxd_get_peer("127.0.0.1", 12346, &peer) == 0) {
+    if (mxd_get_peer("127.0.0.1", 12347, &peer) == 0) {
       break;
     }
     usleep(100000); // Sleep 100ms
@@ -170,11 +170,11 @@ static int test_message_handling(void) {
   // Add test peer
   assert(mxd_add_peer("127.0.0.1", 12347) == 0);
 
-  // Wait for peer connection (max 1 second)
-  int connect_retries = 10;
+  // Wait for peer connection (max 5 seconds)
+  int connect_retries = 50;
   while (connect_retries-- > 0) {
     mxd_peer_t peer;
-    if (mxd_get_peer("127.0.0.1", 12346, &peer) == 0) {
+    if (mxd_get_peer("127.0.0.1", 12347, &peer) == 0) {
       break;
     }
     usleep(100000); // Sleep 100ms

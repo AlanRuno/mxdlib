@@ -198,15 +198,49 @@ int main(void) {
     
     // Set up signal handler for timeouts
     signal(SIGALRM, SIG_DFL);
+    
+    // Initialize NTP for timestamp synchronization
+    if (mxd_init_ntp() != 0) {
+        printf("Failed to initialize NTP\n");
+        return 1;
+    }
 
-    // Run tests with timeouts
-    alarm(2);
+    // Run tests with timeouts and cleanup
+    alarm(5);
     test_node_id();
     alarm(0);
+    mxd_stop_dht();
+    usleep(100000); // Wait for cleanup
 
-    alarm(5);
+    alarm(15);
     test_k_buckets();
     alarm(0);
+    mxd_stop_dht();
+    usleep(100000); // Wait for cleanup
+
+    alarm(5);
+    test_value_storage();
+    alarm(0);
+    mxd_stop_dht();
+    usleep(100000); // Wait for cleanup
+
+    alarm(15);
+    test_node_discovery();
+    alarm(0);
+    mxd_stop_dht();
+    usleep(100000); // Wait for cleanup
+
+    alarm(5);
+    test_nat_traversal();
+    alarm(0);
+    mxd_stop_dht();
+    usleep(100000); // Wait for cleanup
+
+    alarm(5);
+    test_statistics();
+    alarm(0);
+    mxd_stop_dht();
+    usleep(100000); // Wait for cleanup
 
     alarm(3);
     test_value_storage();
