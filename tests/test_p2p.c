@@ -141,8 +141,8 @@ static int test_peer_management(void) {
   assert(peer_count == 1); // We should have exactly one peer
 
   // Remove peer
-  assert(mxd_remove_peer("127.0.0.1", 12346) == 0);
-  assert(mxd_get_peer("127.0.0.1", 12346, &peer) == -1);
+  assert(mxd_remove_peer("127.0.0.1", 12347) == 0);
+  assert(mxd_get_peer("127.0.0.1", 12347, &peer) == -1);
 
   printf("Peer management test passed\n");
   return 0;
