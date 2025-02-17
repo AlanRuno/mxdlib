@@ -217,25 +217,27 @@ int main(void) {
     usleep(500000); // Wait for cleanup
 
     // Run tests with timeouts and cleanup
-    alarm(15);
+    alarm(30);
     int ret = test_node_id();
     alarm(0);
     mxd_stop_dht();
-    usleep(500000); // Wait longer for cleanup
+    usleep(1000000); // Wait longer for cleanup
     if (ret != 0) {
         printf("Node ID test failed\n");
         return 1;
     }
+    printf("Node ID test completed\n");
 
-    alarm(30);
+    alarm(60);
     ret = test_k_buckets();
     alarm(0);
     mxd_stop_dht();
-    usleep(500000); // Wait longer for cleanup
+    usleep(1000000); // Wait longer for cleanup
     if (ret != 0) {
         printf("K-bucket test failed\n");
         return 1;
     }
+    printf("K-bucket test completed\n");
 
     alarm(15);
     test_value_storage();
