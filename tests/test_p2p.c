@@ -236,25 +236,29 @@ static void test_p2p_networking(void) {
 int main(void) {
   printf("Starting P2P networking tests...\n");
 
-  // Set up signal handler for timeouts
-  struct sigaction sa;
-  sa.sa_handler = SIG_DFL;
-  sa.sa_flags = 0;
-  sigemptyset(&sa.sa_mask);
-  sigaction(SIGALRM, &sa, NULL);
+  // Run tests with cleanup on failure
+  if (test_p2p_initialization() != 0) {
+    printf("P2P initialization test failed\n");
+    return 1;
+  }
 
-  // Run tests with individual timeouts
-  alarm(5);
-  test_p2p_initialization();
-  alarm(5);
-  test_peer_management();
-  alarm(10);
-  test_message_handling();
-  alarm(10);
-  test_p2p_networking();
+  if (test_peer_management() != 0) {
+    printf("Peer management test failed\n");
+    mxd_stop_p2p();
+    return 1;
+  }
 
-  // Clear alarm
-  alarm(0);
+  if (test_message_handling() != 0) {
+    printf("Message handling test failed\n");
+    mxd_stop_p2p();
+    return 1;
+  }
+
+  if (test_p2p_networking() != 0) {
+    printf("P2P networking test failed\n");
+    mxd_stop_p2p();
+    return 1;
+  }
 
   printf("All P2P networking tests passed\n");
   return 0;

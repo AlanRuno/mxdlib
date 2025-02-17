@@ -38,15 +38,17 @@ static void test_k_buckets(void) {
     uint8_t pub_key[32] = {1};
     assert(mxd_init_dht(pub_key) == 0);
     
+    // Initialize DHT with test key
+    uint8_t test_key[32] = {1};
+    assert(mxd_init_dht(test_key) == 0);
+
     // Add nodes to buckets
     for (int i = 0; i < 100; i++) {
         char addr[32];
         snprintf(addr, sizeof(addr), "192.168.1.%d", i);
         uint8_t node_id[20] = {0};
         node_id[0] = i; // Ensure unique node IDs
-        assert(mxd_init_dht(node_id) == 0); // Initialize DHT first
         assert(mxd_dht_add_node(addr, 8000 + i, node_id) == 0);
-        mxd_stop_dht(); // Clean up before next iteration
     }
     
     // Verify bucket sizes
