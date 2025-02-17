@@ -10,7 +10,7 @@
 #include <unistd.h>
 
 // Test node ID generation and distance calculation
-static void test_node_id(void) {
+static int test_node_id(void) {
     printf("Testing node ID generation...\n");
     
     // Generate two node IDs from different public keys
@@ -31,10 +31,11 @@ static void test_node_id(void) {
     assert(memcmp(id1.id, id2.id, 20) != 0);
     
     printf("Node ID test passed\n");
+    return 0;
 }
 
 // Test k-bucket operations
-static void test_k_buckets(void) {
+static int test_k_buckets(void) {
     printf("Testing k-bucket operations...\n");
     
     uint8_t pub_key[32] = {1};
@@ -82,6 +83,7 @@ static void test_k_buckets(void) {
     }
     
     printf("K-bucket test passed\n");
+    return 0;
 }
 
 // Test value storage and retrieval
@@ -208,16 +210,24 @@ int main(void) {
 
     // Run tests with timeouts and cleanup
     alarm(15);
-    test_node_id();
+    int ret = test_node_id();
     alarm(0);
     mxd_stop_dht();
     usleep(500000); // Wait longer for cleanup
+    if (ret != 0) {
+        printf("Node ID test failed\n");
+        return 1;
+    }
 
     alarm(30);
-    test_k_buckets();
+    ret = test_k_buckets();
     alarm(0);
     mxd_stop_dht();
     usleep(500000); // Wait longer for cleanup
+    if (ret != 0) {
+        printf("K-bucket test failed\n");
+        return 1;
+    }
 
     alarm(15);
     test_value_storage();
