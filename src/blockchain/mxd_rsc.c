@@ -31,15 +31,15 @@ int mxd_init_node_metrics(mxd_node_metrics_t *metrics) {
 
 // Validate if a node meets Rapid Stake requirements
 int mxd_validate_node_stake(const mxd_node_stake_t *node, double total_stake) {
-  if (!node || total_stake <= 0) {
-    return -1;
-  }
+    if (!node || total_stake <= 0) {
+        return -1;
+    }
 
-  // Calculate stake percentage
-  double stake_percent = (node->stake_amount / total_stake) * 100.0;
+    // Calculate stake percentage
+    double stake_percent = (node->stake_amount / total_stake) * 100.0;
 
-  // Check minimum stake requirement (0.1%)
-  return stake_percent >= 0.1 ? 0 : -1;
+    // Check minimum stake requirement (0.1%)
+    return stake_percent >= 0.1 ? 0 : -1;
 }
 
 // Update node response metrics with NTP-synchronized timestamp
