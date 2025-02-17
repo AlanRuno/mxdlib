@@ -54,7 +54,7 @@ typedef struct {
 } mxd_message_header_t;
 
 // Initialize P2P networking
-int mxd_init_p2p(uint16_t port);
+int mxd_init_p2p(uint16_t port, const uint8_t *public_key);
 
 // Start P2P networking
 int mxd_start_p2p(void);
