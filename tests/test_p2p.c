@@ -100,15 +100,18 @@ static int test_p2p_initialization(void) {
   // Create test public key
   uint8_t public_key[32] = {1}; // Test key filled with 1s
   
-  // Initialize P2P with test port and public key
+  printf("Initializing P2P with port 12345...\n");
   assert(mxd_init_p2p(12345, public_key) == 0);
 
-  // Start P2P networking
+  printf("Starting P2P networking...\n");
   assert(mxd_start_p2p() == 0);
 
-  // Wait for network to initialize (10s)
+  // Wait for network to initialize (30s)
   printf("Waiting for network initialization...\n");
-  usleep(10000000);
+  for (int i = 0; i < 30; i++) {
+    printf("Waiting... %d/30s\n", i+1);
+    usleep(1000000);
+  }
   printf("Network initialization complete\n");
 
   printf("P2P initialization test passed\n");
