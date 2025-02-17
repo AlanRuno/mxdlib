@@ -2,6 +2,7 @@
 #include "../include/mxd_crypto.h"
 #include "../include/blockchain/mxd_dht_internal.h"
 #include <assert.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -187,11 +188,7 @@ int main(void) {
     printf("Starting DHT tests...\n");
     
     // Set up signal handler for timeouts
-    struct sigaction sa;
-    sa.sa_handler = SIG_DFL;
-    sa.sa_flags = 0;
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGALRM, &sa, NULL);
+    signal(SIGALRM, SIG_DFL);
 
     // Run tests with timeouts
     alarm(2);

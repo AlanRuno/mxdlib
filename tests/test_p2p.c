@@ -237,15 +237,13 @@ static int test_p2p_networking(void) {
   return 0;
 }
 
+#include <signal.h>
+
 int main(void) {
   printf("Starting P2P networking tests...\n");
 
-  // Set shorter timeouts for tests
-  struct sigaction sa;
-  sa.sa_handler = SIG_DFL;
-  sa.sa_flags = 0;
-  sigemptyset(&sa.sa_mask);
-  sigaction(SIGALRM, &sa, NULL);
+  // Set up signal handler for timeouts
+  signal(SIGALRM, SIG_DFL);
 
   // Run tests with timeouts and cleanup
   alarm(2);
