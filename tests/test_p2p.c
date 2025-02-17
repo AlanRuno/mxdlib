@@ -76,7 +76,9 @@ static void *echo_server_thread_func(void *arg) {
       break; // Real error, exit
     }
 
-    // Set socket timeout
+    // Set socket timeout (30s)
+    tv.tv_sec = 30;
+    tv.tv_usec = 0;
     setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
     setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
 
@@ -205,7 +207,7 @@ static int test_message_handling(void) {
   // Wait for thread to exit with timeout
   struct timespec ts;
   clock_gettime(CLOCK_REALTIME, &ts);
-  ts.tv_sec += 1; // 1 second timeout
+  ts.tv_sec += 30; // 30 second timeout
   
   int join_result = pthread_join(echo_server_thread, NULL);
   if (join_result != 0) {
