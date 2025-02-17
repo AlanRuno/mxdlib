@@ -45,17 +45,30 @@ static void *echo_server_thread_func(void *arg) {
 
   echo_server_running = 1;
 
-  // Accept and echo messages
+  // Accept and echo messages with timeout
   while (echo_server_running) {
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
+
+    // Set accept timeout
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    setsockopt(echo_server_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
     // Accept connection
     int client_socket = accept(echo_server_socket,
                                (struct sockaddr *)&client_addr, &client_len);
     if (client_socket < 0) {
-      continue;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        continue; // Timeout, try again
+      }
+      break; // Real error, exit
     }
+
+    // Set socket timeout
+    setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+    setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv);
 
     // Read and echo data
     char buffer[1024];
