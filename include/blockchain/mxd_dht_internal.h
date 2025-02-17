@@ -1,6 +1,12 @@
 #ifndef MXD_DHT_INTERNAL_H
 #define MXD_DHT_INTERNAL_H
 
+#include <stddef.h>
+#include <stdint.h>
+#include <time.h>
+#include <pthread.h>
+#include "../mxd_dht.h"
+
 // Kademlia constants
 #define K_PARAM 20          // Size of k-buckets
 #define ALPHA 3             // Number of parallel lookups
