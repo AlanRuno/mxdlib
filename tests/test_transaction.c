@@ -79,6 +79,8 @@ static void test_transaction_validation(void) {
   assert(mxd_create_transaction(&tx) == 0);
   assert(mxd_add_tx_input(&tx, prev_hash, 0, pub_key) == 0);
   assert(mxd_add_tx_output(&tx, pub_key, 1.0) == 0);
+  assert(mxd_set_voluntary_tip(&tx, 0.1) == 0);
+  tx.timestamp = 1708198204; // Set a valid timestamp
   assert(mxd_sign_tx_input(&tx, 0, priv_key) == 0);
 
   // Validate transaction

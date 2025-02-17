@@ -31,6 +31,8 @@ typedef struct {
   uint32_t version;         // Transaction version
   uint32_t input_count;     // Number of inputs
   uint32_t output_count;    // Number of outputs
+  double voluntary_tip;     // Optional tip for node operators
+  uint64_t timestamp;       // Transaction timestamp (NTP synchronized)
   mxd_tx_input_t *inputs;   // Array of inputs
   mxd_tx_output_t *outputs; // Array of outputs
   uint8_t tx_hash[64];      // Transaction hash (SHA-512)
@@ -60,8 +62,11 @@ int mxd_calculate_tx_hash(const mxd_transaction_t *tx, uint8_t hash[64]);
 // Validate entire transaction
 int mxd_validate_transaction(const mxd_transaction_t *tx);
 
-// Calculate transaction fee
-double mxd_calculate_tx_fee(const mxd_transaction_t *tx);
+// Set voluntary tip for transaction
+int mxd_set_voluntary_tip(mxd_transaction_t *tx, double tip_amount);
+
+// Get voluntary tip amount
+double mxd_get_voluntary_tip(const mxd_transaction_t *tx);
 
 // Free transaction resources
 void mxd_free_transaction(mxd_transaction_t *tx);

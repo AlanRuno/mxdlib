@@ -114,7 +114,7 @@ int mxd_add_to_mempool(const mxd_transaction_t *tx,
 
   mempool[mempool_size].priority = priority;
   mempool[mempool_size].timestamp = time(NULL);
-  mempool[mempool_size].fee = mxd_calculate_tx_fee(tx);
+  mempool[mempool_size].fee = mxd_get_voluntary_tip(tx);
 
   mempool_size++;
 
