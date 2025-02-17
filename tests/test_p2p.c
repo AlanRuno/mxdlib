@@ -112,7 +112,7 @@ static int test_p2p_initialization(void) {
 
 static int test_peer_management(void) {
   // Add peer
-  assert(mxd_add_peer("127.0.0.1", 12346) == 0);
+  assert(mxd_add_peer("127.0.0.1", 12347) == 0);
 
   // Wait for peer connection (max 1 second)
   int connect_retries = 10;
@@ -130,9 +130,9 @@ static int test_peer_management(void) {
 
   // Get peer information
   mxd_peer_t peer;
-  assert(mxd_get_peer("127.0.0.1", 12346, &peer) == 0);
+  assert(mxd_get_peer("127.0.0.1", 12347, &peer) == 0);
   assert(strcmp(peer.address, "127.0.0.1") == 0);
-  assert(peer.port == 12346);
+  assert(peer.port == 12347);
 
   // Get all peers
   mxd_peer_t peers[10];
@@ -236,8 +236,6 @@ static int test_p2p_networking(void) {
   printf("P2P networking test passed\n");
   return 0;
 }
-
-#include <signal.h>
 
 int main(void) {
   printf("Starting P2P networking tests...\n");
