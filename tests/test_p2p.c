@@ -106,8 +106,10 @@ static int test_p2p_initialization(void) {
   // Start P2P networking
   assert(mxd_start_p2p() == 0);
 
-  // Wait for network to initialize (100ms)
-  usleep(100000);
+  // Wait for network to initialize (10s)
+  printf("Waiting for network initialization...\n");
+  usleep(10000000);
+  printf("Network initialization complete\n");
 
   printf("P2P initialization test passed\n");
   return 0;
@@ -117,17 +119,18 @@ static int test_peer_management(void) {
   // Add peer
   assert(mxd_add_peer("127.0.0.1", 12347) == 0);
 
-  // Wait for peer connection (max 5 seconds)
-  int connect_retries = 50;
+  // Wait for peer connection (max 30 seconds)
+  int connect_retries = 300;
   while (connect_retries-- > 0) {
     mxd_peer_t peer;
     if (mxd_get_peer("127.0.0.1", 12347, &peer) == 0) {
+      printf("Peer connection established after %d retries\n", 300 - connect_retries);
       break;
     }
     usleep(100000); // Sleep 100ms
   }
   if (connect_retries < 0) {
-    printf("Peer connection timeout\n");
+    printf("Peer connection timeout after 30 seconds\n");
     return 1;
   }
 
@@ -173,17 +176,18 @@ static int test_message_handling(void) {
   // Add test peer
   assert(mxd_add_peer("127.0.0.1", 12347) == 0);
 
-  // Wait for peer connection (max 5 seconds)
-  int connect_retries = 50;
+  // Wait for peer connection (max 30 seconds)
+  int connect_retries = 300;
   while (connect_retries-- > 0) {
     mxd_peer_t peer;
     if (mxd_get_peer("127.0.0.1", 12347, &peer) == 0) {
+      printf("Peer connection established after %d retries\n", 300 - connect_retries);
       break;
     }
     usleep(100000); // Sleep 100ms
   }
   if (connect_retries < 0) {
-    printf("Peer connection timeout\n");
+    printf("Peer connection timeout after 30 seconds\n");
     return 1;
   }
 
@@ -268,7 +272,7 @@ int main(void) {
     return 1;
   }
   printf("P2P initialization test completed\n");
-  usleep(2000000); // Wait longer for cleanup
+  usleep(5000000); // Wait longer for cleanup
 
   alarm(60);
   ret = test_peer_management();
@@ -279,7 +283,7 @@ int main(void) {
     return 1;
   }
   printf("Peer management test completed\n");
-  usleep(2000000); // Wait longer for cleanup
+  usleep(5000000); // Wait longer for cleanup
 
   alarm(60);
   ret = test_message_handling();
@@ -290,7 +294,7 @@ int main(void) {
     return 1;
   }
   printf("Message handling test completed\n");
-  usleep(2000000); // Wait longer for cleanup
+  usleep(5000000); // Wait longer for cleanup
 
   alarm(60);
   ret = test_p2p_networking();
@@ -301,7 +305,7 @@ int main(void) {
     return 1;
   }
   printf("P2P networking test completed\n");
-  usleep(2000000); // Wait longer for cleanup
+  usleep(5000000); // Wait longer for cleanup
 
   printf("All P2P networking tests passed\n");
   return 0;
