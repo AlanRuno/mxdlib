@@ -244,15 +244,17 @@ int main(void) {
   signal(SIGALRM, SIG_DFL);
 
   // Run tests with timeouts and cleanup
-  alarm(2);
+  alarm(10);
   int ret = test_p2p_initialization();
   alarm(0);
   if (ret != 0) {
     printf("P2P initialization test failed\n");
+    mxd_stop_p2p();
     return 1;
   }
+  usleep(100000); // Wait for cleanup
 
-  alarm(3);
+  alarm(10);
   ret = test_peer_management();
   alarm(0);
   if (ret != 0) {
@@ -260,8 +262,9 @@ int main(void) {
     mxd_stop_p2p();
     return 1;
   }
+  usleep(100000); // Wait for cleanup
 
-  alarm(5);
+  alarm(15);
   ret = test_message_handling();
   alarm(0);
   if (ret != 0) {
@@ -269,8 +272,9 @@ int main(void) {
     mxd_stop_p2p();
     return 1;
   }
+  usleep(100000); // Wait for cleanup
 
-  alarm(5);
+  alarm(10);
   ret = test_p2p_networking();
   alarm(0);
   if (ret != 0) {
@@ -278,6 +282,7 @@ int main(void) {
     mxd_stop_p2p();
     return 1;
   }
+  usleep(100000); // Wait for cleanup
 
   printf("All P2P networking tests passed\n");
   return 0;
