@@ -1,6 +1,9 @@
 #ifndef MXD_METRICS_INTERNAL_H
 #define MXD_METRICS_INTERNAL_H
 
+#include "../mxd_metrics.h"
+#include "../mxd_rsc.h"
+
 // Performance thresholds
 #define MXD_MIN_RESPONSE_COUNT 10      // Minimum responses for valid metrics
 #define MXD_MAX_RESPONSE_TIME 5000     // Maximum acceptable response time (ms)
