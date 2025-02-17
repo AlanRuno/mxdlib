@@ -1,5 +1,6 @@
 #include "../include/mxd_dht.h"
 #include "../include/mxd_crypto.h"
+#include "../include/blockchain/mxd_dht_internal.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -11,6 +12,9 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+
+// Global DHT state
+mxd_dht_state_t dht_state = {0};
 
 // Node distance structure for sorting
 typedef struct {
