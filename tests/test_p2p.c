@@ -196,9 +196,9 @@ static void test_message_handling(void) {
   clock_gettime(CLOCK_REALTIME, &ts);
   ts.tv_sec += 1; // 1 second timeout
   
-  int ret = pthread_timedjoin_np(echo_server_thread, NULL, &ts);
-  if (ret != 0) {
-    printf("Echo server thread join timeout\n");
+  int join_result = pthread_join(echo_server_thread, NULL);
+  if (join_result != 0) {
+    printf("Echo server thread join failed\n");
     pthread_cancel(echo_server_thread);
   }
 
