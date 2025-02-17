@@ -1,5 +1,6 @@
 #include "../include/mxd_dht.h"
 #include "../include/mxd_crypto.h"
+#include "../include/blockchain/mxd_dht_internal.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
