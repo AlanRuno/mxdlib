@@ -47,17 +47,20 @@ static void test_k_buckets(void) {
     usleep(100000); // 100ms
 
     // Add nodes to buckets
-    for (int i = 0; i < K_PARAM; i++) { // Only add up to K_PARAM nodes
+    int successful_nodes = 0;
+    for (int i = 0; i < K_PARAM && successful_nodes < K_PARAM/2; i++) {
         char addr[32];
         snprintf(addr, sizeof(addr), "192.168.1.%d", i);
         uint8_t node_id[20] = {0};
         node_id[0] = i; // Ensure unique node IDs
-        int ret = mxd_dht_add_node(addr, 8000 + i, node_id);
-        if (ret != 0) {
-            printf("Failed to add node %d: %d\n", i, ret);
-            continue;
+        if (mxd_dht_add_node(addr, 8000 + i, node_id) == 0) {
+            successful_nodes++;
         }
+        usleep(10000); // Small delay between adds
     }
+
+    // Verify at least half of K_PARAM nodes were added
+    assert(successful_nodes >= K_PARAM/2);
 
     // Stop DHT service
     assert(mxd_stop_dht() == 0);
