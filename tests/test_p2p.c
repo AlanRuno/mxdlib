@@ -236,12 +236,21 @@ static void test_p2p_networking(void) {
 int main(void) {
   printf("Starting P2P networking tests...\n");
 
-  // Set global test timeout using alarm
-  alarm(30); // 30 second timeout for entire test suite
+  // Set up signal handler for timeouts
+  struct sigaction sa;
+  sa.sa_handler = SIG_DFL;
+  sa.sa_flags = 0;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGALRM, &sa, NULL);
 
+  // Run tests with individual timeouts
+  alarm(5);
   test_p2p_initialization();
+  alarm(5);
   test_peer_management();
+  alarm(10);
   test_message_handling();
+  alarm(10);
   test_p2p_networking();
 
   // Clear alarm

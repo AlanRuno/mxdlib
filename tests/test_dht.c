@@ -42,8 +42,11 @@ static void test_k_buckets(void) {
     for (int i = 0; i < 100; i++) {
         char addr[32];
         snprintf(addr, sizeof(addr), "192.168.1.%d", i);
-        uint8_t node_id[20] = {i};
+        uint8_t node_id[20] = {0};
+        node_id[0] = i; // Ensure unique node IDs
+        assert(mxd_init_dht(node_id) == 0); // Initialize DHT first
         assert(mxd_dht_add_node(addr, 8000 + i, node_id) == 0);
+        mxd_stop_dht(); // Clean up before next iteration
     }
     
     // Verify bucket sizes
