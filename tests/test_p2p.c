@@ -72,8 +72,11 @@ static void *echo_server_thread_func(void *arg) {
 }
 
 static void test_p2p_initialization(void) {
-  // Initialize P2P with test port
-  assert(mxd_init_p2p(12345) == 0);
+  // Create test public key
+  uint8_t public_key[32] = {1}; // Test key filled with 1s
+  
+  // Initialize P2P with test port and public key
+  assert(mxd_init_p2p(12345, public_key) == 0);
 
   // Start P2P networking
   assert(mxd_start_p2p() == 0);
@@ -154,13 +157,18 @@ static void test_message_handling(void) {
 
 static void test_p2p_networking(void) {
   // Test peer discovery
-  assert(mxd_start_peer_discovery() == -1); // Not implemented yet
-  assert(mxd_stop_peer_discovery() == -1);  // Not implemented yet
-
+  assert(mxd_start_peer_discovery() == 0);
+  
+  // Wait for DHT to initialize
+  sleep(1);
+  
   // Test NAT traversal
-  assert(mxd_enable_nat_traversal() == -1);  // Not implemented yet
-  assert(mxd_disable_nat_traversal() == -1); // Not implemented yet
-
+  assert(mxd_enable_nat_traversal() == 0);
+  assert(mxd_disable_nat_traversal() == 0);
+  
+  // Stop peer discovery
+  assert(mxd_stop_peer_discovery() == 0);
+  
   // Stop P2P networking
   assert(mxd_stop_p2p() == 0);
 
