@@ -41,19 +41,26 @@ static int test_k_buckets(void) {
     uint8_t pub_key[32] = {1};
     assert(mxd_init_dht(pub_key) == 0);
     
-    // Initialize DHT with test key
+    printf("Initializing DHT with test key...\n");
     uint8_t test_key[32] = {1};
     if (mxd_init_dht(test_key) != 0) {
         printf("Failed to initialize DHT\n");
         return 1;
     }
-    if (mxd_start_dht(8000) != 0) { // Start DHT service
+    printf("Starting DHT service on port 8000...\n");
+    if (mxd_start_dht(8000) != 0) {
         printf("Failed to start DHT service\n");
         return 1;
     }
+    printf("DHT service started successfully\n");
 
-    // Wait for DHT to initialize
-    usleep(500000); // 500ms for better initialization
+    // Wait for DHT to initialize (5s)
+    printf("Waiting for DHT initialization...\n");
+    for (int i = 0; i < 5; i++) {
+        printf("Waiting... %d/5s\n", i+1);
+        usleep(1000000);
+    }
+    printf("DHT initialization complete\n");
 
     // Add nodes to buckets
     int successful_nodes = 0;
