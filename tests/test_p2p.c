@@ -35,9 +35,9 @@ static void *echo_server_thread_func(void *arg) {
   assert(setsockopt(echo_server_socket, SOL_SOCKET, SO_REUSEADDR, &opt,
                     sizeof(opt)) >= 0);
   
-  // Set send/receive timeouts
+  // Set send/receive timeouts (30s)
   struct timeval tv;
-  tv.tv_sec = 1;
+  tv.tv_sec = 30;
   tv.tv_usec = 0;
   assert(setsockopt(echo_server_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) >= 0);
   assert(setsockopt(echo_server_socket, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) >= 0);
@@ -60,9 +60,9 @@ static void *echo_server_thread_func(void *arg) {
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
 
-    // Set accept timeout
+    // Set accept timeout (30s)
     struct timeval tv;
-    tv.tv_sec = 1;
+    tv.tv_sec = 30;
     tv.tv_usec = 0;
     setsockopt(echo_server_socket, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
