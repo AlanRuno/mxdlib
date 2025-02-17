@@ -45,11 +45,11 @@ static int test_k_buckets(void) {
     uint8_t test_key[32] = {1};
     if (mxd_init_dht(test_key) != 0) {
         printf("Failed to initialize DHT\n");
-        return;
+        return 1;
     }
     if (mxd_start_dht(8000) != 0) { // Start DHT service
         printf("Failed to start DHT service\n");
-        return;
+        return 1;
     }
 
     // Wait for DHT to initialize
@@ -74,7 +74,7 @@ static int test_k_buckets(void) {
     // Verify at least half of K_PARAM nodes were added
     if (successful_nodes < K_PARAM/2) {
         printf("Failed to add enough nodes: %d/%d\n", successful_nodes, K_PARAM/2);
-        return;
+        return 1;
     }
     
     // Verify bucket sizes
@@ -87,7 +87,7 @@ static int test_k_buckets(void) {
 }
 
 // Test value storage and retrieval
-static void test_value_storage(void) {
+static int test_value_storage(void) {
     printf("Testing value storage...\n");
     
     // Store value
@@ -107,10 +107,11 @@ static void test_value_storage(void) {
     assert(memcmp(retrieved, value, length) == 0);
     
     printf("Value storage test passed\n");
+    return 0;
 }
 
 // Test node discovery
-static void test_node_discovery(void) {
+static int test_node_discovery(void) {
     printf("Testing node discovery...\n");
     
     // Start DHT
@@ -137,10 +138,11 @@ static void test_node_discovery(void) {
     assert(mxd_stop_dht() == 0);
     
     printf("Node discovery test passed\n");
+    return 0;
 }
 
 // Test NAT traversal
-static void test_nat_traversal(void) {
+static int test_nat_traversal(void) {
     printf("Testing NAT traversal...\n");
     
     // Enable NAT traversal
@@ -159,10 +161,11 @@ static void test_nat_traversal(void) {
     assert(dht_state.nat_traversal == 0);
     
     printf("NAT traversal test passed\n");
+    return 0;
 }
 
 // Test statistics
-static void test_statistics(void) {
+static int test_statistics(void) {
     printf("Testing DHT statistics...\n");
     
     mxd_dht_stats_t stats;
@@ -194,6 +197,7 @@ static void test_statistics(void) {
     assert(stats.stored_values == 5);
     
     printf("Statistics test passed\n");
+    return 0;
 }
 
 int main(void) {
