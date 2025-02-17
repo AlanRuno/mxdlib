@@ -150,3 +150,28 @@ target_link_libraries(mxd_ntp_tests
 )
 
 add_test(NAME ntp_tests COMMAND mxd_ntp_tests)
+
+add_executable(mxd_metrics_tests
+    test_metrics.c
+)
+
+target_link_libraries(mxd_metrics_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+)
+
+add_test(NAME metrics_tests COMMAND mxd_metrics_tests)
+
+add_executable(mxd_metrics_performance_tests
+    test_metrics_performance.c
+)
+
+target_link_libraries(mxd_metrics_performance_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME metrics_performance_tests COMMAND mxd_metrics_performance_tests)
