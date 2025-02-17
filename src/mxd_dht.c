@@ -23,11 +23,6 @@ typedef struct {
 } node_distance_t;
 
 // Kademlia constants
-#define K_PARAM 20          // Size of k-buckets
-#define ALPHA 3             // Number of parallel lookups
-#define BUCKET_COUNT 160    // Number of k-buckets (one per bit)
-#define REFRESH_INTERVAL 60 // Bucket refresh interval in seconds
-
 // Global DHT state
 mxd_dht_state_t dht_state = {0};
 
