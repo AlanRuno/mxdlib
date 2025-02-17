@@ -1,6 +1,6 @@
 #include "../include/mxd_rsc.h"
 #include "../include/mxd_ntp.h"
-#include "../src/blockchain/mxd_rsc_internal.h"
+#include "../include/blockchain/mxd_rsc_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
