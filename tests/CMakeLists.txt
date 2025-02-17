@@ -175,3 +175,15 @@ target_link_libraries(mxd_metrics_performance_tests
 )
 
 add_test(NAME metrics_performance_tests COMMAND mxd_metrics_performance_tests)
+
+add_executable(mxd_enhanced_consensus_tests
+    test_enhanced_consensus.c
+)
+
+target_link_libraries(mxd_enhanced_consensus_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+)
+
+add_test(NAME enhanced_consensus_tests COMMAND mxd_enhanced_consensus_tests)
