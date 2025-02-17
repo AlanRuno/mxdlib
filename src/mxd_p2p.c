@@ -1,5 +1,6 @@
 #include "../include/mxd_p2p.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_dht.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>

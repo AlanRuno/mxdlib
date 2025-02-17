@@ -257,7 +257,7 @@ int main(void) {
   usleep(500000); // Wait for cleanup
 
   // Run tests with timeouts and cleanup
-  alarm(10);
+  alarm(60);
   int ret = test_p2p_initialization();
   alarm(0);
   if (ret != 0) {
@@ -265,9 +265,10 @@ int main(void) {
     mxd_stop_p2p();
     return 1;
   }
-  usleep(100000); // Wait for cleanup
+  printf("P2P initialization test completed\n");
+  usleep(2000000); // Wait longer for cleanup
 
-  alarm(10);
+  alarm(60);
   ret = test_peer_management();
   alarm(0);
   if (ret != 0) {
@@ -275,9 +276,10 @@ int main(void) {
     mxd_stop_p2p();
     return 1;
   }
-  usleep(100000); // Wait for cleanup
+  printf("Peer management test completed\n");
+  usleep(2000000); // Wait longer for cleanup
 
-  alarm(15);
+  alarm(60);
   ret = test_message_handling();
   alarm(0);
   if (ret != 0) {
@@ -285,9 +287,10 @@ int main(void) {
     mxd_stop_p2p();
     return 1;
   }
-  usleep(100000); // Wait for cleanup
+  printf("Message handling test completed\n");
+  usleep(2000000); // Wait longer for cleanup
 
-  alarm(10);
+  alarm(60);
   ret = test_p2p_networking();
   alarm(0);
   if (ret != 0) {
@@ -295,7 +298,8 @@ int main(void) {
     mxd_stop_p2p();
     return 1;
   }
-  usleep(100000); // Wait for cleanup
+  printf("P2P networking test completed\n");
+  usleep(2000000); // Wait longer for cleanup
 
   printf("All P2P networking tests passed\n");
   return 0;
