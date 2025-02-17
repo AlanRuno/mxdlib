@@ -150,3 +150,28 @@ target_link_libraries(mxd_ntp_tests
 )
 
 add_test(NAME ntp_tests COMMAND mxd_ntp_tests)
+
+add_executable(mxd_enhanced_consensus_tests
+    test_enhanced_consensus.c
+)
+
+target_link_libraries(mxd_enhanced_consensus_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+)
+
+add_test(NAME enhanced_consensus_tests COMMAND mxd_enhanced_consensus_tests)
+
+add_executable(mxd_dht_tests
+    test_dht.c
+)
+
+target_link_libraries(mxd_dht_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME dht_tests COMMAND mxd_dht_tests)
