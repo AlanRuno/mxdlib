@@ -93,7 +93,7 @@ static void *echo_server_thread_func(void *arg) {
   return NULL;
 }
 
-static void test_p2p_initialization(void) {
+static int test_p2p_initialization(void) {
   // Create test public key
   uint8_t public_key[32] = {1}; // Test key filled with 1s
   
@@ -107,9 +107,10 @@ static void test_p2p_initialization(void) {
   usleep(100000);
 
   printf("P2P initialization test passed\n");
+  return 0;
 }
 
-static void test_peer_management(void) {
+static int test_peer_management(void) {
   // Add peer
   assert(mxd_add_peer("127.0.0.1", 12346) == 0);
 
@@ -144,9 +145,10 @@ static void test_peer_management(void) {
   assert(mxd_get_peer("127.0.0.1", 12346, &peer) == -1);
 
   printf("Peer management test passed\n");
+  return 0;
 }
 
-static void test_message_handling(void) {
+static int test_message_handling(void) {
   // Start echo server
   int ret = pthread_create(&echo_server_thread, NULL, echo_server_thread_func,
                         NULL);
@@ -211,9 +213,10 @@ static void test_message_handling(void) {
   }
 
   printf("Message handling test passed\n");
+  return 0;
 }
 
-static void test_p2p_networking(void) {
+static int test_p2p_networking(void) {
   // Test peer discovery
   assert(mxd_start_peer_discovery() == 0);
   
@@ -231,6 +234,7 @@ static void test_p2p_networking(void) {
   assert(mxd_stop_p2p() == 0);
 
   printf("P2P networking test passed\n");
+  return 0;
 }
 
 int main(void) {
