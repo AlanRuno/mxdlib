@@ -92,15 +92,15 @@ static void test_peer_management(void) {
   assert(mxd_add_peer("127.0.0.1", 12346) == 0);
 
   // Wait for peer connection (max 1 second)
-  int retries = 10;
-  while (retries-- > 0) {
+  int connect_retries = 10;
+  while (connect_retries-- > 0) {
     mxd_peer_t peer;
     if (mxd_get_peer("127.0.0.1", 12346, &peer) == 0) {
       break;
     }
     usleep(100000); // Sleep 100ms
   }
-  if (retries < 0) {
+  if (connect_retries < 0) {
     printf("Peer connection timeout\n");
     return;
   }
@@ -147,15 +147,15 @@ static void test_message_handling(void) {
   assert(mxd_add_peer("127.0.0.1", 12347) == 0);
 
   // Wait for peer connection (max 1 second)
-  int retries = 10;
-  while (retries-- > 0) {
+  int connect_retries = 10;
+  while (connect_retries-- > 0) {
     mxd_peer_t peer;
     if (mxd_get_peer("127.0.0.1", 12346, &peer) == 0) {
       break;
     }
     usleep(100000); // Sleep 100ms
   }
-  if (retries < 0) {
+  if (connect_retries < 0) {
     printf("Peer connection timeout\n");
     return;
   }
