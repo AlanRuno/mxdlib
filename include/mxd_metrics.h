@@ -7,19 +7,7 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
-
-// Node performance metrics
-typedef struct {
-    uint64_t avg_response_time;    // Average response time in milliseconds
-    uint64_t min_response_time;    // Minimum response time observed
-    uint64_t max_response_time;    // Maximum response time observed
-    uint32_t response_count;       // Number of responses recorded
-    uint32_t message_success;      // Successful message count
-    uint32_t message_total;        // Total message count
-    double reliability_score;      // 0.0 to 1.0 reliability rating
-    double performance_score;      // Combined performance metric
-    uint64_t last_update;         // NTP synchronized timestamp
-} mxd_node_metrics_t;
+#include "common/mxd_metrics_types.h"
 
 // Initialize node metrics
 int mxd_init_metrics(mxd_node_metrics_t *metrics);
