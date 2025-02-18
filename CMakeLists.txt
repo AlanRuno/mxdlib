@@ -95,3 +95,8 @@ install(DIRECTORY include/
 # Enable testing
 enable_testing()
 add_subdirectory(tests)
+
+# Add network test source files
+target_sources(mxd PRIVATE
+    src/mxd_dht_network.c
+)
