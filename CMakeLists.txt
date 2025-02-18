@@ -100,3 +100,8 @@ add_subdirectory(tests)
 target_sources(mxd PRIVATE
     src/mxd_dht_network.c
 )
+
+# Add config source
+target_sources(mxd PRIVATE
+    src/mxd_config.c
+)
