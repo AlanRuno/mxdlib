@@ -1,8 +1,7 @@
 #ifndef MXD_METRICS_INTERNAL_H
 #define MXD_METRICS_INTERNAL_H
 
-#include "../mxd_metrics.h"
-#include "../mxd_rsc.h"
+#include "../common/mxd_metrics_types.h"
 
 // Performance thresholds
 #define MXD_MIN_RESPONSE_COUNT 10      // Minimum responses for valid metrics

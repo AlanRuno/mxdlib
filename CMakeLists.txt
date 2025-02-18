@@ -14,21 +14,23 @@ include_directories(${OPENSSL_INCLUDE_DIR})
 include_directories(/usr/local/include)
 link_directories(/usr/local/lib)
 
-# Find wasm3 and uvwasi
+# Find required libraries
 find_library(WASM3_LIBRARY m3 PATHS /usr/local/lib)
-find_library(UVWASI_LIBRARY uvwasi_a PATHS /usr/local/lib)
-find_library(UV_LIBRARY uv_a PATHS /usr/local/lib)
+find_library(UVWASI_LIBRARY uvwasi PATHS /usr/local/lib)
+find_library(UV_LIBRARY uv PATHS /usr/local/lib)
 find_path(WASM3_INCLUDE_DIR wasm3.h PATHS /usr/local/include)
+find_path(UVWASI_INCLUDE_DIR uvwasi/uvwasi.h PATHS /usr/local/include)
+find_path(UV_INCLUDE_DIR uv.h PATHS /usr/local/include)
 
 if(NOT WASM3_LIBRARY OR NOT WASM3_INCLUDE_DIR)
     message(FATAL_ERROR "wasm3 library not found")
 endif()
 
-if(NOT UVWASI_LIBRARY)
+if(NOT UVWASI_LIBRARY OR NOT UVWASI_INCLUDE_DIR)
     message(FATAL_ERROR "uvwasi library not found")
 endif()
 
-if(NOT UV_LIBRARY)
+if(NOT UV_LIBRARY OR NOT UV_INCLUDE_DIR)
     message(FATAL_ERROR "libuv library not found")
 endif()
 
@@ -58,7 +60,7 @@ add_library(mxd SHARED
     src/checkpoints/mxd_checkpoints.c
     src/quantization/mxd_data_quantization.c
     src/mxd_ntp.c
-    src/mxd_metrics.c)
+    src/mxd_metrics.c
     src/mxd_dht.c)
 
 
@@ -93,3 +95,13 @@ install(DIRECTORY include/
 # Enable testing
 enable_testing()
 add_subdirectory(tests)
+
+# Add network test source files
+target_sources(mxd PRIVATE
+    src/mxd_dht_network.c
+)
+
+# Add config source
+target_sources(mxd PRIVATE
+    src/mxd_config.c
+)
