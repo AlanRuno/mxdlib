@@ -51,8 +51,11 @@ The library's architecture is designed for optimal performance and security in c
 
 For automated installation of all dependencies, run:
 ```bash
-./install_dependencies.sh
+./install_dependencies.sh [--force_build]
 ```
+
+Options:
+- `--force_build`: Force rebuild and installation of libraries even if they are already installed
 
 This script will automatically install:
 #### System Dependencies

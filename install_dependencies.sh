@@ -2,12 +2,50 @@
 
 set -e
 
+FORCE_BUILD=false
+
 log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
 }
 
 check_command() {
     command -v "$1" >/dev/null 2>&1
+}
+
+check_library_installed() {
+    local lib=$1
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        find /usr/local/lib -name "${lib/.so/.dylib}*" >/dev/null 2>&1
+    else
+        ldconfig -p | grep "$lib" >/dev/null 2>&1
+    fi
+}
+
+check_wasm3_installed() {
+    check_command m3 && [ -f "/usr/local/include/wasm3.h" ]
+}
+
+check_libuv_installed() {
+    check_library_installed "libuv.so" && [ -f "/usr/local/include/uv.h" ]
+}
+
+check_uvwasi_installed() {
+    check_library_installed "libuvwasi.so" && [ -f "/usr/local/include/uvwasi/uvwasi.h" ]
+}
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --force_build)
+                FORCE_BUILD=true
+                shift
+                ;;
+            *)
+                log "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
 }
 
 install_system_deps() {
@@ -25,6 +63,10 @@ install_system_deps() {
 }
 
 install_wasm3() {
+    if ! $FORCE_BUILD && check_wasm3_installed; then
+        log "wasm3 is already installed, skipping (use --force_build to override)"
+        return
+    fi
     log "Installing wasm3..."
     git clone https://github.com/wasm3/wasm3
     cd wasm3
@@ -37,6 +79,10 @@ install_wasm3() {
 }
 
 install_libuv() {
+    if ! $FORCE_BUILD && check_libuv_installed; then
+        log "libuv is already installed, skipping (use --force_build to override)"
+        return
+    fi
     log "Installing libuv..."
     git clone https://github.com/libuv/libuv
     cd libuv
@@ -49,6 +95,10 @@ install_libuv() {
 }
 
 install_uvwasi() {
+    if ! $FORCE_BUILD && check_uvwasi_installed; then
+        log "uvwasi is already installed, skipping (use --force_build to override)"
+        return
+    fi
     log "Installing uvwasi..."
     git clone https://github.com/nodejs/uvwasi
     cd uvwasi
@@ -93,6 +143,7 @@ verify_installation() {
 
 main() {
     log "Starting installation..."
+    parse_args "$@"
     
     install_system_deps
     install_wasm3
