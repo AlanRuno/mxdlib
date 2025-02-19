@@ -20,6 +20,7 @@ install_system_deps() {
     else
         sudo apt-get update
         sudo apt-get install -y build-essential cmake libssl-dev libsodium-dev libgmp-dev
+        sudo ldconfig
     fi
 }
 
@@ -71,17 +72,21 @@ verify_installation() {
     done
 
     # Check libraries
-    for lib in libssl.so libsodium.so libgmp.so; do
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            lib_path="/usr/local/lib/${lib/.so/.dylib}"
-        else
-            lib_path="/usr/local/lib/$lib"
-        fi
-        if [ ! -f "$lib_path" ]; then
-            log "Error: $lib not found"
-            errors=$((errors + 1))
-        fi
-    done
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        for lib in libssl.dylib libsodium.dylib libgmp.dylib; do
+            if ! find /usr/local/lib -name "$lib*" >/dev/null 2>&1; then
+                log "Error: $lib not found"
+                errors=$((errors + 1))
+            fi
+        done
+    else
+        for lib in libssl.so libsodium.so libgmp.so; do
+            if ! ldconfig -p | grep "$lib" >/dev/null 2>&1; then
+                log "Error: $lib not found"
+                errors=$((errors + 1))
+            fi
+        done
+    fi
 
     return $errors
 }
