@@ -14,11 +14,19 @@ include_directories(${OPENSSL_INCLUDE_DIR})
 include_directories(/usr/local/include)
 link_directories(/usr/local/lib)
 
-# Find required libraries
-find_library(WASM3_LIBRARY m3 PATHS /usr/local/lib)
+# Find wasm3
+find_package(wasm3 QUIET)
+if(NOT wasm3_FOUND)
+    find_library(WASM3_LIBRARY m3 PATHS /usr/local/lib)
+    find_path(WASM3_INCLUDE_DIR wasm3.h PATHS /usr/local/include)
+    if(NOT WASM3_LIBRARY OR NOT WASM3_INCLUDE_DIR)
+        message(FATAL_ERROR "wasm3 library not found. Please run install_dependencies.sh first.")
+    endif()
+endif()
+
+# Find other required libraries
 find_library(UVWASI_LIBRARY uvwasi PATHS /usr/local/lib)
 find_library(UV_LIBRARY uv PATHS /usr/local/lib)
-find_path(WASM3_INCLUDE_DIR wasm3.h PATHS /usr/local/include)
 find_path(UVWASI_INCLUDE_DIR uvwasi/uvwasi.h PATHS /usr/local/include)
 find_path(UV_INCLUDE_DIR uv.h PATHS /usr/local/include)
 

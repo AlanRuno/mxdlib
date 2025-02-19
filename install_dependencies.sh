@@ -22,7 +22,13 @@ check_library_installed() {
 }
 
 check_wasm3_installed() {
-    check_command m3 && [ -f "/usr/local/include/wasm3.h" ]
+    # Check for library files
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        [ -f "/usr/local/lib/libm3.dylib" ] && [ -f "/usr/local/include/wasm3.h" ]
+    else
+        # Use ldconfig to check for library
+        (ldconfig -p | grep libm3.so >/dev/null 2>&1) && [ -f "/usr/local/include/wasm3.h" ]
+    fi
 }
 
 check_libuv_installed() {
@@ -62,6 +68,14 @@ install_system_deps() {
     fi
 }
 
+create_wasm3_cmake_config() {
+    sudo tee /usr/local/lib/cmake/wasm3/wasm3Config.cmake > /dev/null << 'EOF'
+set(WASM3_INCLUDE_DIRS "/usr/local/include")
+set(WASM3_LIBRARIES "/usr/local/lib/libm3.a")
+set(WASM3_FOUND TRUE)
+EOF
+}
+
 install_wasm3() {
     if ! $FORCE_BUILD && check_wasm3_installed; then
         log "wasm3 is already installed, skipping (use --force_build to override)"
@@ -71,11 +85,16 @@ install_wasm3() {
     git clone https://github.com/wasm3/wasm3
     cd wasm3
     mkdir -p build && cd build
-    cmake -DBUILD_WASM3_LIBS=ON ..
+    # Add installation targets for libraries and headers
+    cmake -DBUILD_WASM3_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local ..
     make
     sudo make install
+    # Create CMake config directory and install config file
+    sudo mkdir -p /usr/local/lib/cmake/wasm3
+    create_wasm3_cmake_config
     cd ../..
     rm -rf wasm3
+    sudo ldconfig
 }
 
 install_libuv() {
