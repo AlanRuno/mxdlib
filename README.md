@@ -49,7 +49,29 @@ The library's architecture is designed for optimal performance and security in c
 
 ### Prerequisites
 
+For automated installation of all dependencies, run:
+```bash
+./install_dependencies.sh
+```
+
+This script will automatically install:
 #### System Dependencies
+- build-essential (Ubuntu/Debian)
+- cmake
+- libssl-dev
+- libsodium-dev
+- libgmp-dev
+
+#### Required Libraries
+- wasm3 (WebAssembly Runtime)
+- libuv (Event-driven Library)
+- uvwasi (WASI Implementation)
+
+The script supports both Ubuntu/Debian and macOS systems.
+
+For manual installation instructions, see below:
+
+#### System Dependencies (Manual Installation)
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
@@ -59,7 +81,7 @@ sudo apt-get install -y build-essential cmake libssl-dev libsodium-dev libgmp-de
 brew install cmake openssl libsodium gmp
 ```
 
-#### Required Libraries
+#### Required Libraries (Manual Installation)
 The following libraries need to be built and installed:
 
 1. wasm3 (WebAssembly Runtime):
