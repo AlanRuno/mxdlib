@@ -48,6 +48,8 @@ The library's architecture is designed for optimal performance and security in c
 ## 🛠️ Quick Start
 
 ### Prerequisites
+
+#### System Dependencies
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
@@ -55,6 +57,38 @@ sudo apt-get install -y build-essential cmake libssl-dev libsodium-dev libgmp-de
 
 # macOS
 brew install cmake openssl libsodium gmp
+```
+
+#### Required Libraries
+The following libraries need to be built and installed:
+
+1. wasm3 (WebAssembly Runtime):
+```bash
+git clone https://github.com/wasm3/wasm3
+cd wasm3 && mkdir build && cd build
+cmake -DBUILD_WASM3_LIBS=ON ..
+make && sudo make install
+```
+
+2. libuv (Event-driven Library):
+```bash
+git clone https://github.com/libuv/libuv
+cd libuv && mkdir build && cd build
+cmake ..
+make && sudo make install
+```
+
+3. uvwasi (WASI Implementation):
+```bash
+git clone https://github.com/nodejs/uvwasi
+cd uvwasi && mkdir build && cd build
+cmake ..
+make && sudo make install
+```
+
+After installing all dependencies, update the library cache:
+```bash
+sudo ldconfig
 ```
 
 ### Build Steps
