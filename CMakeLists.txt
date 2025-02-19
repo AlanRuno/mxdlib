@@ -30,10 +30,6 @@ find_library(UV_LIBRARY uv PATHS /usr/local/lib)
 find_path(UVWASI_INCLUDE_DIR uvwasi/uvwasi.h PATHS /usr/local/include)
 find_path(UV_INCLUDE_DIR uv.h PATHS /usr/local/include)
 
-if(NOT WASM3_LIBRARY OR NOT WASM3_INCLUDE_DIR)
-    message(FATAL_ERROR "wasm3 library not found")
-endif()
-
 if(NOT UVWASI_LIBRARY OR NOT UVWASI_INCLUDE_DIR)
     message(FATAL_ERROR "uvwasi library not found")
 endif()

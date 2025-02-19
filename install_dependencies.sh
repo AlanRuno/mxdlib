@@ -86,9 +86,11 @@ install_wasm3() {
     cd wasm3
     mkdir -p build && cd build
     # Add installation targets for libraries and headers
-    cmake -DBUILD_WASM3_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local ..
+    cmake -DBUILD_WASM3_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_SHARED_LIBS=ON ..
     make
-    sudo make install
+    # Install library and headers manually since wasm3's CMake doesn't have install targets
+    sudo cp source/libm3.* /usr/local/lib/
+    sudo cp ../source/*.h /usr/local/include/
     # Create CMake config directory and install config file
     sudo mkdir -p /usr/local/lib/cmake/wasm3
     create_wasm3_cmake_config
