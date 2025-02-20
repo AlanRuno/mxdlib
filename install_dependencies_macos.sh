@@ -309,7 +309,16 @@ install_libuv() {
           ..
     
     make
-    make install
+    
+    # Try installation with fallback paths
+    local install_dir
+    if install_dir=$(verify_directory_permissions "${BREW_PREFIX}/lib"); then
+        DESTDIR="$install_dir" make install
+    else
+        log "Error: Could not find writable installation directory"
+        exit 1
+    fi
+    
     cd ../..
     rm -rf libuv
     
@@ -342,7 +351,16 @@ install_uvwasi() {
           ..
     
     make
-    make install
+    
+    # Try installation with fallback paths
+    local install_dir
+    if install_dir=$(verify_directory_permissions "${BREW_PREFIX}/lib"); then
+        DESTDIR="$install_dir" make install
+    else
+        log "Error: Could not find writable installation directory"
+        exit 1
+    fi
+    
     cd ../..
     rm -rf uvwasi
     
