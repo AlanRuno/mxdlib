@@ -132,45 +132,40 @@ cmake_minimum_required(VERSION 3.12)
 project(wasm3)
 
 include(GNUInstallDirs)
+
 option(BUILD_WASM3_LIBS "Build wasm3 libraries" ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(BUILD_SHARED_LIBS ON)
 
-# Set installation paths
-set(PKGCONFIG_INSTALL_DIR "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig"
-    CACHE PATH "Installation directory for pkg-config files")
+# Add source files
+file(GLOB M3_SOURCES ../source/*.c)
+add_library(m3 ${M3_SOURCES})
+target_include_directories(m3 PUBLIC ../source)
 
-# Configure and install pkg-config file
-message(STATUS "Configuring pkg-config file...")
-message(STATUS "pkg-config installation directory: ${PKGCONFIG_INSTALL_DIR}")
+# Add executable target
+add_executable(wasm3 ../platforms/app/main.c)
+target_link_libraries(wasm3 PRIVATE m3)
 
-# Ensure pkg-config file is configured with correct paths
+# Configure pkg-config file
 configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/wasm3.pc.in
+    ../source/wasm3.pc.in
     ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
     @ONLY)
 
-if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc)
-    message(FATAL_ERROR "Failed to generate wasm3.pc")
-endif()
+# Install targets
+install(TARGETS m3 wasm3
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
-message(STATUS "Installing pkg-config file to: ${PKGCONFIG_INSTALL_DIR}")
+# Install headers
+install(DIRECTORY ../source/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wasm3
+    FILES_MATCHING PATTERN "*.h")
 
-# Install pkg-config file with explicit permissions
+# Install pkg-config file
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
-    DESTINATION ${PKGCONFIG_INSTALL_DIR}
-    PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-    COMPONENT development)
-
-# Add source files
-file(GLOB M3_SOURCES source/*.c)
-
-# Add executable target
-add_executable(wasm3 platforms/app/main.c)
-target_link_libraries(wasm3 PRIVATE m3)
-
-# Install executable
-install(TARGETS wasm3 RUNTIME DESTINATION bin)
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 EOL
 
     # Configure for macOS
