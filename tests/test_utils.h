@@ -14,11 +14,7 @@
 } while(0)
 
 #define TEST_ASSERT(condition, message) do { \
-    printf("  Checking: %s\n", message); \
-    fflush(stdout); \
     assert(condition); \
-    printf("  ✓ Passed: %s\n", message); \
-    fflush(stdout); \
 } while(0)
 
 #define TEST_VALUE(desc, fmt, val) do { \
