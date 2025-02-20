@@ -19,6 +19,23 @@ check_library_installed() {
     find "${BREW_PREFIX}/lib" -name "lib${lib}.dylib*" >/dev/null 2>&1
 }
 
+verify_pkgconfig() {
+    local pkg=$1
+    local min_version=$2
+    if ! pkg-config --exists "$pkg"; then
+        log "Error: $pkg.pc not found in pkg-config search path"
+        log "Search paths: $(pkg-config --variable pc_path pkg-config)"
+        log "Installed .pc files: $(find "${BREW_PREFIX}/lib/pkgconfig" -name '*.pc' 2>/dev/null)"
+        return 1
+    fi
+    if [ -n "$min_version" ] && ! pkg-config --atleast-version="$min_version" "$pkg"; then
+        log "Error: $pkg version $(pkg-config --modversion "$pkg") is less than required $min_version"
+        return 1
+    fi
+    log "Successfully verified $pkg$([ -n "$min_version" ] && echo " >= $min_version")"
+    return 0
+}
+
 verify_system_deps() {
     local errors=0
     for lib in libssl libsodium libgmp; do
@@ -96,10 +113,15 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(BUILD_SHARED_LIBS ON)
 
 # Configure pkg-config file
+message(STATUS "Generating pkg-config file...")
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/source/wasm3.pc.in
     ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
     @ONLY)
+
+if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc)
+    message(FATAL_ERROR "Failed to generate wasm3.pc")
+endif()
 
 # Install pkg-config file
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
@@ -132,12 +154,11 @@ EOL
     make
     make install
     
-    # Verify wasm3 pkg-config installation
-    if ! pkg-config --exists wasm3; then
-        log "Error: wasm3.pc not found by pkg-config"
+    # Verify wasm3 installation
+    if ! verify_pkgconfig wasm3 "1.0.0"; then
+        log "Error: wasm3 pkg-config verification failed"
         exit 1
     fi
-    log "wasm3 pkg-config file installed successfully"
     
     cd ../..
     rm -rf wasm3
@@ -168,6 +189,12 @@ install_libuv() {
     make install
     cd ../..
     rm -rf libuv
+    
+    # Verify libuv installation
+    if ! verify_pkgconfig libuv "1.0.0"; then
+        log "Error: libuv pkg-config verification failed"
+        exit 1
+    fi
 }
 
 install_uvwasi() {
@@ -195,6 +222,12 @@ install_uvwasi() {
     make install
     cd ../..
     rm -rf uvwasi
+    
+    # Verify uvwasi installation
+    if ! verify_pkgconfig uvwasi "0.0.20"; then
+        log "Error: uvwasi pkg-config verification failed"
+        exit 1
+    fi
 }
 
 parse_args() {
