@@ -1,6 +1,7 @@
 #include "../include/mxd_rsc.h"
 #include "../include/mxd_ntp.h"
 #include "../include/blockchain/mxd_rsc_internal.h"
+#include "test_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,18 +11,19 @@
 
 // Test node metrics initialization
 static void test_node_metrics_init(void) {
-    printf("Testing node metrics initialization...\n");
-    
     mxd_node_metrics_t metrics;
-    assert(mxd_init_node_metrics(&metrics) == 0);
-    assert(metrics.avg_response_time == 0);
-    assert(metrics.min_response_time == UINT64_MAX);
-    assert(metrics.max_response_time == 0);
-    assert(metrics.response_count == 0);
-    assert(metrics.tip_share == 0.0);
-    assert(metrics.last_update == 0);
     
-    printf("Node metrics initialization test passed\n");
+    TEST_START("Node Metrics Initialization");
+    
+    TEST_ASSERT(mxd_init_node_metrics(&metrics) == 0, "Initialize metrics structure");
+    TEST_ASSERT(metrics.avg_response_time == 0, "Average response time initialized to 0");
+    TEST_ASSERT(metrics.min_response_time == UINT64_MAX, "Minimum response time initialized to max");
+    TEST_ASSERT(metrics.max_response_time == 0, "Maximum response time initialized to 0");
+    TEST_ASSERT(metrics.response_count == 0, "Response count initialized to 0");
+    TEST_ASSERT(metrics.tip_share == 0.0, "Tip share initialized to 0");
+    TEST_ASSERT(metrics.last_update == 0, "Last update initialized to 0");
+    
+    TEST_END("Node Metrics Initialization");
 }
 
 // Test node metrics updates

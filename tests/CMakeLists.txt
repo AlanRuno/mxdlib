@@ -1,3 +1,6 @@
+# Add test utilities
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+
 # Add test executables
 add_executable(mxd_crypto_tests
     test_crypto.c

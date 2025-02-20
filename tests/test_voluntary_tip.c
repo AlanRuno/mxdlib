@@ -1,28 +1,33 @@
 #include "../include/mxd_transaction.h"
+#include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
 // Test voluntary tip setting and getting
 static void test_voluntary_tip_basic(void) {
-    printf("Testing basic voluntary tip functionality...\n");
     mxd_transaction_t tx;
-    assert(mxd_create_transaction(&tx) == 0);
+    TEST_START("Basic Voluntary Tip");
+    
+    TEST_ASSERT(mxd_create_transaction(&tx) == 0, "Create transaction");
     
     // Test setting valid tip
-    assert(mxd_set_voluntary_tip(&tx, 1.5) == 0);
-    assert(mxd_get_voluntary_tip(&tx) == 1.5);
+    TEST_VALUE("Setting tip value", "%.1f", 1.5);
+    TEST_ASSERT(mxd_set_voluntary_tip(&tx, 1.5) == 0, "Set valid tip amount");
+    TEST_ASSERT(mxd_get_voluntary_tip(&tx) == 1.5, "Retrieved tip matches set value");
     
     // Test setting zero tip
-    assert(mxd_set_voluntary_tip(&tx, 0.0) == 0);
-    assert(mxd_get_voluntary_tip(&tx) == 0.0);
+    TEST_VALUE("Setting tip value", "%.1f", 0.0);
+    TEST_ASSERT(mxd_set_voluntary_tip(&tx, 0.0) == 0, "Set zero tip amount");
+    TEST_ASSERT(mxd_get_voluntary_tip(&tx) == 0.0, "Retrieved tip is zero");
     
     // Test setting negative tip (should fail)
-    assert(mxd_set_voluntary_tip(&tx, -1.0) == -1);
+    TEST_VALUE("Setting invalid tip value", "%.1f", -1.0);
+    TEST_ASSERT(mxd_set_voluntary_tip(&tx, -1.0) == -1, "Negative tip rejected");
     
     // Test with NULL transaction
-    assert(mxd_set_voluntary_tip(NULL, 1.0) == -1);
-    assert(mxd_get_voluntary_tip(NULL) == -1);
+    TEST_ASSERT(mxd_set_voluntary_tip(NULL, 1.0) == -1, "NULL transaction rejected for set");
+    TEST_ASSERT(mxd_get_voluntary_tip(NULL) == -1, "NULL transaction rejected for get");
     
     mxd_free_transaction(&tx);
     printf("Basic voluntary tip tests passed\n");

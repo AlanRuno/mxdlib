@@ -1,6 +1,7 @@
 #include "../include/mxd_rsc.h"
 #include "../include/mxd_ntp.h"
 #include "../include/blockchain/mxd_rsc_internal.h"
+#include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,22 +12,27 @@ static void init_test_node(mxd_node_stake_t *node, double stake_amount) {
     memset(node, 0, sizeof(*node));
     node->stake_amount = stake_amount;
     node->active = 1;
-    assert(mxd_init_node_metrics(&node->metrics) == 0);
+    TEST_ASSERT(mxd_init_node_metrics(&node->metrics) == 0, "Node metrics initialization successful");
 }
 
 // Test node stake validation
 static void test_node_validation(void) {
     mxd_node_stake_t node;
+    
+    TEST_START("Node Stake Validation");
+    
+    TEST_VALUE("Initial stake amount", "%.2f", 1.0);
     init_test_node(&node, 1.0);
 
     // Test valid stake (1% of 100)
-    assert(mxd_validate_node_stake(&node, 100.0) == 0);
+    TEST_ASSERT(mxd_validate_node_stake(&node, 100.0) == 0, "Valid stake (1%) accepted");
 
     // Test invalid stake (0.05% of 100)
+    TEST_VALUE("Invalid stake amount", "%.2f", 0.05);
     node.stake_amount = 0.05;
-    assert(mxd_validate_node_stake(&node, 100.0) == -1);
+    TEST_ASSERT(mxd_validate_node_stake(&node, 100.0) == -1, "Invalid stake (0.05%) rejected");
 
-    printf("Node validation test passed\n");
+    TEST_END("Node Stake Validation");
 }
 
 // Test node metrics initialization and updates

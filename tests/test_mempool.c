@@ -1,17 +1,20 @@
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_mempool.h"
+#include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h> // For sleep
 
 static void test_mempool_initialization(void) {
-  assert(mxd_init_mempool() == 0);
-  assert(mxd_get_mempool_size() == 0);
-  printf("Mempool initialization test passed\n");
+  TEST_START("Mempool Initialization");
+  TEST_ASSERT(mxd_init_mempool() == 0, "Initialize mempool");
+  TEST_ASSERT(mxd_get_mempool_size() == 0, "Initial mempool size is zero");
+  TEST_END("Mempool Initialization");
 }
 
 static void test_transaction_management(void) {
+  TEST_START("Transaction Management");
   mxd_init_mempool(); // Reset mempool
 
   mxd_transaction_t tx;
@@ -20,28 +23,31 @@ static void test_transaction_management(void) {
   uint8_t priv_key[128];
 
   // Generate keypair
-  assert(mxd_dilithium_keygen(pub_key, priv_key) == 0);
+  TEST_ASSERT(mxd_dilithium_keygen(pub_key, priv_key) == 0, "Generate keypair");
+  TEST_ARRAY("Public key", pub_key, 256);
 
   // Create and sign transaction
-  assert(mxd_create_transaction(&tx) == 0);
-  assert(mxd_add_tx_output(&tx, pub_key, 1.0) == 0);
-  assert(mxd_calculate_tx_hash(&tx, tx_hash) == 0);
+  TEST_ASSERT(mxd_create_transaction(&tx) == 0, "Create transaction");
+  TEST_ASSERT(mxd_add_tx_output(&tx, pub_key, 1.0) == 0, "Add transaction output");
+  TEST_VALUE("Transaction amount", "%.1f", 1.0);
+  TEST_ASSERT(mxd_calculate_tx_hash(&tx, tx_hash) == 0, "Calculate transaction hash");
+  TEST_ARRAY("Transaction hash", tx_hash, 64);
 
   // Add to mempool
-  assert(mxd_add_to_mempool(&tx, MXD_PRIORITY_HIGH) == 0);
-  assert(mxd_get_mempool_size() == 1);
+  TEST_ASSERT(mxd_add_to_mempool(&tx, MXD_PRIORITY_HIGH) == 0, "Add transaction to mempool");
+  TEST_ASSERT(mxd_get_mempool_size() == 1, "Mempool size is 1 after addition");
 
   // Get from mempool
   mxd_transaction_t found_tx;
-  assert(mxd_get_from_mempool(tx_hash, &found_tx) == 0);
+  TEST_ASSERT(mxd_get_from_mempool(tx_hash, &found_tx) == 0, "Retrieve transaction from mempool");
 
   // Remove from mempool
-  assert(mxd_remove_from_mempool(tx_hash) == 0);
-  assert(mxd_get_mempool_size() == 0);
+  TEST_ASSERT(mxd_remove_from_mempool(tx_hash) == 0, "Remove transaction from mempool");
+  TEST_ASSERT(mxd_get_mempool_size() == 0, "Mempool size is 0 after removal");
 
   mxd_free_transaction(&tx);
   mxd_free_transaction(&found_tx);
-  printf("Transaction management test passed\n");
+  TEST_END("Transaction Management");
 }
 
 static void test_priority_handling(void) {

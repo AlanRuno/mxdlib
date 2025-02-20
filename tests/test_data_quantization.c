@@ -1,45 +1,57 @@
 #include "../include/mxd_data_quantization.h"
+#include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
 static void test_proof_initialization(void) {
-  assert(mxd_init_quantization() == 0);
-  printf("Proof initialization test passed\n");
+  TEST_START("Proof Initialization");
+  TEST_ASSERT(mxd_init_quantization() == 0, "Quantization system initialization successful");
+  TEST_END("Proof Initialization");
 }
 
 static void test_dilithium_proof(void) {
   uint8_t data[64] = "Test data for Dilithium proof";
   mxd_proof_t proof;
 
+  TEST_START("Dilithium Proof");
+  TEST_VALUE("Input data", "%s", (char *)data);
+  
   // Generate proof
-  assert(mxd_generate_proof(data, strlen((char *)data),
-                            MXD_PROOF_TYPE_DILITHIUM, &proof) == 0);
-  assert(proof.type == MXD_PROOF_TYPE_DILITHIUM);
-  assert(proof.proof_size > 0);
+  TEST_ASSERT(mxd_generate_proof(data, strlen((char *)data),
+                            MXD_PROOF_TYPE_DILITHIUM, &proof) == 0, "Proof generation successful");
+  TEST_ASSERT(proof.type == MXD_PROOF_TYPE_DILITHIUM, "Proof type is Dilithium");
+  TEST_ASSERT(proof.proof_size > 0, "Proof size is non-zero");
+  TEST_VALUE("Proof size", "%zu", proof.proof_size);
+  TEST_ARRAY("Proof data", proof.proof_data, proof.proof_size);
 
   // Verify proof
-  assert(mxd_verify_proof(&proof, data, strlen((char *)data)) == 0);
+  TEST_ASSERT(mxd_verify_proof(&proof, data, strlen((char *)data)) == 0, "Proof verification successful");
 
   mxd_free_proof(&proof);
-  printf("Dilithium proof test passed\n");
+  TEST_END("Dilithium Proof");
 }
 
 static void test_merkle_proof(void) {
   uint8_t data[64] = "Test data for Merkle proof";
   mxd_proof_t proof;
 
+  TEST_START("Merkle Proof");
+  TEST_VALUE("Input data", "%s", (char *)data);
+  
   // Generate proof
-  assert(mxd_generate_proof(data, strlen((char *)data), MXD_PROOF_TYPE_MERKLE,
-                            &proof) == 0);
-  assert(proof.type == MXD_PROOF_TYPE_MERKLE);
-  assert(proof.proof_size > 0);
+  TEST_ASSERT(mxd_generate_proof(data, strlen((char *)data), MXD_PROOF_TYPE_MERKLE,
+                            &proof) == 0, "Proof generation successful");
+  TEST_ASSERT(proof.type == MXD_PROOF_TYPE_MERKLE, "Proof type is Merkle");
+  TEST_ASSERT(proof.proof_size > 0, "Proof size is non-zero");
+  TEST_VALUE("Proof size", "%zu", proof.proof_size);
+  TEST_ARRAY("Proof data", proof.proof_data, proof.proof_size);
 
   // Verify proof
-  assert(mxd_verify_proof(&proof, data, strlen((char *)data)) == 0);
+  TEST_ASSERT(mxd_verify_proof(&proof, data, strlen((char *)data)) == 0, "Proof verification successful");
 
   mxd_free_proof(&proof);
-  printf("Merkle proof test passed\n");
+  TEST_END("Merkle Proof");
 }
 
 static void test_zk_stark_proof(void) {

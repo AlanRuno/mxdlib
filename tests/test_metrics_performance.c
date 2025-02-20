@@ -1,6 +1,7 @@
 #include "../include/mxd_metrics.h"
 #include "../include/blockchain/mxd_metrics_internal.h"
 #include "../include/mxd_ntp.h"
+#include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,7 +20,7 @@ static uint64_t get_time_us(void) {
 
 // Test metric update performance
 static void test_metric_update_performance(void) {
-    printf("Testing metric update performance...\n");
+    TEST_START("Metric Update Performance");
     
     mxd_node_metrics_t metrics;
     mxd_init_metrics(&metrics);
@@ -28,8 +29,8 @@ static void test_metric_update_performance(void) {
     
     // Perform many updates
     for (int i = 0; i < NUM_UPDATES; i++) {
-        assert(mxd_update_metrics(&metrics, 100 + (i % 100)) == 0);
-        assert(mxd_record_message_result(&metrics, i % 2) == 0);
+        TEST_ASSERT(mxd_update_metrics(&metrics, 100 + (i % 100)) == 0, "Metric update operation successful");
+        TEST_ASSERT(mxd_record_message_result(&metrics, i % 2) == 0, "Message result recording successful");
     }
     
     uint64_t end_time = get_time_us();
@@ -38,12 +39,14 @@ static void test_metric_update_performance(void) {
     
     printf("Performed %d updates in %.2f ms (%.0f updates/second)\n",
            NUM_UPDATES, total_time / 1000.0, updates_per_second);
-    assert(updates_per_second > 10000); // At least 10K updates/second
+    TEST_ASSERT(updates_per_second > 10000, "Performance meets minimum requirement of 10K updates/second");
+    TEST_END("Metric Update Performance");
 }
 
 // Test scoring performance with many nodes
 static void test_scoring_performance(void) {
-    printf("Testing scoring performance with %d nodes...\n", NUM_NODES);
+    TEST_START("Scoring Performance");
+    TEST_VALUE("Number of nodes", "%d", NUM_NODES);
     
     mxd_node_metrics_t *metrics = malloc(NUM_NODES * sizeof(mxd_node_metrics_t));
     assert(metrics != NULL);
@@ -72,14 +75,15 @@ static void test_scoring_performance(void) {
     
     printf("Scored %d nodes in %.2f ms (%.0f nodes/second)\n",
            NUM_NODES, total_time / 1000.0, nodes_per_second);
-    assert(nodes_per_second > 1000); // At least 1K nodes/second
+    TEST_ASSERT(nodes_per_second > 1000, "Performance meets minimum requirement of 1K nodes/second");
     
     free(metrics);
+    TEST_END("Scoring Performance");
 }
 
 // Test memory usage
 static void test_memory_usage(void) {
-    printf("Testing memory usage...\n");
+    TEST_START("Memory Usage");
     
     // Allocate metrics for many nodes
     mxd_node_metrics_t *metrics = malloc(NUM_NODES * sizeof(mxd_node_metrics_t));
@@ -90,13 +94,14 @@ static void test_memory_usage(void) {
            NUM_NODES, total_size / 1024.0);
     
     // Verify size per node is reasonable
-    assert(sizeof(mxd_node_metrics_t) <= 128); // Max 128 bytes per node
+    TEST_ASSERT(sizeof(mxd_node_metrics_t) <= 128, "Node metrics structure size within 128 byte limit");
     
     free(metrics);
+    TEST_END("Memory Usage");
 }
 
 int main(void) {
-    printf("Starting node metrics performance tests...\n");
+    TEST_START("Node Metrics Performance Tests");
     
     // Initialize NTP
     if (mxd_init_ntp() != 0) {
@@ -109,6 +114,6 @@ int main(void) {
     test_scoring_performance();
     test_memory_usage();
     
-    printf("All node metrics performance tests passed!\n");
+    TEST_END("Node Metrics Performance Tests");
     return 0;
 }
