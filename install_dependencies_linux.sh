@@ -202,7 +202,15 @@ set(WASM3_LIBRARIES m3)
 EOL
 
     # Create pkg-config file
-    cp /home/ubuntu/repos/mxdlib/wasm3.pc.in source/wasm3.pc.in
+    mkdir -p source
+    echo "Creating source directory and copying pkg-config file..."
+    cp /home/ubuntu/repos/mxdlib/wasm3.pc.in source/wasm3.pc.in || {
+        echo "Failed to copy wasm3.pc.in. Debug info:"
+        echo "Current directory: $(pwd)"
+        echo "Source exists: $(test -f /home/ubuntu/repos/mxdlib/wasm3.pc.in && echo "Yes" || echo "No")"
+        echo "Target directory exists: $(test -d source && echo "Yes" || echo "No")"
+        exit 1
+    }
     
     # Build and install
     mkdir -p build && cd build
