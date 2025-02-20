@@ -1,20 +1,24 @@
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_transaction.h"
+#include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
 static void test_transaction_creation(void) {
   mxd_transaction_t tx;
-  assert(mxd_create_transaction(&tx) == 0);
-  assert(tx.version == 1);
-  assert(tx.input_count == 0);
-  assert(tx.output_count == 0);
-  assert(tx.inputs == NULL);
-  assert(tx.outputs == NULL);
+  
+  TEST_START("Transaction Creation");
+  
+  TEST_ASSERT(mxd_create_transaction(&tx) == 0, "Create new transaction");
+  TEST_ASSERT(tx.version == 1, "Transaction version is 1");
+  TEST_ASSERT(tx.input_count == 0, "Input count initialized to 0");
+  TEST_ASSERT(tx.output_count == 0, "Output count initialized to 0");
+  TEST_ASSERT(tx.inputs == NULL, "Input array initialized to NULL");
+  TEST_ASSERT(tx.outputs == NULL, "Output array initialized to NULL");
 
   mxd_free_transaction(&tx);
-  printf("Transaction creation test passed\n");
+  TEST_END("Transaction Creation");
 }
 
 static void test_input_output_management(void) {
@@ -23,23 +27,29 @@ static void test_input_output_management(void) {
   uint8_t pub_key[256] = {2};
   uint8_t recv_key[256] = {3};
 
-  assert(mxd_create_transaction(&tx) == 0);
+  TEST_START("Input/Output Management");
+  
+  TEST_ASSERT(mxd_create_transaction(&tx) == 0, "Create new transaction");
 
   // Add input
-  assert(mxd_add_tx_input(&tx, prev_hash, 0, pub_key) == 0);
-  assert(tx.input_count == 1);
-  assert(memcmp(tx.inputs[0].prev_tx_hash, prev_hash, 64) == 0);
-  assert(tx.inputs[0].output_index == 0);
-  assert(memcmp(tx.inputs[0].public_key, pub_key, 256) == 0);
+  TEST_ARRAY("Previous hash", prev_hash, 64);
+  TEST_ARRAY("Public key", pub_key, 256);
+  TEST_ASSERT(mxd_add_tx_input(&tx, prev_hash, 0, pub_key) == 0, "Add transaction input");
+  TEST_ASSERT(tx.input_count == 1, "Input count is 1");
+  TEST_ASSERT(memcmp(tx.inputs[0].prev_tx_hash, prev_hash, 64) == 0, "Previous hash matches");
+  TEST_ASSERT(tx.inputs[0].output_index == 0, "Output index is 0");
+  TEST_ASSERT(memcmp(tx.inputs[0].public_key, pub_key, 256) == 0, "Public key matches");
 
   // Add output
-  assert(mxd_add_tx_output(&tx, recv_key, 1.0) == 0);
-  assert(tx.output_count == 1);
-  assert(memcmp(tx.outputs[0].recipient_key, recv_key, 256) == 0);
-  assert(tx.outputs[0].amount == 1.0);
+  TEST_ARRAY("Recipient key", recv_key, 256);
+  TEST_VALUE("Output amount", "%.1f", 1.0);
+  TEST_ASSERT(mxd_add_tx_output(&tx, recv_key, 1.0) == 0, "Add transaction output");
+  TEST_ASSERT(tx.output_count == 1, "Output count is 1");
+  TEST_ASSERT(memcmp(tx.outputs[0].recipient_key, recv_key, 256) == 0, "Recipient key matches");
+  TEST_ASSERT(tx.outputs[0].amount == 1.0, "Amount matches");
 
   mxd_free_transaction(&tx);
-  printf("Input/output management test passed\n");
+  TEST_END("Input/Output Management");
 }
 
 static void test_transaction_signing(void) {

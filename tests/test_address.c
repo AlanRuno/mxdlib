@@ -1,11 +1,16 @@
 #include "../include/mxd_address.h"
+#include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 
 static void test_passphrase_generation(void) {
   char passphrase[256];
-  assert(mxd_generate_passphrase(passphrase, sizeof(passphrase)) == 0);
+  
+  TEST_START("Passphrase Generation");
+  
+  TEST_ASSERT(mxd_generate_passphrase(passphrase, sizeof(passphrase)) == 0, "Generate passphrase");
+  TEST_VALUE("Generated passphrase", "%s", passphrase);
 
   // Verify we got 12 words
   int word_count = 1;
@@ -13,9 +18,9 @@ static void test_passphrase_generation(void) {
     if (*p == ' ')
       word_count++;
   }
-  assert(word_count == 12);
-
-  printf("Passphrase generation test passed\n");
+  TEST_ASSERT(word_count == 12, "Passphrase contains exactly 12 words");
+  
+  TEST_END("Passphrase Generation");
 }
 
 static void test_property_key_derivation(void) {
@@ -23,7 +28,12 @@ static void test_property_key_derivation(void) {
   const char *test_pin = "1234";
   uint8_t property_key[64];
 
-  assert(mxd_derive_property_key(test_passphrase, test_pin, property_key) == 0);
+  TEST_START("Property Key Derivation");
+  TEST_VALUE("Test passphrase", "%s", test_passphrase);
+  TEST_VALUE("Test PIN", "%s", test_pin);
+  
+  TEST_ASSERT(mxd_derive_property_key(test_passphrase, test_pin, property_key) == 0, "Property key derivation successful");
+  TEST_ARRAY("Derived property key", property_key, 64);
 
   // Property key should not be all zeros
   int is_zero = 1;
@@ -33,9 +43,9 @@ static void test_property_key_derivation(void) {
       break;
     }
   }
-  assert(!is_zero);
+  TEST_ASSERT(!is_zero, "Property key is not empty");
 
-  printf("Property key derivation test passed\n");
+  TEST_END("Property Key Derivation");
 }
 
 static void test_keypair_generation(void) {
@@ -43,7 +53,12 @@ static void test_keypair_generation(void) {
   uint8_t public_key[256];
   uint8_t private_key[128];
 
-  assert(mxd_generate_keypair(property_key, public_key, private_key) == 0);
+  TEST_START("Keypair Generation");
+  TEST_ARRAY("Input property key", property_key, 64);
+  
+  TEST_ASSERT(mxd_generate_keypair(property_key, public_key, private_key) == 0, "Keypair generation successful");
+  TEST_ARRAY("Generated public key", public_key, 256);
+  TEST_ARRAY("Generated private key", private_key, 128);
 
   // Keys should not be all zeros
   int pub_zero = 1, priv_zero = 1;
@@ -53,9 +68,9 @@ static void test_keypair_generation(void) {
     if (public_key[i] != 0)
       pub_zero = 0;
   }
-  assert(!pub_zero && !priv_zero);
+  TEST_ASSERT(!pub_zero && !priv_zero, "Generated keys are not empty");
 
-  printf("Keypair generation test passed\n");
+  TEST_END("Keypair Generation");
 }
 
 static void test_address_generation(void) {

@@ -5,6 +5,7 @@
 #include <assert.h>
 #include "mxd_p2p.h"
 #include "mxd_config.h"
+#include "test_utils.h"
 
 #define TEST_TIMEOUT 120
 #define WAIT_INTERVAL 1
@@ -30,13 +31,13 @@ int test_p2p_networking(void) {
     }
 
     // Initialize P2P networking
-    printf("Initializing P2P with port 12345...\n");
-    fflush(stdout);
-    assert(mxd_init_p2p(12345, public_key) == 0);
-
-    printf("Starting P2P networking...\n");
-    fflush(stdout);
-    assert(mxd_start_p2p() == 0);
+    TEST_START("P2P Initialization");
+    TEST_VALUE("Port", "%d", 12345);
+    TEST_ARRAY("Public key", public_key, 32);
+    
+    TEST_ASSERT(mxd_init_p2p(12345, public_key) == 0, "P2P initialization successful");
+    TEST_ASSERT(mxd_start_p2p() == 0, "P2P networking started");
+    TEST_END("P2P Initialization");
 
     printf("Waiting for network initialization...\n");
     fflush(stdout);
@@ -67,14 +68,19 @@ int test_p2p_networking(void) {
 
     const char* test_msg = "test_message";
     size_t msg_len = strlen(test_msg);
-    assert(mxd_broadcast_message(MXD_MSG_PEERS, test_msg, msg_len) == 0);
-    printf("Message handling test passed\n");
+    
+    TEST_START("Message Broadcasting");
+    TEST_VALUE("Message", "%s", test_msg);
+    TEST_VALUE("Message length", "%zu", msg_len);
+    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_PEERS, test_msg, msg_len) == 0, "Message broadcast successful");
+    TEST_END("Message Broadcasting");
     printf("Message handling test completed\n");
     fflush(stdout);
 
     // Start peer discovery
-    assert(mxd_start_peer_discovery() == 0);
-    printf("Peer discovery started\n");
+    TEST_START("Peer Discovery");
+    TEST_ASSERT(mxd_start_peer_discovery() == 0, "Peer discovery started successfully");
+    TEST_END("Peer Discovery");
     fflush(stdout);
 
     // Wait for peer discovery
@@ -90,7 +96,7 @@ int test_p2p_networking(void) {
 }
 
 int main(int argc, char** argv) {
-    printf("Starting P2P networking tests...\n");
+    TEST_START("P2P Networking Tests");
     fflush(stdout);
 
     int network_mode = 0;
@@ -113,6 +119,7 @@ int main(int argc, char** argv) {
         return test_p2p_networking();
     }
 
-    printf("No tests run - use --network for network tests\n");
+    TEST_VALUE("Status", "%s", "No tests run - use --network for network tests");
+    TEST_END("P2P Networking Tests");
     return 0;
 }

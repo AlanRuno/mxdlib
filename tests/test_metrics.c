@@ -1,6 +1,7 @@
 #include "../include/mxd_metrics.h"
 #include "../include/blockchain/mxd_metrics_internal.h"
 #include "../include/mxd_ntp.h"
+#include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,22 +9,22 @@
 
 // Test metric initialization
 static void test_init_metrics(void) {
-    printf("Testing metric initialization...\n");
+    TEST_START("Metric Initialization");
     
     mxd_node_metrics_t metrics;
-    assert(mxd_init_metrics(&metrics) == 0);
+    TEST_ASSERT(mxd_init_metrics(&metrics) == 0, "Initialize metrics structure");
     
     // Verify initial values
-    assert(metrics.avg_response_time == 0);
-    assert(metrics.min_response_time == UINT64_MAX);
-    assert(metrics.max_response_time == 0);
-    assert(metrics.response_count == 0);
-    assert(metrics.message_success == 0);
-    assert(metrics.message_total == 0);
-    assert(metrics.reliability_score == 0.0);
-    assert(metrics.performance_score == 0.0);
+    TEST_ASSERT(metrics.avg_response_time == 0, "Average response time starts at 0");
+    TEST_ASSERT(metrics.min_response_time == UINT64_MAX, "Minimum response time starts at max");
+    TEST_ASSERT(metrics.max_response_time == 0, "Maximum response time starts at 0");
+    TEST_ASSERT(metrics.response_count == 0, "Response count starts at 0");
+    TEST_ASSERT(metrics.message_success == 0, "Successful message count starts at 0");
+    TEST_ASSERT(metrics.message_total == 0, "Total message count starts at 0");
+    TEST_ASSERT(metrics.reliability_score == 0.0, "Reliability score starts at 0.0");
+    TEST_ASSERT(metrics.performance_score == 0.0, "Performance score starts at 0.0");
     
-    printf("Metric initialization test passed\n");
+    TEST_END("Metric Initialization");
 }
 
 // Test metric updates
