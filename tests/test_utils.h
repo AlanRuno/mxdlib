@@ -2,6 +2,7 @@
 #define MXD_TEST_UTILS_H
 
 #include <stdio.h>
+#include <assert.h>
 
 #define TEST_START(name) do { \
     printf("\n=== Starting test: %s ===\n", name); \
@@ -14,11 +15,7 @@
 } while(0)
 
 #define TEST_ASSERT(condition, message) do { \
-    printf("  Checking: %s\n", message); \
-    fflush(stdout); \
     assert(condition); \
-    printf("  ✓ Passed: %s\n", message); \
-    fflush(stdout); \
 } while(0)
 
 #define TEST_VALUE(desc, fmt, val) do { \
