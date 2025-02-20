@@ -42,7 +42,6 @@ verify_directory_permissions() {
         sudo chown -R $(whoami) "$dir"
     fi
 }
-}
 
 verify_pkgconfig() {
     local pkg=$1
