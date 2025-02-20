@@ -312,11 +312,18 @@ install_libuv() {
     # Try installation with fallback paths
     local install_dir
     if install_dir=$(verify_directory_permissions "${BREW_PREFIX}"); then
+        # Reconfigure with correct installation paths
         cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
               -DCMAKE_INSTALL_LIBDIR=lib \
               -DCMAKE_INSTALL_INCLUDEDIR=include \
+              -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
+              -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
+              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
               ..
         make install
+        
+        # Update pkg-config path to include the new location
+        export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
     else
         log "Error: Could not find writable installation directory"
         exit 1
@@ -358,11 +365,18 @@ install_uvwasi() {
     # Try installation with fallback paths
     local install_dir
     if install_dir=$(verify_directory_permissions "${BREW_PREFIX}"); then
+        # Reconfigure with correct installation paths
         cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
               -DCMAKE_INSTALL_LIBDIR=lib \
               -DCMAKE_INSTALL_INCLUDEDIR=include \
+              -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
+              -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
+              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
               ..
         make install
+        
+        # Update pkg-config path to include the new location
+        export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
     else
         log "Error: Could not find writable installation directory"
         exit 1
