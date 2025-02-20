@@ -212,7 +212,7 @@ EOL
     mkdir -p source
     echo "Creating source directory and copying pkg-config file..."
     # Get the directory where the installation scripts are located
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
     cp "${SCRIPT_DIR}/wasm3.pc.in" source/wasm3.pc.in || {
         echo "Failed to copy wasm3.pc.in. Debug info:"
         echo "Current directory: $(pwd)"
