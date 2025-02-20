@@ -266,7 +266,7 @@ set(WASM3_LIBRARIES m3)
 EOL
 
     # Create pkg-config file
-    cp ../wasm3.pc.in source/wasm3.pc.in
+    cp ../../wasm3.pc.in source/wasm3.pc.in
     
     # Build and install
     mkdir -p build && cd build

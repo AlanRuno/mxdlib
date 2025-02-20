@@ -74,7 +74,7 @@ install_wasm3() {
     mkdir -p build && cd build
     
     # Create pkg-config file
-    cp ../wasm3.pc.in source/wasm3.pc.in
+    cp ../../wasm3.pc.in source/wasm3.pc.in
     
     # Create main CMakeLists.txt
     cat > CMakeLists.txt << 'EOL'
