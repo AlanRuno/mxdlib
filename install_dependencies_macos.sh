@@ -239,11 +239,18 @@ EOL
           ..
     
     make
-    make install
     
-    # Verify wasm3 installation
-    if ! verify_pkgconfig wasm3 "1.0.0"; then
-        log "Error: wasm3 pkg-config verification failed"
+    # Try CMake installation first
+    if ! make install || ! verify_pkgconfig wasm3 "1.0.0"; then
+        log "CMake pkg-config installation failed, trying manual installation..."
+        install_pkgconfig_manually
+    fi
+    
+    # Final verification
+    if ! verify_pkgconfig wasm3; then
+        log "Error: pkg-config installation failed after all attempts"
+        log "Debug information:"
+        pkg-config --debug --exists wasm3 2>&1 || true
         exit 1
     fi
     
