@@ -49,15 +49,24 @@ The library's architecture is designed for optimal performance and security in c
 
 ### Prerequisites
 
-For automated installation of all dependencies, run:
+For automated installation of all dependencies:
+
+### Linux
 ```bash
 ./install_dependencies.sh [--force_build]
 ```
 
+### macOS
+```bash
+./install_dependencies_macos.sh [--force_build]
+```
+
+The macOS script automatically detects your architecture (Intel or Apple Silicon) and installs the appropriate dependencies.
+
 Options:
 - `--force_build`: Force rebuild and installation of libraries even if they are already installed
 
-This script will automatically install:
+These scripts will automatically install:
 #### System Dependencies
 - build-essential (Ubuntu/Debian)
 - cmake
