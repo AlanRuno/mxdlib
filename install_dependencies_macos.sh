@@ -21,26 +21,36 @@ check_library_installed() {
 
 verify_directory_permissions() {
     local dir="$1"
-    local parent_dir="$(dirname "$dir")"
+    local fallback_dir=""
     
-    # Check parent directory permissions
-    while [ "$parent_dir" != "/" ]; do
-        if [ ! -w "$parent_dir" ]; then
-            log "Setting permissions for $parent_dir"
-            sudo chown -R $(whoami) "$parent_dir"
-        fi
-        parent_dir="$(dirname "$parent_dir")"
-    done
+    # Try Homebrew paths first
+    if [[ "$dir" == "/usr/local/"* ]]; then
+        fallback_dir="${BREW_PREFIX}/opt/$(basename "$dir")"
+        dir="$fallback_dir"
+    fi
     
-    # Create and set permissions for target directory
+    # If still not writable, try user's home directory
+    if [ ! -w "$dir" ] || [ ! -w "$(dirname "$dir")" ]; then
+        fallback_dir="$HOME/.local/$(basename "$dir")"
+        dir="$fallback_dir"
+    fi
+    
+    # Create directory without sudo
     if [ ! -d "$dir" ]; then
-        log "Creating directory $dir"
-        sudo mkdir -p "$dir"
+        if ! mkdir -p "$dir" 2>/dev/null; then
+            log "Error: Cannot create directory $dir"
+            return 1
+        fi
+        log "Created directory $dir"
     fi
+    
+    # Verify write permissions
     if [ ! -w "$dir" ]; then
-        log "Setting permissions for $dir"
-        sudo chown -R $(whoami) "$dir"
+        log "Error: Cannot write to directory $dir"
+        return 1
     fi
+    
+    echo "$dir"  # Return the actual directory used
 }
 
 install_pkgconfig_manually() {
@@ -68,22 +78,41 @@ EOL
 }
 
 setup_pkgconfig_paths() {
-    local pkgconfig_paths=(
+    local verified_paths=()
+    
+    # Try standard locations in order of preference
+    local standard_paths=(
+        "${BREW_PREFIX}/opt/pkgconfig"
         "${BREW_PREFIX}/lib/pkgconfig"
         "${BREW_PREFIX}/share/pkgconfig"
+        "$HOME/.local/lib/pkgconfig"
+    )
+    
+    # Verify each path and collect working ones
+    for dir in "${standard_paths[@]}"; do
+        local actual_dir
+        if actual_dir=$(verify_directory_permissions "$dir"); then
+            verified_paths+=("$actual_dir")
+            log "Added pkg-config path: $actual_dir"
+        fi
+    done
+    
+    # Add system paths for searching but not writing
+    verified_paths+=(
         "/usr/local/lib/pkgconfig"
         "/usr/local/share/pkgconfig"
         "/usr/lib/pkgconfig"
     )
     
-    # Create and verify permissions for all pkgconfig directories
-    for dir in "${pkgconfig_paths[@]}"; do
-        verify_directory_permissions "$dir"
-    done
+    # Set PKG_CONFIG_PATH with verified directories
+    if [ ${#verified_paths[@]} -eq 0 ]; then
+        log "Error: No writable pkg-config paths found"
+        return 1
+    fi
     
-    # Set PKG_CONFIG_PATH with all directories
-    export PKG_CONFIG_PATH=$(IFS=:; echo "${pkgconfig_paths[*]}"):${PKG_CONFIG_PATH:-}
+    export PKG_CONFIG_PATH=$(IFS=:; echo "${verified_paths[*]}"):${PKG_CONFIG_PATH:-}
     log "PKG_CONFIG_PATH set to: $PKG_CONFIG_PATH"
+    return 0
 }
 
 verify_pkgconfig() {
