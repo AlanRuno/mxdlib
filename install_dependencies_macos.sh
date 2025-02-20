@@ -19,6 +19,31 @@ check_library_installed() {
     find "${BREW_PREFIX}/lib" -name "lib${lib}.dylib*" >/dev/null 2>&1
 }
 
+verify_directory_permissions() {
+    local dir="$1"
+    local parent_dir="$(dirname "$dir")"
+    
+    # Check parent directory permissions
+    while [ "$parent_dir" != "/" ]; do
+        if [ ! -w "$parent_dir" ]; then
+            log "Setting permissions for $parent_dir"
+            sudo chown -R $(whoami) "$parent_dir"
+        fi
+        parent_dir="$(dirname "$parent_dir")"
+    done
+    
+    # Create and set permissions for target directory
+    if [ ! -d "$dir" ]; then
+        log "Creating directory $dir"
+        sudo mkdir -p "$dir"
+    fi
+    if [ ! -w "$dir" ]; then
+        log "Setting permissions for $dir"
+        sudo chown -R $(whoami) "$dir"
+    fi
+}
+}
+
 verify_pkgconfig() {
     local pkg=$1
     local min_version=$2
@@ -100,15 +125,9 @@ install_wasm3() {
     # Clean up existing wasm3 directory if it exists
     rm -rf wasm3
     
-    # Ensure pkg-config directories exist and are writable
-    for pkgconfig_dir in "${BREW_PREFIX}/lib/pkgconfig" "/usr/local/lib/pkgconfig"; do
-        if [ ! -d "$pkgconfig_dir" ]; then
-            sudo mkdir -p "$pkgconfig_dir"
-        fi
-        if [ ! -w "$pkgconfig_dir" ]; then
-            sudo chown -R $(whoami) "$pkgconfig_dir"
-        fi
-    done
+    # Verify permissions for pkg-config directories
+    verify_directory_permissions "${BREW_PREFIX}/lib/pkgconfig"
+    verify_directory_permissions "/usr/local/lib/pkgconfig"
     
     git clone https://github.com/wasm3/wasm3
     cd wasm3
@@ -170,13 +189,8 @@ EOL
 
     # Configure for macOS
     export PKG_CONFIG_PATH="${BREW_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    # Verify pkg-config directory exists and is writable
-    if [ ! -d "${BREW_PREFIX}/lib/pkgconfig" ]; then
-        sudo mkdir -p "${BREW_PREFIX}/lib/pkgconfig"
-    fi
-    if [ ! -w "${BREW_PREFIX}/lib/pkgconfig" ]; then
-        sudo chown -R $(whoami) "${BREW_PREFIX}/lib/pkgconfig"
-    fi
+    # Verify pkg-config directory permissions
+    verify_directory_permissions "${BREW_PREFIX}/lib/pkgconfig"
     cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
