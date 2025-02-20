@@ -103,9 +103,12 @@ int mxd_ripemd160(const uint8_t *input, size_t length, uint8_t output[20]) {
     return -1;
   }
 
-  printf("RIPEMD-160: Starting with input length %zu\n", length);
+  printf("RIPEMD-160: Input length %zu bytes:\n", length);
+  for (size_t i = 0; i < length; i++) {
+    printf("%02x ", input[i]);
+  }
+  printf("\n");
 
-  // Use the legacy RIPEMD160 interface
   RIPEMD160_CTX ctx;
   if (!RIPEMD160_Init(&ctx)) {
     printf("RIPEMD-160: Failed to initialize context\n");
@@ -122,7 +125,6 @@ int mxd_ripemd160(const uint8_t *input, size_t length, uint8_t output[20]) {
     return -1;
   }
 
-  printf("RIPEMD-160: Successfully generated hash\n");
   return 0;
 }
 

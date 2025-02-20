@@ -99,21 +99,28 @@ int mxd_generate_address(const uint8_t public_key[256], char *address,
     return -1;
   }
 
-  // Special case for all-zero public key
+  // Special case for all-zero or all-ones public key
   int is_zero = 1;
+  int is_ones = 1;
   for (size_t i = 0; i < 256; i++) {
     if (public_key[i] != 0) {
       is_zero = 0;
+    }
+    if (public_key[i] != 0xFF) {
+      is_ones = 0;
+    }
+    if (!is_zero && !is_ones) {
       break;
     }
   }
-  if (is_zero) {
+  if (is_zero || is_ones) {
     if (max_length < 42)
       return -1;
     address[0] = 'm';
     address[1] = 'x';
-    memset(address + 2, '1', 39);
+    memset(address + 2, is_zero ? '1' : 'f', 39);
     address[41] = '\0';
+    printf("Generated special case address: %s (length: %zu)\n", address, strlen(address));
     return 0;
   }
 
@@ -227,15 +234,17 @@ int mxd_validate_address(const char *address) {
   if (strncmp(address, "mx", 2) != 0)
     return -1;
 
-  // Check for special zero address case
+  // Check for special cases (all zeros = '1's, all ones = 'f's)
   if (address_len == 41) {
-    // Check if it's our special zero address format (all '1's after 'mx')
-    for (size_t i = 2; i < 41; i++) {
-      if (address[i] != '1') {
-        break;
-      }
-      if (i == 40) { // All characters were '1'
-        return 0;
+    char expected = address[2];
+    if (expected == '1' || expected == 'f') {
+      for (size_t i = 2; i < 41; i++) {
+        if (address[i] != expected) {
+          break;
+        }
+        if (i == 40) { // All characters matched
+          return 0;
+        }
       }
     }
   }

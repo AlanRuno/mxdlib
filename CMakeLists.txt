@@ -14,11 +14,20 @@ include_directories(${OPENSSL_INCLUDE_DIR})
 include_directories(/usr/local/include)
 link_directories(/usr/local/lib)
 
-# Find wasm3
-find_package(wasm3 QUIET)
-if(NOT wasm3_FOUND)
-    message(FATAL_ERROR "wasm3 library not found. Please run install_dependencies.sh first.")
-endif()
+# Find dependencies
+find_package(OpenSSL REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+# Use pkg-config to find libraries
+pkg_check_modules(LIBUV REQUIRED libuv)
+pkg_check_modules(UVWASI REQUIRED uvwasi)
+pkg_check_modules(WASM3 REQUIRED wasm3)
+
+include_directories(
+    ${LIBUV_INCLUDE_DIRS}
+    ${UVWASI_INCLUDE_DIRS}
+    ${WASM3_INCLUDE_DIRS}
+)
 
 # Find other required libraries
 find_library(UVWASI_LIBRARY uvwasi PATHS /usr/local/lib)
@@ -71,10 +80,15 @@ target_link_libraries(mxd
     -static-libgcc
     -static-libstdc++
     gmp
-    wasm3::m3
+    -Wl,--whole-archive
+    ${LIBUV_LIBRARIES}
+    ${UVWASI_LIBRARIES}
+    ${WASM3_LIBRARIES}
+    -Wl,--no-whole-archive
     m
     pthread
-)
+    dl
+    rt)
 
 # Include directories
 target_include_directories(mxd PUBLIC
