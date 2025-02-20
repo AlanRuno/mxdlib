@@ -43,6 +43,30 @@ verify_directory_permissions() {
     fi
 }
 
+install_pkgconfig_manually() {
+    local pc_file="${BREW_PREFIX}/lib/pkgconfig/wasm3.pc"
+    local version="1.0.0"
+    
+    # Create pkgconfig directory if needed
+    verify_directory_permissions "$(dirname "$pc_file")"
+    
+    # Generate pkg-config file
+    cat > "$pc_file" << EOL
+prefix=${BREW_PREFIX}
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: wasm3
+Description: High performance WebAssembly interpreter
+Version: ${version}
+Requires: libuv uvwasi
+Libs: -L\${libdir} -lm3
+Cflags: -I\${includedir}
+EOL
+    log "Manually created pkg-config file at $pc_file"
+}
+
 setup_pkgconfig_paths() {
     local pkgconfig_paths=(
         "${BREW_PREFIX}/lib/pkgconfig"
