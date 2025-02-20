@@ -6,6 +6,18 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_TYPE Debug)
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g3 -O0")
 
+# Windows-specific configuration
+if(WIN32)
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    set(CMAKE_SHARED_LIBRARY_PREFIX "lib")
+    set(BUILD_SHARED_LIBS ON)
+    if(DEFINED ENV{MINGW_PREFIX})
+        set(CMAKE_INSTALL_PREFIX $ENV{MINGW_PREFIX})
+    else()
+        set(CMAKE_INSTALL_PREFIX "/mingw64")
+    endif()
+endif()
+
 # Find OpenSSL and Libsodium
 find_package(OpenSSL REQUIRED)
 include_directories(${OPENSSL_INCLUDE_DIR})
@@ -74,21 +86,34 @@ add_library(mxd SHARED
 
 
 # Link libraries
-target_link_libraries(mxd 
-    ${OPENSSL_LIBRARIES}
-    sodium
-    -static-libgcc
-    -static-libstdc++
-    gmp
-    -Wl,--whole-archive
-    ${LIBUV_LIBRARIES}
-    ${UVWASI_LIBRARIES}
-    ${WASM3_LIBRARIES}
-    -Wl,--no-whole-archive
-    m
-    pthread
-    dl
-    rt)
+if(WIN32)
+    target_link_libraries(mxd 
+        ${OPENSSL_LIBRARIES}
+        sodium
+        gmp
+        ${LIBUV_LIBRARIES}
+        ${UVWASI_LIBRARIES}
+        ${WASM3_LIBRARIES}
+        ws2_32
+        iphlpapi
+        userenv)
+else()
+    target_link_libraries(mxd 
+        ${OPENSSL_LIBRARIES}
+        sodium
+        -static-libgcc
+        -static-libstdc++
+        gmp
+        -Wl,--whole-archive
+        ${LIBUV_LIBRARIES}
+        ${UVWASI_LIBRARIES}
+        ${WASM3_LIBRARIES}
+        -Wl,--no-whole-archive
+        m
+        pthread
+        dl
+        rt)
+endif()
 
 # Include directories
 target_include_directories(mxd PUBLIC
