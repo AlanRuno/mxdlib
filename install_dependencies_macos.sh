@@ -43,16 +43,28 @@ verify_directory_permissions() {
     fi
 }
 
+setup_pkgconfig_paths() {
+    local pkgconfig_paths=(
+        "${BREW_PREFIX}/lib/pkgconfig"
+        "${BREW_PREFIX}/share/pkgconfig"
+        "/usr/local/lib/pkgconfig"
+        "/usr/local/share/pkgconfig"
+        "/usr/lib/pkgconfig"
+    )
+    
+    # Create and verify permissions for all pkgconfig directories
+    for dir in "${pkgconfig_paths[@]}"; do
+        verify_directory_permissions "$dir"
+    done
+    
+    # Set PKG_CONFIG_PATH with all directories
+    export PKG_CONFIG_PATH=$(IFS=:; echo "${pkgconfig_paths[*]}"):${PKG_CONFIG_PATH:-}
+    log "PKG_CONFIG_PATH set to: $PKG_CONFIG_PATH"
+}
+
 verify_pkgconfig() {
     local pkg=$1
     local min_version=$2
-    # Include both Homebrew and system paths
-    local pkgconfig_paths=(
-        "${BREW_PREFIX}/lib/pkgconfig"
-        "/usr/local/lib/pkgconfig"
-        "/usr/lib/pkgconfig"
-    )
-    export PKG_CONFIG_PATH=$(IFS=:; echo "${pkgconfig_paths[*]}"):${PKG_CONFIG_PATH:-}
     if ! pkg-config --exists "$pkg"; then
         log "Error: $pkg.pc not found in pkg-config search path"
         log "Search paths: $(pkg-config --variable pc_path pkg-config)"
@@ -124,9 +136,8 @@ install_wasm3() {
     # Clean up existing wasm3 directory if it exists
     rm -rf wasm3
     
-    # Verify permissions for pkg-config directories
-    verify_directory_permissions "${BREW_PREFIX}/lib/pkgconfig"
-    verify_directory_permissions "/usr/local/lib/pkgconfig"
+    # Set up pkg-config paths and verify permissions
+    setup_pkgconfig_paths
     
     git clone https://github.com/wasm3/wasm3
     cd wasm3
@@ -187,9 +198,8 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
 EOL
 
     # Configure for macOS
-    export PKG_CONFIG_PATH="${BREW_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    # Verify pkg-config directory permissions
-    verify_directory_permissions "${BREW_PREFIX}/lib/pkgconfig"
+    # Ensure pkg-config paths are set up
+    setup_pkgconfig_paths
     cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
