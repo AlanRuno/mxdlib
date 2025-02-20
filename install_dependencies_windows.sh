@@ -12,35 +12,26 @@ check_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+MINGW_PREFIX="/mingw64"
+
 check_library_installed() {
     local lib=$1
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        find /usr/local/lib -name "${lib/.so/.dylib}*" >/dev/null 2>&1
-    else
-        ldconfig -p | grep "$lib" >/dev/null 2>&1
-    fi
+    find "${MINGW_PREFIX}/lib" -name "lib${lib}.dll*" >/dev/null 2>&1
 }
 
 check_wasm3_installed() {
     # Check for library files and headers
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        ([ -f "/usr/local/lib/libm3.dylib" ] || [ -f "/usr/local/lib/libm3.a" ]) && \
-        [ -f "/usr/local/include/wasm3.h" ] && \
-        [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
-    else
-        # Use ldconfig to check for library
-        (ldconfig -p | grep -E "libm3\.(so|a)" >/dev/null 2>&1) && \
-        [ -f "/usr/local/include/wasm3.h" ] && \
-        [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
-    fi
+    [ -f "${MINGW_PREFIX}/lib/libm3.dll" ] && \
+    [ -f "${MINGW_PREFIX}/include/wasm3.h" ] && \
+    [ -f "${MINGW_PREFIX}/lib/cmake/wasm3/wasm3Config.cmake" ]
 }
 
 check_libuv_installed() {
-    check_library_installed "libuv.so" && [ -f "/usr/local/include/uv.h" ]
+    check_library_installed "libuv" && [ -f "${MINGW_PREFIX}/include/uv.h" ]
 }
 
 check_uvwasi_installed() {
-    check_library_installed "libuvwasi.so" && [ -f "/usr/local/include/uvwasi/uvwasi.h" ]
+    check_library_installed "libuvwasi" && [ -f "${MINGW_PREFIX}/include/uvwasi/uvwasi.h" ]
 }
 
 parse_args() {
@@ -60,36 +51,29 @@ parse_args() {
 
 verify_system_deps() {
     local errors=0
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        for lib in libssl.dylib libsodium.dylib libgmp.dylib; do
-            if ! find /usr/local/lib -name "$lib*" >/dev/null 2>&1; then
-                log "Error: $lib not found"
-                errors=$((errors + 1))
-            fi
-        done
-    else
-        for lib in libssl.so libsodium.so libgmp.so; do
-            if ! ldconfig -p | grep "$lib" >/dev/null 2>&1; then
-                log "Error: $lib not found"
-                errors=$((errors + 1))
-            fi
-        done
-    fi
+    for lib in libssl libsodium libgmp; do
+        if ! check_library_installed "$lib"; then
+            log "Error: ${lib} not found"
+            errors=$((errors + 1))
+        fi
+    done
     return $errors
 }
 
 install_system_deps() {
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        if ! check_command brew; then
-            log "Installing Homebrew..."
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        fi
-        brew install cmake openssl libsodium gmp
-    else
-        sudo apt-get update
-        sudo apt-get install -y build-essential cmake libssl-dev libsodium-dev libgmp-dev pkg-config
-        sudo ldconfig
+    if ! check_command pacman; then
+        log "Error: MSYS2 is required. Please install from https://www.msys2.org"
+        exit 1
     fi
+    
+    pacman -Syu --noconfirm
+    pacman -S --noconfirm \
+        mingw-w64-x86_64-toolchain \
+        mingw-w64-x86_64-cmake \
+        mingw-w64-x86_64-pkg-config \
+        mingw-w64-x86_64-openssl \
+        mingw-w64-x86_64-libsodium \
+        mingw-w64-x86_64-gmp
     
     if ! verify_system_deps; then
         log "Error: Some system dependencies are still missing"
@@ -227,24 +211,21 @@ EOL
     
     # Build and install
     mkdir -p build && cd build
-    CFLAGS="-fPIC -fvisibility=default" \
-    CXXFLAGS="-fPIC -fvisibility=default" \
-    LDFLAGS="-L/usr/local/lib" \
-    PKG_CONFIG_PATH="/usr/local/lib/pkgconfig" \
-    cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+    PKG_CONFIG_PATH="${MINGW_PREFIX}/lib/pkgconfig" \
+    cmake -DCMAKE_INSTALL_PREFIX="${MINGW_PREFIX}" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
-          -DCMAKE_C_FLAGS="-fPIC -fvisibility=default" \
-          -DCMAKE_INSTALL_RPATH="/usr/local/lib" \
+          -DCMAKE_C_FLAGS="-fPIC" \
+          -DCMAKE_INSTALL_RPATH="${MINGW_PREFIX}/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-          -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
-          -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--no-undefined -Wl,--as-needed" \
-          -DCMAKE_EXE_LINKER_FLAGS="-Wl,--no-undefined -Wl,--as-needed" \
+          -DCMAKE_INSTALL_NAME_DIR="${MINGW_PREFIX}/lib" \
+          -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
+          -DCMAKE_SHARED_LIBRARY_PREFIX="lib" \
+          -G "MSYS Makefiles" \
           ..
     make
-    sudo make install
-    sudo ldconfig
+    make install
     cd ../..
     rm -rf wasm3
 }
@@ -332,11 +313,7 @@ main() {
     install_libuv
     install_uvwasi
     install_wasm3
-    sudo ldconfig
-
-    if [[ "$OSTYPE" != "darwin"* ]]; then
-        sudo ldconfig
-    fi
+    # No ldconfig needed on Windows
 
     if verify_installation; then
         log "Installation completed successfully"
