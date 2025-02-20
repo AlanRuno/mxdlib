@@ -310,24 +310,22 @@ install_libuv() {
     make
     
     # Try installation with fallback paths
-    local install_dir
-    if install_dir=$(verify_directory_permissions "${BREW_PREFIX}"); then
-        # Reconfigure with correct installation paths
-        cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
-              -DCMAKE_INSTALL_LIBDIR=lib \
-              -DCMAKE_INSTALL_INCLUDEDIR=include \
-              -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
-              -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
-              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-              ..
-        make install
-        
-        # Update pkg-config path to include the new location
-        export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
-    else
-        log "Error: Could not find writable installation directory"
-        exit 1
-    fi
+    local install_dir="$HOME/.local"
+    mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
+    
+    # Configure with correct installation paths
+    cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_INSTALL_INCLUDEDIR=include \
+          -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
+          -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          ..
+    make install
+    
+    # Update pkg-config path to include the new location
+    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
+    log "Installed to $install_dir"
     
     cd ../..
     rm -rf libuv
@@ -363,24 +361,22 @@ install_uvwasi() {
     make
     
     # Try installation with fallback paths
-    local install_dir
-    if install_dir=$(verify_directory_permissions "${BREW_PREFIX}"); then
-        # Reconfigure with correct installation paths
-        cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
-              -DCMAKE_INSTALL_LIBDIR=lib \
-              -DCMAKE_INSTALL_INCLUDEDIR=include \
-              -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
-              -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
-              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-              ..
-        make install
-        
-        # Update pkg-config path to include the new location
-        export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
-    else
-        log "Error: Could not find writable installation directory"
-        exit 1
-    fi
+    local install_dir="$HOME/.local"
+    mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
+    
+    # Configure with correct installation paths
+    cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_INSTALL_INCLUDEDIR=include \
+          -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
+          -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          ..
+    make install
+    
+    # Update pkg-config path to include the new location
+    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
+    log "Installed to $install_dir"
     
     cd ../..
     rm -rf uvwasi
