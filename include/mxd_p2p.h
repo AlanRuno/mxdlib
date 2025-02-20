@@ -9,7 +9,7 @@ extern "C" {
 #include <stdint.h>
 
 // Maximum number of peers in the connection pool
-#define MXD_MAX_PEERS 1000
+#define MXD_MAX_PEERS 256  // Aligned with mxd_dht.h
 
 // Maximum message size
 #define MXD_MAX_MESSAGE_SIZE 1048576 // 1MB

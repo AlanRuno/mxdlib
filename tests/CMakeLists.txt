@@ -31,7 +31,15 @@ target_link_libraries(mxd_crypto_tests
     mxd
     ${OPENSSL_LIBRARIES}
     sodium
-)
+    -Wl,--whole-archive
+    ${WASM3_LIBRARIES}
+    ${UVWASI_LIBRARIES}
+    ${LIBUV_LIBRARIES}
+    -Wl,--no-whole-archive
+    m
+    pthread
+    dl
+    rt)
 
 target_link_libraries(mxd_address_tests
     mxd
@@ -88,10 +96,15 @@ target_link_libraries(mxd_smart_contracts_tests
     mxd
     ${OPENSSL_LIBRARIES}
     sodium
-    ${WASM3_LIBRARY}
-    ${UVWASI_LIBRARY}
-    ${UV_LIBRARY}
-)
+    -Wl,--whole-archive
+    ${WASM3_LIBRARIES}
+    ${UVWASI_LIBRARIES}
+    ${LIBUV_LIBRARIES}
+    -Wl,--no-whole-archive
+    m
+    pthread
+    dl
+    rt)
 
 add_test(NAME crypto_tests COMMAND mxd_crypto_tests)
 add_test(NAME address_tests COMMAND mxd_address_tests)

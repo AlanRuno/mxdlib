@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <wasm3.h>
+#include <wasm3/wasm3.h>
 
 // WASM runtime state
 static struct {
