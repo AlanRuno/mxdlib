@@ -250,19 +250,22 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
 EOL
 
     # Configure for macOS
-    # Ensure pkg-config paths are set up
-    setup_pkgconfig_paths
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+    # Use home directory for installation
+    local install_dir="$HOME/.local"
+    mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
+    
+    # Configure with correct installation paths
+    cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_INSTALL_INCLUDEDIR=include \
-          -DPKGCONFIG_INSTALL_DIR="${BREW_PREFIX}/lib/pkgconfig" \
+          -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
           -DCMAKE_C_FLAGS="-fPIC" \
-          -DCMAKE_INSTALL_RPATH="${BREW_PREFIX}/lib" \
+          -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-          -DCMAKE_INSTALL_NAME_DIR="${BREW_PREFIX}/lib" \
+          -DCMAKE_INSTALL_NAME_DIR="$install_dir/lib" \
           -DCMAKE_MACOSX_RPATH=ON \
           ..
     
