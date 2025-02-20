@@ -119,6 +119,8 @@ install_wasm3() {
         return 0
     fi
     log "Installing wasm3..."
+    # Clean up existing wasm3 directory if it exists
+    rm -rf wasm3
     git clone https://github.com/wasm3/wasm3
     cd wasm3
     # Modify wasm3's CMake to support shared library and install targets

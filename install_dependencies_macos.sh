@@ -69,6 +69,8 @@ install_wasm3() {
     fi
     
     log "Installing wasm3..."
+    # Clean up existing wasm3 directory if it exists
+    rm -rf wasm3
     git clone https://github.com/wasm3/wasm3
     cd wasm3
     mkdir -p build && cd build
