@@ -136,6 +136,16 @@ option(BUILD_WASM3_LIBS "Build wasm3 libraries" ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(BUILD_SHARED_LIBS ON)
 
+# Configure pkg-config file
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/wasm3.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
+    @ONLY)
+
+# Install pkg-config file
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
+    DESTINATION lib/pkgconfig)
+
 # Add source files
 file(GLOB M3_SOURCES source/*.c)
 
@@ -255,6 +265,9 @@ set(WASM3_LIBRARY_DIR "@CMAKE_INSTALL_PREFIX@/lib")
 set(WASM3_LIBRARIES m3)
 EOL
 
+    # Create pkg-config file
+    cp ../wasm3.pc.in source/wasm3.pc.in
+    
     # Build and install
     mkdir -p build && cd build
     CFLAGS="-fPIC -fvisibility=default" \
@@ -1614,6 +1627,12 @@ verify_installation() {
                 errors=$((errors + 1))
             fi
         done
+    fi
+    
+    # Verify wasm3 pkg-config installation
+    if ! pkg-config --exists wasm3; then
+        log "Error: wasm3.pc not found by pkg-config"
+        errors=$((errors + 1))
     fi
 
     return $errors

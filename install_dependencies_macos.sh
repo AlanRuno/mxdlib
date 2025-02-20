@@ -73,7 +73,34 @@ install_wasm3() {
     cd wasm3
     mkdir -p build && cd build
     
+    # Create pkg-config file
+    cp ../wasm3.pc.in source/wasm3.pc.in
+    
+    # Create main CMakeLists.txt
+    cat > CMakeLists.txt << 'EOL'
+cmake_minimum_required(VERSION 3.12)
+project(wasm3)
+
+option(BUILD_WASM3_LIBS "Build wasm3 libraries" ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(BUILD_SHARED_LIBS ON)
+
+# Configure pkg-config file
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/wasm3.pc.in
+    ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
+    @ONLY)
+
+# Install pkg-config file
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
+    DESTINATION lib/pkgconfig)
+
+# Add source files
+file(GLOB M3_SOURCES source/*.c)
+EOL
+
     # Configure for macOS
+    PKG_CONFIG_PATH="${BREW_PREFIX}/lib/pkgconfig" \
     cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
@@ -87,6 +114,14 @@ install_wasm3() {
     
     make
     make install
+    
+    # Verify wasm3 pkg-config installation
+    if ! pkg-config --exists wasm3; then
+        log "Error: wasm3.pc not found by pkg-config"
+        exit 1
+    fi
+    log "wasm3 pkg-config file installed successfully"
+    
     cd ../..
     rm -rf wasm3
 }
