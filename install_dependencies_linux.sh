@@ -17,6 +17,23 @@ check_library_installed() {
     ldconfig -p | grep "$lib" >/dev/null 2>&1
 }
 
+verify_pkgconfig() {
+    local pkg=$1
+    local min_version=$2
+    if ! pkg-config --exists "$pkg"; then
+        log "Error: $pkg.pc not found in pkg-config search path"
+        log "Search paths: $(pkg-config --variable pc_path pkg-config)"
+        log "Installed .pc files: $(find /usr/local/lib/pkgconfig -name '*.pc' 2>/dev/null)"
+        return 1
+    fi
+    if [ -n "$min_version" ] && ! pkg-config --atleast-version="$min_version" "$pkg"; then
+        log "Error: $pkg version $(pkg-config --modversion "$pkg") is less than required $min_version"
+        return 1
+    fi
+    log "Successfully verified $pkg$([ -n "$min_version" ] && echo " >= $min_version")"
+    return 0
+}
+
 check_wasm3_installed() {
     # Check for library files and headers
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -155,11 +172,24 @@ install(TARGETS m3 EXPORT wasm3Targets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib)
 
+# Add executable target
+add_executable(wasm3 platforms/app/main.c)
+target_link_libraries(wasm3 PRIVATE m3)
+
+# Install executable
+install(TARGETS wasm3 RUNTIME DESTINATION bin)
+
 # Generate and install pkg-config file
+message(STATUS "Generating pkg-config file...")
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/source/wasm3.pc.in
     ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
     @ONLY)
+
+if(NOT EXISTS ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc)
+    message(FATAL_ERROR "Failed to generate wasm3.pc")
+endif()
+
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
     DESTINATION lib/pkgconfig)
 
@@ -202,7 +232,18 @@ set(WASM3_LIBRARIES m3)
 EOL
 
     # Create pkg-config file
-    cp /home/ubuntu/repos/mxdlib/wasm3.pc.in source/wasm3.pc.in
+    mkdir -p source
+    echo "Creating source directory and copying pkg-config file..."
+    # Get the directory where the installation scripts are located
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    cp "${SCRIPT_DIR}/wasm3.pc.in" source/wasm3.pc.in || {
+        echo "Failed to copy wasm3.pc.in. Debug info:"
+        echo "Current directory: $(pwd)"
+        echo "Script directory: ${SCRIPT_DIR}"
+        echo "Source exists: $(test -f "${SCRIPT_DIR}/wasm3.pc.in" && echo "Yes" || echo "No")"
+        echo "Target directory exists: $(test -d source && echo "Yes" || echo "No")"
+        exit 1
+    }
     
     # Build and install
     mkdir -p build && cd build
@@ -226,6 +267,12 @@ EOL
     sudo ldconfig
     cd ../..
     rm -rf wasm3
+    
+    # Verify wasm3 installation
+    if ! verify_pkgconfig wasm3 "1.0.0"; then
+        log "Error: wasm3 pkg-config verification failed"
+        exit 1
+    fi
 }
 
 install_libuv() {
@@ -245,6 +292,12 @@ install_libuv() {
     sudo make install
     cd ../..
     rm -rf libuv
+    
+    # Verify libuv installation
+    if ! verify_pkgconfig libuv "1.0.0"; then
+        log "Error: libuv pkg-config verification failed"
+        exit 1
+    fi
 }
 
 install_uvwasi() {
@@ -264,6 +317,12 @@ install_uvwasi() {
     sudo make install
     cd ../..
     rm -rf uvwasi
+    
+    # Verify uvwasi installation
+    if ! verify_pkgconfig uvwasi "0.0.20"; then
+        log "Error: uvwasi pkg-config verification failed"
+        exit 1
+    fi
 }
 
 verify_installation() {
@@ -285,10 +344,17 @@ verify_installation() {
         fi
     done
     
-    # Verify wasm3 pkg-config installation
-    if ! pkg-config --exists wasm3; then
-        log "Error: wasm3.pc not found by pkg-config"
-        errors=$((errors + 1))
+    # Verify pkg-config files
+    local pkgconfig_errors=0
+    for pkg in wasm3 uvwasi libuv; do
+        if ! verify_pkgconfig "$pkg"; then
+            pkgconfig_errors=$((pkgconfig_errors + 1))
+        fi
+    done
+    
+    if [ "$pkgconfig_errors" -gt 0 ]; then
+        log "Error: Some pkg-config files are missing or invalid"
+        return 1
     fi
 
     return $errors
