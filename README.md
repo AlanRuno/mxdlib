@@ -50,14 +50,20 @@ The library's architecture is designed for optimal performance and security in c
 ### Prerequisites
 
 For automated installation of all dependencies, run:
+
 ```bash
 ./install_dependencies.sh [--force_build]
 ```
 
+The script automatically detects your operating system and runs the appropriate installation script:
+- Linux: Uses apt-get and builds from source
+- macOS: Uses Homebrew and builds from source (supports both Intel and Apple Silicon)
+- Windows: Uses MSYS2/MinGW and builds from source
+
 Options:
 - `--force_build`: Force rebuild and installation of libraries even if they are already installed
 
-This script will automatically install:
+These scripts will automatically install:
 #### System Dependencies
 - build-essential (Ubuntu/Debian)
 - cmake
