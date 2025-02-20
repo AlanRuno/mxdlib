@@ -204,10 +204,13 @@ EOL
     # Create pkg-config file
     mkdir -p source
     echo "Creating source directory and copying pkg-config file..."
-    cp /home/ubuntu/repos/mxdlib/wasm3.pc.in source/wasm3.pc.in || {
+    # Get the directory where the installation scripts are located
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    cp "${SCRIPT_DIR}/wasm3.pc.in" source/wasm3.pc.in || {
         echo "Failed to copy wasm3.pc.in. Debug info:"
         echo "Current directory: $(pwd)"
-        echo "Source exists: $(test -f /home/ubuntu/repos/mxdlib/wasm3.pc.in && echo "Yes" || echo "No")"
+        echo "Script directory: ${SCRIPT_DIR}"
+        echo "Source exists: $(test -f "${SCRIPT_DIR}/wasm3.pc.in" && echo "Yes" || echo "No")"
         echo "Target directory exists: $(test -d source && echo "Yes" || echo "No")"
         exit 1
     }
