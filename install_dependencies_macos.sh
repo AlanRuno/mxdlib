@@ -312,8 +312,12 @@ install_libuv() {
     
     # Try installation with fallback paths
     local install_dir
-    if install_dir=$(verify_directory_permissions "${BREW_PREFIX}/lib"); then
-        DESTDIR="$install_dir" make install
+    if install_dir=$(verify_directory_permissions "${BREW_PREFIX}"); then
+        cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_INSTALL_INCLUDEDIR=include \
+              ..
+        make install
     else
         log "Error: Could not find writable installation directory"
         exit 1
@@ -354,8 +358,12 @@ install_uvwasi() {
     
     # Try installation with fallback paths
     local install_dir
-    if install_dir=$(verify_directory_permissions "${BREW_PREFIX}/lib"); then
-        DESTDIR="$install_dir" make install
+    if install_dir=$(verify_directory_permissions "${BREW_PREFIX}"); then
+        cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_INSTALL_INCLUDEDIR=include \
+              ..
+        make install
     else
         log "Error: Could not find writable installation directory"
         exit 1
