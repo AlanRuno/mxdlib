@@ -14,11 +14,7 @@ check_command() {
 
 check_library_installed() {
     local lib=$1
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        find /usr/local/lib -name "${lib/.so/.dylib}*" >/dev/null 2>&1
-    else
-        ldconfig -p | grep "$lib" >/dev/null 2>&1
-    fi
+    ldconfig -p | grep "$lib" >/dev/null 2>&1
 }
 
 check_wasm3_installed() {
@@ -60,36 +56,19 @@ parse_args() {
 
 verify_system_deps() {
     local errors=0
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        for lib in libssl.dylib libsodium.dylib libgmp.dylib; do
-            if ! find /usr/local/lib -name "$lib*" >/dev/null 2>&1; then
-                log "Error: $lib not found"
-                errors=$((errors + 1))
-            fi
-        done
-    else
-        for lib in libssl.so libsodium.so libgmp.so; do
-            if ! ldconfig -p | grep "$lib" >/dev/null 2>&1; then
-                log "Error: $lib not found"
-                errors=$((errors + 1))
-            fi
-        done
-    fi
+    for lib in libssl.so libsodium.so libgmp.so; do
+        if ! check_library_installed "$lib"; then
+            log "Error: $lib not found"
+            errors=$((errors + 1))
+        fi
+    done
     return $errors
 }
 
 install_system_deps() {
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        if ! check_command brew; then
-            log "Installing Homebrew..."
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-        fi
-        brew install cmake openssl libsodium gmp
-    else
-        sudo apt-get update
-        sudo apt-get install -y build-essential cmake libssl-dev libsodium-dev libgmp-dev pkg-config
-        sudo ldconfig
-    fi
+    sudo apt-get update
+    sudo apt-get install -y build-essential cmake pkg-config libssl-dev libsodium-dev libgmp-dev
+    sudo ldconfig
     
     if ! verify_system_deps; then
         log "Error: Some system dependencies are still missing"
@@ -299,21 +278,12 @@ verify_installation() {
     done
 
     # Check libraries
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        for lib in libssl.dylib libsodium.dylib libgmp.dylib; do
-            if ! find /usr/local/lib -name "$lib*" >/dev/null 2>&1; then
-                log "Error: $lib not found"
-                errors=$((errors + 1))
-            fi
-        done
-    else
-        for lib in libssl.so libsodium.so libgmp.so; do
-            if ! ldconfig -p | grep "$lib" >/dev/null 2>&1; then
-                log "Error: $lib not found"
-                errors=$((errors + 1))
-            fi
-        done
-    fi
+    for lib in libssl.so libsodium.so libgmp.so; do
+        if ! ldconfig -p | grep "$lib" >/dev/null 2>&1; then
+            log "Error: $lib not found"
+            errors=$((errors + 1))
+        fi
+    done
     
     # Verify wasm3 pkg-config installation
     if ! pkg-config --exists wasm3; then
@@ -334,9 +304,7 @@ main() {
     install_wasm3
     sudo ldconfig
 
-    if [[ "$OSTYPE" != "darwin"* ]]; then
-        sudo ldconfig
-    fi
+    sudo ldconfig
 
     if verify_installation; then
         log "Installation completed successfully"
