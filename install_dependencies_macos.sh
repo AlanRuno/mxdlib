@@ -107,6 +107,13 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
 
 # Add source files
 file(GLOB M3_SOURCES source/*.c)
+
+# Add executable target
+add_executable(wasm3 platforms/app/main.c)
+target_link_libraries(wasm3 PRIVATE m3)
+
+# Install executable
+install(TARGETS wasm3 RUNTIME DESTINATION bin)
 EOL
 
     # Configure for macOS

@@ -155,6 +155,13 @@ install(TARGETS m3 EXPORT wasm3Targets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib)
 
+# Add executable target
+add_executable(wasm3 platforms/app/main.c)
+target_link_libraries(wasm3 PRIVATE m3)
+
+# Install executable
+install(TARGETS wasm3 RUNTIME DESTINATION bin)
+
 # Generate and install pkg-config file
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/source/wasm3.pc.in
