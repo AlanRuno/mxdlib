@@ -26,31 +26,30 @@ verify_directory_permissions() {
     # Try Homebrew paths first
     if [[ "$dir" == "/usr/local/"* ]]; then
         fallback_dir="${BREW_PREFIX}/opt/$(basename "$dir")"
-        dir="$fallback_dir"
-    fi
-    
-    # If still not writable, try user's home directory
-    if [ ! -w "$dir" ] || [ ! -w "$(dirname "$dir")" ]; then
-        fallback_dir="$HOME/.local/$(basename "$dir")"
-        dir="$fallback_dir"
-    fi
-    
-    # Create directory without sudo
-    if [ ! -d "$dir" ]; then
-        if ! mkdir -p "$dir" 2>/dev/null; then
-            log "Error: Cannot create directory $dir"
-            return 1
+        if [ -w "$fallback_dir" ] || mkdir -p "$fallback_dir" 2>/dev/null; then
+            log "Using Homebrew fallback path: $fallback_dir"
+            echo "$fallback_dir"
+            return 0
         fi
-        log "Created directory $dir"
     fi
     
-    # Verify write permissions
-    if [ ! -w "$dir" ]; then
-        log "Error: Cannot write to directory $dir"
-        return 1
+    # Try user's home directory next
+    fallback_dir="$HOME/.local/$(basename "$dir")"
+    if [ -w "$fallback_dir" ] || mkdir -p "$fallback_dir" 2>/dev/null; then
+        log "Using home directory fallback path: $fallback_dir"
+        echo "$fallback_dir"
+        return 0
     fi
     
-    echo "$dir"  # Return the actual directory used
+    # Try original directory as last resort
+    if [ -w "$dir" ] || mkdir -p "$dir" 2>/dev/null; then
+        log "Using original path: $dir"
+        echo "$dir"
+        return 0
+    fi
+    
+    log "Error: Cannot find writable directory for $dir"
+    return 1
 }
 
 install_pkgconfig_manually() {
