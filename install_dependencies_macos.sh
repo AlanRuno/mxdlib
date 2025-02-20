@@ -254,6 +254,21 @@ EOL
     local install_dir="$HOME/.local"
     mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
     
+    # Create pkg-config file manually first
+    cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
+prefix=$install_dir
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: wasm3
+Description: High performance WebAssembly interpreter
+Version: 1.0.0
+Requires: libuv uvwasi
+Libs: -L\${libdir} -lm3
+Cflags: -I\${includedir}
+EOL
+    
     # Configure with correct installation paths
     cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
