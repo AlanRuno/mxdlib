@@ -248,3 +248,18 @@ target_link_libraries(mxd_node_network_test
 
 add_test(NAME node_network_tests COMMAND mxd_node_network_test)
 set_tests_properties(node_network_tests PROPERTIES TIMEOUT 120)
+
+# Blockchain data test
+add_executable(mxd_blockchain_data_test
+    blockchain_data_test.c
+)
+
+target_link_libraries(mxd_blockchain_data_test
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME blockchain_data_tests COMMAND mxd_blockchain_data_test)
+set_tests_properties(blockchain_data_tests PROPERTIES TIMEOUT 120)
