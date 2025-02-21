@@ -218,3 +218,18 @@ target_link_libraries(mxd_dht_tests
 
 add_test(NAME dht_tests COMMAND mxd_dht_tests)
 set_tests_properties(dht_tests PROPERTIES TIMEOUT 120)
+
+# Basic node setup test
+add_executable(mxd_basic_node_setup_test
+    basic_node_setup_test.c
+)
+
+target_link_libraries(mxd_basic_node_setup_test
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME basic_node_setup_tests COMMAND mxd_basic_node_setup_test)
+set_tests_properties(basic_node_setup_tests PROPERTIES TIMEOUT 120)

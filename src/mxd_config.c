@@ -33,6 +33,8 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     // Initialize config with defaults
     memset(config, 0, sizeof(mxd_config_t));
     config->port = 8000;  // Default port
+    strncpy(config->node_name, "unnamed_node", sizeof(config->node_name) - 1);
+    strncpy(config->node_data, "", sizeof(config->node_data) - 1);
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
     
     char line[1024];
@@ -56,13 +58,17 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
                 strncpy(config->data_dir, trimmed_value, sizeof(config->data_dir) - 1);
             } else if (strcmp(key, "port") == 0) {
                 config->port = (uint16_t)atoi(trimmed_value);
+            } else if (strcmp(key, "node_name") == 0) {
+                strncpy(config->node_name, trimmed_value, sizeof(config->node_name) - 1);
+            } else if (strcmp(key, "node_data") == 0) {
+                strncpy(config->node_data, trimmed_value, sizeof(config->node_data) - 1);
             }
         }
     }
     
     fclose(fp);
     
-    printf("Loaded config: node_id=%s, port=%d, data_dir=%s\n",
-           config->node_id, config->port, config->data_dir);
+    printf("Loaded config: node_id=%s, port=%d, data_dir=%s, node_name=%s\n",
+           config->node_id, config->port, config->data_dir, config->node_name);
     return 0;
 }
