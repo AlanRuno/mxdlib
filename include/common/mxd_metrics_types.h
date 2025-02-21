@@ -18,13 +18,17 @@ typedef struct {
     double reliability_score;      // 0.0 to 1.0 reliability rating
     double performance_score;      // Combined performance metric
     uint64_t last_update;         // NTP synchronized timestamp
+    double tip_share;             // Node's share of voluntary tips
 } mxd_node_metrics_t;
 
 // Node stake information
 typedef struct {
     mxd_node_metrics_t metrics;    // Node performance metrics
     double stake_amount;           // Amount of stake held by node
-    uint64_t stake_time;          // Time when stake was locked
+    char node_id[64];             // Unique node identifier
+    int active;                   // Node active status
+    int rank;                     // Node ranking in RSC
+    uint8_t public_key[256];      // Node's public key
 } mxd_node_stake_t;
 
 #ifdef __cplusplus

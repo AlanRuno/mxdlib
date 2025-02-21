@@ -5,6 +5,12 @@
 extern "C" {
 #endif
 
+// Initialize transaction validation system
+int mxd_init_transaction_validation(void);
+
+// Reset transaction validation state
+void mxd_reset_transaction_validation(void);
+
 #include <stddef.h>
 #include <stdint.h>
 
