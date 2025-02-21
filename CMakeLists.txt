@@ -143,4 +143,4 @@ target_sources(mxd PRIVATE
 # Add config source
 target_sources(mxd PRIVATE
     src/mxd_config.c
-)
+    src/mxd_blockchain_sync.c)
