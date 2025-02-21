@@ -263,3 +263,18 @@ target_link_libraries(mxd_blockchain_data_test
 
 add_test(NAME blockchain_data_tests COMMAND mxd_blockchain_data_test)
 set_tests_properties(blockchain_data_tests PROPERTIES TIMEOUT 120)
+
+# Mining validation test
+add_executable(mxd_mining_validation_test
+    mining_validation_test.c
+)
+
+target_link_libraries(mxd_mining_validation_test
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME mining_validation_tests COMMAND mxd_mining_validation_test)
+set_tests_properties(mining_validation_tests PROPERTIES TIMEOUT 120)

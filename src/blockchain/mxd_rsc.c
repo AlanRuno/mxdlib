@@ -142,10 +142,21 @@ int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, double total
         return -1;
     }
 
-    // Distribute tips proportionally to rank
+    // Sort nodes by rank (highest to lowest)
+    qsort(nodes, node_count, sizeof(mxd_node_stake_t), compare_nodes);
+
+    // Distribute tips using 50% pattern from whitepaper
+    double remaining = total_tip;
     for (size_t i = 0; i < node_count; i++) {
         if (nodes[i].active && nodes[i].rank > 0) {
-            nodes[i].metrics.tip_share = (nodes[i].rank / (double)total_rank) * total_tip;
+            if (i == node_count - 1) {
+                // Last active node gets remaining amount
+                nodes[i].metrics.tip_share = remaining;
+            } else {
+                // Each node gets 50% of remaining
+                nodes[i].metrics.tip_share = remaining * 0.5;
+                remaining -= nodes[i].metrics.tip_share;
+            }
         } else {
             nodes[i].metrics.tip_share = 0.0;
         }
