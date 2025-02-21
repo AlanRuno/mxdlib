@@ -278,3 +278,18 @@ target_link_libraries(mxd_mining_validation_test
 
 add_test(NAME mining_validation_tests COMMAND mxd_mining_validation_test)
 set_tests_properties(mining_validation_tests PROPERTIES TIMEOUT 120)
+
+# Integration test
+add_executable(mxd_integration_test
+    integration_test.c
+)
+
+target_link_libraries(mxd_integration_test
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME integration_tests COMMAND mxd_integration_test)
+set_tests_properties(integration_tests PROPERTIES TIMEOUT 120)
