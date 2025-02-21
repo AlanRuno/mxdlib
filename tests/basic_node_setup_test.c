@@ -3,6 +3,9 @@
 #include "../include/mxd_p2p.h"
 #include "test_utils.h"
 
+#include <string.h>
+#include <time.h>
+
 static void test_node_setup(void) {
     TEST_START("Basic Node Setup");
     
@@ -31,10 +34,13 @@ static void test_node_setup(void) {
     config.port = 12345;
     
     // Initialize P2P with latency tracking
-    TEST_LATENCY_START("P2P Initialization");
+    uint64_t start_time = get_current_time_ms();
     TEST_ASSERT(mxd_init_p2p(config.port, public_key) == 0, "P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "P2P startup");
-    TEST_LATENCY_END("P2P Initialization", 3000); // Must complete within 3 seconds
+    uint64_t end_time = get_current_time_ms();
+    uint64_t latency = end_time - start_time;
+    printf("  P2P Initialization latency: %lums\n", latency);
+    TEST_ASSERT(latency <= 3000, "P2P initialization must complete within 3 seconds");
     
     // Verify configuration
     TEST_VALUE("Node name", "%s", config.node_name);
