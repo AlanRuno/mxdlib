@@ -233,3 +233,18 @@ target_link_libraries(mxd_basic_node_setup_test
 
 add_test(NAME basic_node_setup_tests COMMAND mxd_basic_node_setup_test)
 set_tests_properties(basic_node_setup_tests PROPERTIES TIMEOUT 120)
+
+# Node network test
+add_executable(mxd_node_network_test
+    node_network_test.c
+)
+
+target_link_libraries(mxd_node_network_test
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME node_network_tests COMMAND mxd_node_network_test)
+set_tests_properties(node_network_tests PROPERTIES TIMEOUT 120)
