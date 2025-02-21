@@ -7,9 +7,9 @@
 
 static void test_transaction_creation(void) {
   mxd_transaction_t tx;
-  
+
   TEST_START("Transaction Creation");
-  
+
   TEST_ASSERT(mxd_create_transaction(&tx) == 0, "Create new transaction");
   TEST_ASSERT(tx.version == 1, "Transaction version is 1");
   TEST_ASSERT(tx.input_count == 0, "Input count initialized to 0");
@@ -28,24 +28,29 @@ static void test_input_output_management(void) {
   uint8_t recv_key[256] = {3};
 
   TEST_START("Input/Output Management");
-  
+
   TEST_ASSERT(mxd_create_transaction(&tx) == 0, "Create new transaction");
 
   // Add input
   TEST_ARRAY("Previous hash", prev_hash, 64);
   TEST_ARRAY("Public key", pub_key, 256);
-  TEST_ASSERT(mxd_add_tx_input(&tx, prev_hash, 0, pub_key) == 0, "Add transaction input");
+  TEST_ASSERT(mxd_add_tx_input(&tx, prev_hash, 0, pub_key) == 0,
+              "Add transaction input");
   TEST_ASSERT(tx.input_count == 1, "Input count is 1");
-  TEST_ASSERT(memcmp(tx.inputs[0].prev_tx_hash, prev_hash, 64) == 0, "Previous hash matches");
+  TEST_ASSERT(memcmp(tx.inputs[0].prev_tx_hash, prev_hash, 64) == 0,
+              "Previous hash matches");
   TEST_ASSERT(tx.inputs[0].output_index == 0, "Output index is 0");
-  TEST_ASSERT(memcmp(tx.inputs[0].public_key, pub_key, 256) == 0, "Public key matches");
+  TEST_ASSERT(memcmp(tx.inputs[0].public_key, pub_key, 256) == 0,
+              "Public key matches");
 
   // Add output
   TEST_ARRAY("Recipient key", recv_key, 256);
   TEST_VALUE("Output amount", "%.1f", 1.0);
-  TEST_ASSERT(mxd_add_tx_output(&tx, recv_key, 1.0) == 0, "Add transaction output");
+  TEST_ASSERT(mxd_add_tx_output(&tx, recv_key, 1.0) == 0,
+              "Add transaction output");
   TEST_ASSERT(tx.output_count == 1, "Output count is 1");
-  TEST_ASSERT(memcmp(tx.outputs[0].recipient_key, recv_key, 256) == 0, "Recipient key matches");
+  TEST_ASSERT(memcmp(tx.outputs[0].recipient_key, recv_key, 256) == 0,
+              "Recipient key matches");
   TEST_ASSERT(tx.outputs[0].amount == 1.0, "Amount matches");
 
   mxd_free_transaction(&tx);
@@ -133,6 +138,9 @@ static void test_transaction_hashing(void) {
 
 int main(void) {
   printf("Starting transaction tests...\n");
+
+  // Initialize transaction validation system
+  assert(mxd_init_transaction_validation() == 0);
 
   test_transaction_creation();
   test_input_output_management();
