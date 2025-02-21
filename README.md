@@ -4,11 +4,21 @@ A cross-platform dynamic library implementing cryptographic, blockchain, and net
 
 ## 🌐 Cryptocurrency Overview
 
-MXD (Mexican Denarius) represents a groundbreaking advancement in digital finance, featuring:
-- Zero mandatory transaction fees with optional voluntary tips
-- Communication speed-based consensus mechanism for optimal efficiency
-- Pre-launch phase on BNB network with main network deployment planned for 2025
-- Focus on financial empowerment and transaction simplification
+MXD (Mexican Denarius) represents a groundbreaking advancement in digital finance, designed to revolutionize financial transactions through innovative technology and accessibility:
+
+### 🎯 Core Features & Vision
+- **Zero Mandatory Fees**: Revolutionary transaction model with optional voluntary tips
+- **Advanced Consensus**: Communication speed-based mechanism ensuring optimal efficiency
+- **Deployment Timeline**: 
+  - Current: Pre-launch phase on BNB Smart Chain
+  - 2025: Main network deployment with full feature set
+- **Financial Empowerment**: Focused on simplifying digital transactions and increasing accessibility
+
+### 💫 Technical Innovation
+- **Consensus Mechanism**: Utilizes network communication speed metrics for efficient block validation
+- **Transaction Model**: UTXO-based system with voluntary tip structure
+- **Security**: Post-quantum cryptographic implementations with Dilithium5
+- **Network Efficiency**: Optimized P2P communication with DHT-based node discovery
 
 ## 🚀 Features
 
@@ -41,19 +51,31 @@ Detailed documentation is available in the `docs` directory:
 - [Module Documentation](docs/MODULES.md)
 - [Build Instructions](docs/BUILD.md)
 - [Integration Guide](docs/INTEGRATION.md)
-- [MXD Whitepaper](https://mxd.com.mx/WhitePaper_En.pdf)
+- [MXD Whitepaper (English)](https://mxd.com.mx/WhitePaper_En.pdf)
 
-The library's architecture is designed for optimal performance and security in cryptocurrency operations, with a focus on rapid transaction processing and network efficiency.
+The library's architecture is designed for optimal performance and security in cryptocurrency operations, with a focus on rapid transaction processing and network efficiency. Our modular design separates concerns into distinct components:
+
+### 📦 Module Organization
+- **Crypto Module**: Implements hashing (SHA-512, RIPEMD-160) and signing operations
+- **Address Management**: Handles wallet address generation and validation
+- **Blockchain Core**: Manages consensus mechanism and block validation
+- **Transaction Processing**: Implements UTXO model with voluntary tip system
+- **P2P Networking**: Handles node discovery and communication
+- **Smart Contracts**: Manages WASM-based contract execution
+- **Checkpoints**: Provides blockchain synchronization points
+- **Data Quantization**: Optimizes data storage and transmission
 
 ## 🛠️ Quick Start
 
 ### Prerequisites
 
-For automated installation of all dependencies, run:
+⚠️ **Important**: Before proceeding with any build or test operations, you must first install all dependencies:
 
 ```bash
 ./install_dependencies.sh [--force_build]
 ```
+
+This step is mandatory and ensures all required libraries and tools are properly configured.
 
 The script automatically detects your operating system and runs the appropriate installation script:
 - Linux: Uses apt-get and builds from source
@@ -135,9 +157,21 @@ mkdir build && cd build
 cmake ..
 make
 
-# Run tests
+# Run tests (requires completed dependency installation)
 make test
 ```
+
+### 🧪 Testing Information
+The test suite includes:
+- Unit tests for all core modules
+- Integration tests for blockchain operations
+- Performance tests for cryptographic operations
+- Network simulation tests for consensus mechanism
+- Smart contract execution tests
+
+Expected test duration: 3-5 minutes on standard hardware
+Memory requirement: Minimum 4GB RAM recommended
+Note: Some tests require network connectivity for P2P simulations
 
 ## 💡 Basic Usage
 
