@@ -29,7 +29,11 @@ static uint64_t get_current_time_ms(void) {
 } while(0)
 
 #define TEST_VALUE(desc, fmt, val) do { \
-    printf("  %s: " fmt "\n", desc, val); \
+    if (sizeof(val) == sizeof(uint32_t)) { \
+        printf("  %s: %u\n", desc, (uint32_t)val); \
+    } else { \
+        printf("  %s: " fmt "\n", desc, val); \
+    } \
     fflush(stdout); \
 } while(0)
 
@@ -56,7 +60,7 @@ static uint64_t get_current_time_ms(void) {
     if (tx_elapsed >= 100) { \
         double rate = (double)tx_count * 1000.0 / (double)tx_elapsed; \
         printf("Transaction rate %s: %.2f tx/s\n", name, rate); \
-        if (tx_count >= 10) { /* Only check rate after enough transactions */ \
+        if (tx_count >= 10) { \
             assert(rate >= min_rate); \
         } \
         tx_start_time = tx_current_time; \
