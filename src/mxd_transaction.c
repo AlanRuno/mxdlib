@@ -4,6 +4,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+static int validation_initialized = 0;
+
+// Initialize transaction validation system
+int mxd_init_transaction_validation(void) {
+    validation_initialized = 1;
+    return 0;
+}
+
+// Reset transaction validation state
+void mxd_reset_transaction_validation(void) {
+    // Reset any validation state if needed
+}
+
 // Create a new transaction
 int mxd_create_transaction(mxd_transaction_t *tx) {
   if (!tx) {

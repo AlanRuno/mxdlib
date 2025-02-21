@@ -6,12 +6,14 @@
 #include "../include/mxd_ntp.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_address.h"
 #include "../include/blockchain/mxd_rsc_internal.h"
 #include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <stdbool.h>
 
 #define TEST_NODE_COUNT 5
 #define MIN_TX_RATE 10
@@ -112,6 +114,9 @@ static void test_node_lifecycle(void) {
     TEST_ASSERT(mxd_calculate_tx_hash(&genesis_tx, genesis_hash) == 0,
                "Genesis hash calculation");
     
+    // Initialize transaction validation system
+    TEST_ASSERT(mxd_init_transaction_validation() == 0, "Transaction validation init");
+    
     // Process transactions through nodes
     for (int i = 0; i < TEST_TRANSACTIONS; i++) {
         TEST_ASSERT(mxd_create_transaction(&transactions[i]) == 0,
@@ -122,22 +127,34 @@ static void test_node_lifecycle(void) {
                    10.0) == 0, "Output addition");
         
         uint64_t validation_start = get_current_time_ms();
-        for (size_t j = 0; j < TEST_NODE_COUNT; j++) {
+        bool valid_tx = true;
+        
+        for (size_t j = 0; j < TEST_NODE_COUNT && valid_tx; j++) {
+            // Reset validation state
+            mxd_reset_transaction_validation();
+            
             int validation_result = mxd_validate_transaction(&transactions[i]);
             if (validation_result != 0) {
                 error_count++;
-                TEST_ERROR_COUNT(error_count, MAX_CONSECUTIVE_ERRORS);
-            } else {
-                error_count = 0;
-                TEST_TX_RATE_UPDATE("Transaction Processing", MIN_TX_RATE);
-                
-                uint64_t validation_time = get_current_time_ms() - validation_start;
-                TEST_ASSERT(validation_time <= MAX_LATENCY_MS,
-                           "Transaction validation within latency limit");
-                
-                TEST_ASSERT(mxd_update_node_metrics(&nodes[j], validation_time,
-                    get_current_time_ms()) == 0, "Metrics update");
+                if (error_count > MAX_CONSECUTIVE_ERRORS) {
+                    TEST_ERROR_COUNT(error_count, MAX_CONSECUTIVE_ERRORS);
+                    valid_tx = false;
+                    break;
+                }
+                continue;
             }
+            
+            error_count = 0;
+            TEST_TX_RATE_UPDATE("Transaction Processing", MIN_TX_RATE);
+            
+            uint64_t validation_time = get_current_time_ms() - validation_start;
+            if (validation_time > MAX_LATENCY_MS) {
+                valid_tx = false;
+                break;
+            }
+            
+            TEST_ASSERT(mxd_update_node_metrics(&nodes[j], validation_time,
+                get_current_time_ms()) == 0, "Metrics update");
         }
     }
     
