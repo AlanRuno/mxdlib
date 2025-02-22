@@ -378,7 +378,7 @@ EOL
         return 1
     }
 
-    cp -f ./libm3.* "$install_dir/lib/" || {
+    cp -f source/libm3.* "$install_dir/lib/" || {
         log "Failed to install wasm3 library"
         return 1
     }
