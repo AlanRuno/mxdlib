@@ -85,33 +85,27 @@ if(WIN32)
         iphlpapi
         userenv)
 else()
+    # Define common libraries
+    set(COMMON_LIBS
+        ${OPENSSL_LIBRARIES}
+        sodium
+        gmp
+        ${WASM3_LIBRARIES}
+        ${UVWASI_LIBRARIES}
+        ${LIBUV_LIBRARIES}
+        m
+        pthread
+        dl)
+
     if(APPLE)
-        target_link_libraries(mxd PRIVATE
-            ${OPENSSL_LIBRARIES}
-            sodium
-            gmp
-            ${WASM3_LIBRARIES}
-            ${UVWASI_LIBRARIES}
-            ${LIBUV_LIBRARIES}
-            m
-            pthread
-            dl)
+        target_link_libraries(mxd PRIVATE ${COMMON_LIBS})
     else()
         target_link_libraries(mxd PRIVATE
-            ${OPENSSL_LIBRARIES}
-            sodium
+            ${COMMON_LIBS}
             -static-libgcc
             -static-libstdc++
-            gmp
-            ${WASM3_LIBRARIES}
-            ${UVWASI_LIBRARIES}
-            ${LIBUV_LIBRARIES}
-            m
-            pthread
-            dl
             rt)
     endif()
-endif()
 
 # Include directories
 target_include_directories(mxd PUBLIC
@@ -136,15 +130,11 @@ add_subdirectory(tests)
 
 # Add main node executable
 add_executable(mxd_node src/node/main.c)
-target_link_libraries(mxd_node PRIVATE
-    mxd
-    ${OPENSSL_LIBRARIES}
-    sodium
-    gmp
-    m
-    pthread
-    dl
-    rt)
+if(APPLE)
+    target_link_libraries(mxd_node PRIVATE mxd ${COMMON_LIBS})
+else()
+    target_link_libraries(mxd_node PRIVATE mxd ${COMMON_LIBS} rt)
+endif()
 
 install(TARGETS mxd_node
     RUNTIME DESTINATION bin)
