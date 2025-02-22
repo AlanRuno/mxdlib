@@ -23,39 +23,23 @@ find_package(OpenSSL REQUIRED)
 include_directories(${OPENSSL_INCLUDE_DIR})
 
 # Include Libsodium
-include_directories(/usr/local/include)
-link_directories(/usr/local/lib)
+include_directories($ENV{HOME}/.local/include /usr/local/include)
+link_directories($ENV{HOME}/.local/lib /usr/local/lib)
 
 # Find dependencies
 find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 # Use pkg-config to find libraries
-pkg_check_modules(LIBUV REQUIRED libuv)
-pkg_check_modules(UVWASI REQUIRED uvwasi)
-pkg_check_modules(WASM3 REQUIRED wasm3)
+pkg_check_modules(LIBUV REQUIRED libuv>=1.0.0)
+pkg_check_modules(UVWASI REQUIRED uvwasi>=0.0.20)
+pkg_check_modules(WASM3 REQUIRED wasm3>=1.0.0)
 
 include_directories(
     ${LIBUV_INCLUDE_DIRS}
     ${UVWASI_INCLUDE_DIRS}
     ${WASM3_INCLUDE_DIRS}
 )
-
-# Find other required libraries
-find_library(UVWASI_LIBRARY uvwasi PATHS /usr/local/lib)
-find_library(UV_LIBRARY uv PATHS /usr/local/lib)
-find_path(UVWASI_INCLUDE_DIR uvwasi/uvwasi.h PATHS /usr/local/include)
-find_path(UV_INCLUDE_DIR uv.h PATHS /usr/local/include)
-
-if(NOT UVWASI_LIBRARY OR NOT UVWASI_INCLUDE_DIR)
-    message(FATAL_ERROR "uvwasi library not found")
-endif()
-
-if(NOT UV_LIBRARY OR NOT UV_INCLUDE_DIR)
-    message(FATAL_ERROR "libuv library not found")
-endif()
-
-include_directories(${WASM3_INCLUDE_DIR})
 
 # Set output directories
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -67,7 +51,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 # Add library target
-add_library(mxd SHARED
+add_library(mxd STATIC
     src/mxd_crypto.c
     src/mxd_address.c
     src/base58.c
@@ -82,12 +66,15 @@ add_library(mxd SHARED
     src/quantization/mxd_data_quantization.c
     src/mxd_ntp.c
     src/mxd_metrics.c
-    src/mxd_dht.c)
-
+    src/mxd_dht.c
+    src/mxd_dht_network.c
+    src/mxd_config.c
+    src/mxd_blockchain_sync.c
+    src/node/metrics_display.c)
 
 # Link libraries
 if(WIN32)
-    target_link_libraries(mxd 
+    target_link_libraries(mxd PRIVATE
         ${OPENSSL_LIBRARIES}
         sodium
         gmp
@@ -98,17 +85,15 @@ if(WIN32)
         iphlpapi
         userenv)
 else()
-    target_link_libraries(mxd 
+    target_link_libraries(mxd PRIVATE
         ${OPENSSL_LIBRARIES}
         sodium
         -static-libgcc
         -static-libstdc++
         gmp
-        -Wl,--whole-archive
-        ${LIBUV_LIBRARIES}
-        ${UVWASI_LIBRARIES}
         ${WASM3_LIBRARIES}
-        -Wl,--no-whole-archive
+        ${UVWASI_LIBRARIES}
+        ${LIBUV_LIBRARIES}
         m
         pthread
         dl
@@ -123,6 +108,7 @@ target_include_directories(mxd PUBLIC
 # Install rules
 install(TARGETS mxd
     LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
 )
 
@@ -135,24 +121,17 @@ install(DIRECTORY include/
 enable_testing()
 add_subdirectory(tests)
 
-# Add network test source files
-target_sources(mxd PRIVATE
-    src/mxd_dht_network.c
-)
-
-# Add library sources
-target_sources(mxd PRIVATE
-    src/mxd_config.c
-    src/mxd_blockchain_sync.c
-    src/node/metrics_display.c)
-
 # Add main node executable
 add_executable(mxd_node src/node/main.c)
-target_link_libraries(mxd_node PRIVATE mxd)
+target_link_libraries(mxd_node PRIVATE
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    gmp
+    m
+    pthread
+    dl
+    rt)
+
 install(TARGETS mxd_node
     RUNTIME DESTINATION bin)
-
-# Ensure whole-archive linking
-set_target_properties(mxd_node PROPERTIES
-    LINK_FLAGS "-Wl,--whole-archive"
-    LINK_WHAT_YOU_USE TRUE)

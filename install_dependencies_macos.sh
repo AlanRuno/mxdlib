@@ -337,7 +337,7 @@ Description: High performance WebAssembly interpreter
 Version: 1.0.0
 Requires: libuv uvwasi
 Libs: -L\${libdir} -lm3
-Cflags: -I\${includedir}/wasm3
+Cflags: -I\${includedir}
 EOL
 
     # Update pkg-config path
@@ -357,16 +357,6 @@ EOL
         return 1
     }
 
-    # Create build directory
-    mkdir -p build
-    cd build || {
-        log "Failed to enter build directory"
-        return 1
-    }
-
-    # Configure with correct installation paths
-    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    
     # Create build directory and enter it
     mkdir -p build
     cd build || {
@@ -379,7 +369,7 @@ EOL
     cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_SHARED_LIBS=ON \
+          -DBUILD_SHARED_LIBS=OFF \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
           -DCMAKE_MODULE_PATH="$HOME/.local/lib/cmake" \
@@ -389,14 +379,18 @@ EOL
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_MACOSX_RPATH=ON \
-          -DPKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig" \
+          -DBUILD_WASI=ON \
+          -DBUILD_TESTING=OFF \
           .. || {
         log "Failed to configure wasm3"
         return 1
     }
     
     # Build and install
-    make && make install || {
+    make && \
+    cp source/libm3.a "$HOME/.local/lib/" && \
+    cp -r ../source/*.h "$HOME/.local/include/wasm3/" && \
+    make install || {
         log "Failed to build and install wasm3"
         return 1
     }
@@ -407,14 +401,14 @@ EOL
 prefix=$HOME/.local
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include/wasm3
+includedir=\${prefix}/include
 
 Name: wasm3
 Description: High performance WebAssembly interpreter
 Version: 1.0.0
 Requires: libuv uvwasi
-Libs: -L\${libdir} -lm3
-Cflags: -I\${includedir}
+Libs: -L\${libdir} -lm3 -luvwasi -luv
+Cflags: -I\${includedir}/wasm3
 EOL
 
     # Verify pkg-config file
@@ -476,7 +470,7 @@ install_libuv() {
     
     # Configure with correct installation paths and disable tests
     cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-          -DBUILD_SHARED_LIBS=ON \
+          -DBUILD_SHARED_LIBS=OFF \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_MACOSX_RPATH=ON \
@@ -486,6 +480,8 @@ install_libuv() {
           -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_TESTING=OFF \
+          -DLIBUV_BUILD_SHARED=OFF \
           ..
     
     # Build and install
@@ -544,15 +540,16 @@ install_uvwasi() {
     
     # Configure with correct installation paths
     cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-          -DBUILD_SHARED_LIBS=ON \
+          -DBUILD_SHARED_LIBS=OFF \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
+          -DCMAKE_INSTALL_INCLUDEDIR=include/uvwasi \
           -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_MACOSX_RPATH=ON \
+          -DCMAKE_PREFIX_PATH="$HOME/.local" \
           ..
     
     # Build and install
@@ -574,7 +571,7 @@ Description: WASI system call implementation using libuv
 Version: 0.0.20
 Requires: libuv >= 1.0.0
 Libs: -L\${libdir} -luvwasi
-Cflags: -I\${includedir}/wasm3
+Cflags: -I\${includedir}
 EOL
 
     # Update pkg-config path

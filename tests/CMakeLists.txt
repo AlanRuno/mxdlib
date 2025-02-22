@@ -34,11 +34,6 @@ target_link_libraries(mxd_crypto_tests
     mxd
     ${OPENSSL_LIBRARIES}
     sodium
-    -Wl,--whole-archive
-    ${WASM3_LIBRARIES}
-    ${UVWASI_LIBRARIES}
-    ${LIBUV_LIBRARIES}
-    -Wl,--no-whole-archive
     m
     pthread
     dl
@@ -99,11 +94,6 @@ target_link_libraries(mxd_smart_contracts_tests
     mxd
     ${OPENSSL_LIBRARIES}
     sodium
-    -Wl,--whole-archive
-    ${WASM3_LIBRARIES}
-    ${UVWASI_LIBRARIES}
-    ${LIBUV_LIBRARIES}
-    -Wl,--no-whole-archive
     m
     pthread
     dl
