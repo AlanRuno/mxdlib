@@ -1,6 +1,10 @@
 {
     "node_id": "node1",
-    "port": 8001,
-    "data_dir": "/home/ubuntu/repos/mxdlib/testnet/node1/data",
-    "bootstrap_nodes": ["127.0.0.1:8000"]
+    "network_type": "mainnet",
+    "port": 8002,
+    "data_dir": "./data",
+    "node_name": "Node 1",
+    "initial_stake": 130.0,
+    "metrics_interval": 1000,
+    "bootstrap_nodes": ["127.0.0.1:8001"]
 }
