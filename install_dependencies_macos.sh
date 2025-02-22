@@ -395,23 +395,19 @@ EOL
     fi
 
     # Create symbolic links for compatibility
-    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
+    ln -sf "$HOME/.local/include/wasm3/wasm3.h" "$HOME/.local/include/wasm3.h" 2>/dev/null || true
 
-    # Create pkg-config file
-    mkdir -p "$install_dir/lib/pkgconfig"
-    cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
-prefix=$install_dir
-exec_prefix=\${prefix}
-libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
+    # Update pkg-config path
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-Name: wasm3
-Description: High performance WebAssembly interpreter
-Version: 1.0.0
-Requires: libuv uvwasi
-Libs: -L\${libdir} -lm3
-Cflags: -I\${includedir}/wasm3
-EOL
+    # Verify pkg-config file is found
+    if ! pkg-config --exists wasm3; then
+        log "Failed to find wasm3.pc in pkg-config path"
+        echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+        echo "Contents of $HOME/.local/lib/pkgconfig:"
+        ls -la "$HOME/.local/lib/pkgconfig"
+        return 1
+    fi
 
     # Update pkg-config path
     export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
