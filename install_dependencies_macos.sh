@@ -300,12 +300,10 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
 EOL
 
     # Configure for macOS
-    # Use home directory for installation
-    local install_dir="$HOME/.local"
-    mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
+    # Create necessary directories
+    mkdir -p "$HOME/.local"/{lib,include/wasm3,lib/pkgconfig}
     
     # Create pkg-config file in user's local directory
-    mkdir -p "$HOME/.local/lib/pkgconfig"
     cat > "$HOME/.local/lib/pkgconfig/wasm3.pc" << EOL
 prefix=$HOME/.local
 exec_prefix=\${prefix}
@@ -320,23 +318,16 @@ Libs: -L\${libdir} -lm3
 Cflags: -I\${includedir}/wasm3
 EOL
 
-    # Update PKG_CONFIG_PATH to include user's local directory
+    # Update pkg-config path
     export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
-
-    # Ensure pkg-config can find our file
-    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
     
-    # Clone wasm3 if not already cloned
-    if [ ! -d "wasm3" ]; then
-        log "Cloning wasm3..."
-        git clone https://github.com/wasm3/wasm3.git || {
-            log "Failed to clone wasm3"
-            return 1
-        }
-    fi
-
-    # Create necessary directories
-    mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
+    # Clean up and clone wasm3
+    rm -rf wasm3
+    log "Cloning wasm3..."
+    git clone https://github.com/wasm3/wasm3.git || {
+        log "Failed to clone wasm3"
+        return 1
+    }
 
     # Build wasm3
     cd wasm3 || {
@@ -369,12 +360,6 @@ EOL
         return 1
     }
 
-    # Build wasm3
-    make || {
-        log "Failed to build wasm3"
-        return 1
-    }
-
     # Build and install wasm3
     make && make install || {
         log "Failed to build and install wasm3"
@@ -397,9 +382,6 @@ EOL
     # Create symbolic links for compatibility
     ln -sf "$HOME/.local/include/wasm3/wasm3.h" "$HOME/.local/include/wasm3.h" 2>/dev/null || true
 
-    # Update pkg-config path
-    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
-
     # Verify pkg-config file is found
     if ! pkg-config --exists wasm3; then
         log "Failed to find wasm3.pc in pkg-config path"
@@ -409,46 +391,7 @@ EOL
         return 1
     fi
 
-    # Update pkg-config path
-    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
-
-    # Return to original directory
-    cd ../.. || {
-        log "Failed to return to original directory"
-        return 1
-    }
-
-    # Verify installation
-    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ]; then
-        log "Failed to verify wasm3 header file"
-        return 1
-    fi
-
-    if ! ls "$install_dir/lib/libm3"* >/dev/null 2>&1; then
-        log "Failed to verify wasm3 library"
-        return 1
-    fi
-
-    # Verify pkg-config file
-    if ! PKG_CONFIG_PATH="$install_dir/lib/pkgconfig" pkg-config --exists wasm3; then
-        log "Failed to verify wasm3.pc in pkg-config path"
-        return 1
-    fi
-    
-    # Try CMake installation first
-    if ! make install || ! verify_pkgconfig wasm3 "1.0.0"; then
-        log "CMake pkg-config installation failed, trying manual installation..."
-        install_pkgconfig_manually
-    fi
-    
-    # Final verification
-    if ! verify_pkgconfig wasm3; then
-        log "Error: pkg-config installation failed after all attempts"
-        log "Debug information:"
-        pkg-config --debug --exists wasm3 2>&1 || true
-        exit 1
-    fi
-    
+    # Return to original directory and clean up
     cd ../..
     rm -rf wasm3
 }
