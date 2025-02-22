@@ -315,7 +315,7 @@ EOL
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
+          -DCMAKE_INSTALL_INCLUDEDIR=include \
           -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
           -DCMAKE_C_FLAGS="-fPIC" \
           -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
@@ -324,7 +324,7 @@ EOL
           -DCMAKE_MACOSX_RPATH=ON \
           ..
     
-    make
+    make && make install
     
     # Try CMake installation first
     if ! make install || ! verify_pkgconfig wasm3 "1.0.0"; then
