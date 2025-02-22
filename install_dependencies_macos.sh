@@ -389,7 +389,7 @@ EOL
        ! ls "$install_dir/lib/libm3"* >/dev/null 2>&1; then
         log "Failed to verify wasm3 file installation"
         return 1
-    }
+    fi
 
     # Create symbolic links for compatibility
     ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
