@@ -341,47 +341,58 @@ EOL
           -DCMAKE_MACOSX_RPATH=ON \
           ..
     
-    make || exit 1
-    make install || {
-        log "Failed to install wasm3"
+    make || {
+        log "Failed to build wasm3"
+        return 1
+    }
+    
+    # Install files manually to ensure correct paths
+    cp -f ./source/wasm3.h "$install_dir/include/wasm3/" || {
+        log "Failed to install wasm3 header"
+        return 1
+    }
+    
+    cp -f ./build/libm3.* "$install_dir/lib/" || {
+        log "Failed to install wasm3 library"
         return 1
     }
     
     # Create symbolic links for compatibility
     ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
     
-    # Verify installation
-    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ]; then
-        log "Failed to install wasm3 header file"
-        return 1
-    fi
-    
-    if [ ! -f "$install_dir/lib/libm3.dylib" ]; then
-        log "Failed to install wasm3 library"
-        return 1
-    fi
-    
     # Create pkg-config file
+    mkdir -p "$install_dir/lib/pkgconfig"
     cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
 prefix=$install_dir
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include/wasm3
+includedir=\${prefix}/include
 
 Name: wasm3
 Description: High performance WebAssembly interpreter
 Version: 1.0.0
 Requires: libuv uvwasi
 Libs: -L\${libdir} -lm3
-Cflags: -I\${includedir}
+Cflags: -I\${includedir}/wasm3
 EOL
 
     # Update pkg-config path
     export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
     
+    # Verify installation
+    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ]; then
+        log "Failed to verify wasm3 header file"
+        return 1
+    fi
+    
+    if ! ls "$install_dir/lib/libm3"* >/dev/null 2>&1; then
+        log "Failed to verify wasm3 library"
+        return 1
+    fi
+    
     # Verify pkg-config file
-    if ! pkg-config --exists wasm3; then
-        log "Failed to find wasm3.pc in pkg-config path"
+    if ! PKG_CONFIG_PATH="$install_dir/lib/pkgconfig" pkg-config --exists wasm3; then
+        log "Failed to verify wasm3.pc in pkg-config path"
         return 1
     fi
     
