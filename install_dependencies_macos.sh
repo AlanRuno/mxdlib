@@ -53,11 +53,16 @@ verify_directory_permissions() {
 }
 
 install_pkgconfig_manually() {
-    local pc_file="${BREW_PREFIX}/lib/pkgconfig/wasm3.pc"
     local version="1.0.0"
+    local pc_paths=(
+        "${BREW_PREFIX}/lib/pkgconfig"
+        "$HOME/.local/lib/pkgconfig"
+    )
     
-    # Create pkgconfig directory if needed
-    verify_directory_permissions "$(dirname "$pc_file")"
+    for pkgconfig_dir in "${pc_paths[@]}"; do
+        # Create pkgconfig directory if needed
+        mkdir -p "$pkgconfig_dir"
+        local pc_file="$pkgconfig_dir/wasm3.pc"
     
     # Generate pkg-config file
     cat > "$pc_file" << EOL
@@ -73,7 +78,12 @@ Requires: libuv uvwasi
 Libs: -L\${libdir} -lm3
 Cflags: -I\${includedir}
 EOL
-    log "Manually created pkg-config file at $pc_file"
+        log "Created pkg-config file at $pc_file"
+    done
+    
+    # Update PKG_CONFIG_PATH to include both locations
+    export PKG_CONFIG_PATH="${BREW_PREFIX}/lib/pkgconfig:$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    log "Updated PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
 }
 
 setup_pkgconfig_paths() {
@@ -108,6 +118,15 @@ setup_pkgconfig_paths() {
         log "Error: No writable pkg-config paths found"
         return 1
     fi
+    
+    # Add Homebrew and user local paths
+    verified_paths+=("${BREW_PREFIX}/lib/pkgconfig")
+    verified_paths+=("$HOME/.local/lib/pkgconfig")
+    
+    # Create directories if they don't exist
+    for path in "${verified_paths[@]}"; do
+        mkdir -p "$path"
+    done
     
     export PKG_CONFIG_PATH=$(IFS=:; echo "${verified_paths[*]}"):${PKG_CONFIG_PATH:-}
     log "PKG_CONFIG_PATH set to: $PKG_CONFIG_PATH"
@@ -161,10 +180,13 @@ install_system_deps() {
 }
 
 check_wasm3_installed() {
-    # Check for library files and headers
-    [ -f "${BREW_PREFIX}/lib/libm3.dylib" ] && \
-    [ -f "${BREW_PREFIX}/include/wasm3.h" ] && \
-    [ -f "${BREW_PREFIX}/lib/cmake/wasm3/wasm3Config.cmake" ]
+    # Check for library files and headers in both Homebrew and local paths
+    ([ -f "${BREW_PREFIX}/lib/libm3.dylib" ] && \
+     [ -f "${BREW_PREFIX}/include/wasm3/wasm3.h" ] && \
+     [ -f "${BREW_PREFIX}/lib/cmake/wasm3/wasm3Config.cmake" ]) || \
+    ([ -f "$HOME/.local/lib/libm3.dylib" ] && \
+     [ -f "$HOME/.local/include/wasm3/wasm3.h" ] && \
+     [ -f "$HOME/.local/lib/cmake/wasm3/wasm3Config.cmake" ])
 }
 
 check_libuv_installed() {
@@ -197,14 +219,26 @@ install_wasm3() {
     
     # Create pkg-config file and directory
     mkdir -p source
-    mkdir -p "${BREW_PREFIX}/lib/pkgconfig"
+    for prefix in "${BREW_PREFIX}" "$HOME/.local"; do
+        mkdir -p "$prefix/lib/pkgconfig"
+    done
+    
     echo "Creating source directory and copying pkg-config file..."
     cp ../../wasm3.pc.in source/wasm3.pc.in || {
-        echo "Failed to copy wasm3.pc.in. Debug info:"
-        echo "Current directory: $(pwd)"
-        echo "Source exists: $(test -f ../../wasm3.pc.in && echo "Yes" || echo "No")"
-        echo "Target directory exists: $(test -d source && echo "Yes" || echo "No")"
-        exit 1
+        log "Failed to copy wasm3.pc.in, creating it manually..."
+        cat > source/wasm3.pc.in << 'EOL'
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: wasm3
+Description: High performance WebAssembly interpreter
+Version: @PROJECT_VERSION@
+Requires: libuv uvwasi
+Libs: -L${libdir} -lm3
+Cflags: -I${includedir}
+EOL
     }
     
     # Create main CMakeLists.txt
@@ -221,7 +255,9 @@ set(BUILD_SHARED_LIBS ON)
 # Add source files
 file(GLOB M3_SOURCES ../source/*.c)
 add_library(m3 ${M3_SOURCES})
-target_include_directories(m3 PUBLIC ../source)
+target_include_directories(m3 PUBLIC 
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../source>
+    $<INSTALL_INTERFACE:include>)
 
 # Add executable target
 add_executable(wasm3 ../platforms/app/main.c)
@@ -237,12 +273,18 @@ configure_file(
 install(TARGETS m3 wasm3
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-# Install headers
+# Install main header directly in wasm3 subdirectory
+install(FILES ../source/wasm3.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wasm3)
+
+# Install other headers maintaining directory structure
 install(DIRECTORY ../source/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/wasm3
-    FILES_MATCHING PATTERN "*.h")
+    FILES_MATCHING PATTERN "*.h"
+    PATTERN "wasm3.h" EXCLUDE)
 
 # Install pkg-config file
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
@@ -332,14 +374,33 @@ install_libuv() {
     mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
     
     # Configure with correct installation paths
-    cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
+    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include \
-          -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
+          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
+          -DCMAKE_INSTALL_RPATH="${BREW_PREFIX}/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_MACOSX_RPATH=ON \
           ..
-    make install
+    
+    if ! make install; then
+        log "Homebrew installation failed, trying user local directory..."
+        cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
+              -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
+              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_MACOSX_RPATH=ON \
+              ..
+        make install
+    fi
+    
+    # Create symbolic links for compatibility
+    for prefix in "${BREW_PREFIX}" "$HOME/.local"; do
+        mkdir -p "$prefix/include/wasm3"
+        ln -sf "$prefix/include/wasm3.h" "$prefix/include/wasm3/wasm3.h" 2>/dev/null || true
+    done
     
     # Update pkg-config path to include the new location
     export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -383,14 +444,33 @@ install_uvwasi() {
     mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
     
     # Configure with correct installation paths
-    cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
+    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include \
-          -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
+          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
+          -DCMAKE_INSTALL_RPATH="${BREW_PREFIX}/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_MACOSX_RPATH=ON \
           ..
-    make install
+    
+    if ! make install; then
+        log "Homebrew installation failed, trying user local directory..."
+        cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
+              -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
+              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_MACOSX_RPATH=ON \
+              ..
+        make install
+    fi
+    
+    # Create symbolic links for compatibility
+    for prefix in "${BREW_PREFIX}" "$HOME/.local"; do
+        mkdir -p "$prefix/include/wasm3"
+        ln -sf "$prefix/include/wasm3.h" "$prefix/include/wasm3/wasm3.h" 2>/dev/null || true
+    done
     
     # Update pkg-config path to include the new location
     export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
