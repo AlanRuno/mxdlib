@@ -360,7 +360,7 @@ EOL
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
+          -DCMAKE_INSTALL_INCLUDEDIR=include \
           -DPKGCONFIG_INSTALL_DIR="$HOME/.local/lib/pkgconfig" \
           -DCMAKE_C_FLAGS="-fPIC" \
           -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
