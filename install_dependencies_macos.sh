@@ -107,7 +107,7 @@ setup_pkgconfig_paths() {
     done
     
     # Add system paths for searching but not writing
-    verified_paths+=(
+    local system_paths=(
         "/usr/local/lib/pkgconfig"
         "/usr/local/share/pkgconfig"
         "/usr/lib/pkgconfig"
@@ -123,10 +123,11 @@ setup_pkgconfig_paths() {
     verified_paths+=("${BREW_PREFIX}/lib/pkgconfig")
     verified_paths+=("$HOME/.local/lib/pkgconfig")
     
-    # Create directories if they don't exist
-    for path in "${verified_paths[@]}"; do
-        mkdir -p "$path"
-    done
+    # Create only user-writable directories
+    mkdir -p "$HOME/.local/lib/pkgconfig"
+    
+    # Add system paths for searching only
+    verified_paths+=("${system_paths[@]}")
     
     export PKG_CONFIG_PATH=$(IFS=:; echo "${verified_paths[*]}"):${PKG_CONFIG_PATH:-}
     log "PKG_CONFIG_PATH set to: $PKG_CONFIG_PATH"
