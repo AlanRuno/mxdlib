@@ -375,6 +375,7 @@ EOL
     }
     
     # Configure CMake with correct paths
+    PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
     cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
@@ -388,6 +389,7 @@ EOL
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_MACOSX_RPATH=ON \
+          -DPKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig" \
           .. || {
         log "Failed to configure wasm3"
         return 1
@@ -416,36 +418,12 @@ Cflags: -I\${includedir}
 EOL
 
     # Verify pkg-config file
-    pkg-config --exists wasm3 || {
+    PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}" pkg-config --exists wasm3 || {
         log "Failed to verify wasm3.pc"
         echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
         echo "Contents of $HOME/.local/lib/pkgconfig:"
         ls -la "$HOME/.local/lib/pkgconfig"
         cat "$HOME/.local/lib/pkgconfig/wasm3.pc"
-        return 1
-    }
-
-    cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_SHARED_LIBS=ON \
-          -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-          -DCMAKE_MODULE_PATH="$HOME/.local/lib/cmake" \
-          -DCMAKE_PREFIX_PATH="$HOME/.local" \
-          -DCMAKE_C_FLAGS="-fPIC -I$HOME/.local/include" \
-          -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
-          -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-          -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
-          -DCMAKE_MACOSX_RPATH=ON \
-          .. || {
-        log "Failed to configure wasm3"
-        return 1
-    }
-
-    # Build and install wasm3
-    make && make install || {
-        log "Failed to build and install wasm3"
         return 1
     }
 
