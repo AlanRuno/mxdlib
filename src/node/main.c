@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,9 +73,28 @@ void* metrics_collector(void* arg) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        printf("Usage: %s <config_file>\n", argv[0]);
+    char default_config_path[PATH_MAX];
+    const char* config_path = NULL;
+    
+    // Handle command line arguments
+    if (argc > 2) {
+        printf("Usage: %s [config_file]\n", argv[0]);
         return 1;
+    } else if (argc == 2) {
+        config_path = argv[1];
+    } else {
+        // Get the directory of the executable
+        char* last_slash = strrchr(argv[0], '/');
+        if (last_slash != NULL) {
+            size_t dir_length = last_slash - argv[0] + 1;
+            strncpy(default_config_path, argv[0], dir_length);
+            default_config_path[dir_length] = '\0';
+            strcat(default_config_path, "default_config.json");
+        } else {
+            strcpy(default_config_path, "./default_config.json");
+        }
+        config_path = default_config_path;
+        printf("No config file specified, using default configuration: %s\n", config_path);
     }
 
     // Set up signal handlers
@@ -83,8 +103,8 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
     
     // Load configuration
-    if (mxd_load_config(argv[1], &current_config) != 0) {
-        fprintf(stderr, "Failed to load configuration\n");
+    if (mxd_load_config(config_path, &current_config) != 0) {
+        fprintf(stderr, "Failed to load configuration from %s\n", config_path);
         return 1;
     }
     
