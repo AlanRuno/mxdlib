@@ -309,7 +309,7 @@ EOL
 prefix=$HOME/.local
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
+includedir=\${prefix}/include/wasm3
 
 Name: wasm3
 Description: High performance WebAssembly interpreter
@@ -382,6 +382,7 @@ EOL
 
     # Create symbolic links for compatibility
     ln -sf "$HOME/.local/include/wasm3/wasm3.h" "$HOME/.local/include/wasm3.h" 2>/dev/null || true
+    ln -sf "$HOME/.local/include/wasm3" "$HOME/.local/include/wasm3-include" 2>/dev/null || true
 
     # Verify pkg-config file is found
     if ! pkg-config --exists wasm3; then
