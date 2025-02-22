@@ -323,6 +323,9 @@ EOL
     # Ensure pkg-config can find our file
     export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
     
+    # Create necessary directories first
+    mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
+    
     # Configure with correct installation paths
     cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
@@ -338,17 +341,47 @@ EOL
           -DCMAKE_MACOSX_RPATH=ON \
           ..
     
-    make && make install || exit 1
-
-    # Create necessary directories
-    mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
+    make || exit 1
+    make install || {
+        log "Failed to install wasm3"
+        return 1
+    }
     
     # Create symbolic links for compatibility
     ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
     
     # Verify installation
-    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ] || [ ! -f "$install_dir/lib/libm3.dylib" ]; then
-        log "Failed to install wasm3 files"
+    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ]; then
+        log "Failed to install wasm3 header file"
+        return 1
+    fi
+    
+    if [ ! -f "$install_dir/lib/libm3.dylib" ]; then
+        log "Failed to install wasm3 library"
+        return 1
+    fi
+    
+    # Create pkg-config file
+    cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
+prefix=$install_dir
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include/wasm3
+
+Name: wasm3
+Description: High performance WebAssembly interpreter
+Version: 1.0.0
+Requires: libuv uvwasi
+Libs: -L\${libdir} -lm3
+Cflags: -I\${includedir}
+EOL
+
+    # Update pkg-config path
+    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
+    
+    # Verify pkg-config file
+    if ! pkg-config --exists wasm3; then
+        log "Failed to find wasm3.pc in pkg-config path"
         return 1
     fi
     
