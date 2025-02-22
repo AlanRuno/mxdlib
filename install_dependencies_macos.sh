@@ -456,7 +456,7 @@ EOL
 install_libuv() {
     if [ "$FORCE_BUILD" = "true" ]; then
         log "Force rebuilding libuv..."
-        rm -rf "${BREW_PREFIX}/lib/libuv.dylib*" "${BREW_PREFIX}/include/uv*"
+        rm -rf "$HOME/.local/lib/libuv.*" "$HOME/.local/include/uv.h"
     elif check_libuv_installed; then
         log "libuv is already installed, skipping"
         return 0
@@ -467,41 +467,25 @@ install_libuv() {
     cd libuv
     mkdir -p build && cd build
     
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+    # Configure with correct installation paths and disable tests
+    cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-          -DCMAKE_INSTALL_NAME_DIR="${BREW_PREFIX}/lib" \
+          -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_MACOSX_RPATH=ON \
-          ..
-    
-    make
-    
-    # Try installation with fallback paths
-    local install_dir="$HOME/.local"
-    mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
-    
-    # Configure with correct installation paths
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+          -DLIBUV_BUILD_TESTS=OFF \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-          -DCMAKE_INSTALL_RPATH="${BREW_PREFIX}/lib" \
+          -DCMAKE_INSTALL_INCLUDEDIR=include \
+          -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_MACOSX_RPATH=ON \
           ..
     
-    if ! make install; then
-        log "Homebrew installation failed, trying user local directory..."
-        cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-              -DCMAKE_INSTALL_LIBDIR=lib \
-              -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-              -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
-              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_MACOSX_RPATH=ON \
-              ..
-        make install
-    fi
+    # Build and install
+    make && make install || {
+        log "Failed to build and install libuv"
+        return 1
+    }
     
     # Create symbolic links for compatibility
     mkdir -p "$install_dir/include/wasm3"
