@@ -463,6 +463,8 @@ install_libuv() {
     fi
     
     log "Installing libuv..."
+    # Clean up existing directory if it exists
+    rm -rf libuv
     git clone https://github.com/libuv/libuv
     cd libuv
     mkdir -p build && cd build
