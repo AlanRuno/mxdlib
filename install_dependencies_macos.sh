@@ -304,10 +304,10 @@ EOL
     local install_dir="$HOME/.local"
     mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
     
-    # Create pkg-config file manually first
-    mkdir -p "$install_dir/lib/pkgconfig"
-    cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
-prefix=$install_dir
+    # Create pkg-config file in user's local directory
+    mkdir -p "$HOME/.local/lib/pkgconfig"
+    cat > "$HOME/.local/lib/pkgconfig/wasm3.pc" << EOL
+prefix=$HOME/.local
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
 includedir=\${prefix}/include
@@ -319,6 +319,9 @@ Requires: libuv uvwasi
 Libs: -L\${libdir} -lm3
 Cflags: -I\${includedir}/wasm3
 EOL
+
+    # Update PKG_CONFIG_PATH to include user's local directory
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
     # Ensure pkg-config can find our file
     export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -373,13 +376,18 @@ EOL
     }
 
     # Install files manually
-    cp -f ../source/wasm3.h ../source/wasm3_defs.h "$install_dir/include/wasm3/" || {
+    mkdir -p "$HOME/.local/include/wasm3" "$HOME/.local/lib"
+    
+    # Copy header files
+    cp -f ../source/wasm3.h ../source/wasm3_defs.h "$HOME/.local/include/wasm3/" || {
         log "Failed to install wasm3 headers"
         return 1
     }
 
-    cp -f source/libm3.* "$install_dir/lib/" || {
+    # Copy library files from build directory
+    cp -f source/libm3.* "$HOME/.local/lib/" || {
         log "Failed to install wasm3 library"
+        ls -la source/
         return 1
     }
 
