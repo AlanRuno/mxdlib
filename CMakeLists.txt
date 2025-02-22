@@ -106,6 +106,7 @@ else()
             -static-libstdc++
             rt)
     endif()
+endif()
 
 # Include directories
 target_include_directories(mxd PUBLIC
