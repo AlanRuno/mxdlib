@@ -355,14 +355,16 @@ EOL
     }
 
     # Configure with correct installation paths
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
     cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_INSTALL_INCLUDEDIR=include \
-          -DPKGCONFIG_INSTALL_DIR="$HOME/.local/lib/pkgconfig" \
-          -DCMAKE_C_FLAGS="-fPIC" \
+          -DCMAKE_MODULE_PATH="$HOME/.local/lib/cmake" \
+          -DCMAKE_PREFIX_PATH="$HOME/.local" \
+          -DCMAKE_C_FLAGS="-fPIC -I$HOME/.local/include" \
           -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
