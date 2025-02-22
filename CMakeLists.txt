@@ -85,19 +85,32 @@ if(WIN32)
         iphlpapi
         userenv)
 else()
-    target_link_libraries(mxd PRIVATE
-        ${OPENSSL_LIBRARIES}
-        sodium
-        -static-libgcc
-        -static-libstdc++
-        gmp
-        ${WASM3_LIBRARIES}
-        ${UVWASI_LIBRARIES}
-        ${LIBUV_LIBRARIES}
-        m
-        pthread
-        dl
-        rt)
+    if(APPLE)
+        target_link_libraries(mxd PRIVATE
+            ${OPENSSL_LIBRARIES}
+            sodium
+            gmp
+            ${WASM3_LIBRARIES}
+            ${UVWASI_LIBRARIES}
+            ${LIBUV_LIBRARIES}
+            m
+            pthread
+            dl)
+    else()
+        target_link_libraries(mxd PRIVATE
+            ${OPENSSL_LIBRARIES}
+            sodium
+            -static-libgcc
+            -static-libstdc++
+            gmp
+            ${WASM3_LIBRARIES}
+            ${UVWASI_LIBRARIES}
+            ${LIBUV_LIBRARIES}
+            m
+            pthread
+            dl
+            rt)
+    endif()
 endif()
 
 # Include directories

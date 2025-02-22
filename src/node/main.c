@@ -45,7 +45,7 @@ void* metrics_collector(void* arg) {
         } else {
             consecutive_errors++;
             if (consecutive_errors > 10) {  // Performance requirement: max 10 consecutive errors
-                fprintf(stderr, "Warning: High consecutive error count: %lu\n", consecutive_errors);
+                fprintf(stderr, "Warning: High consecutive error count: %llu\n", (unsigned long long)consecutive_errors);
             }
             // Record failed message
             mxd_record_message_result(&node_metrics, 0);
