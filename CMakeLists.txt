@@ -129,7 +129,9 @@ add_subdirectory(tests)
 
 # Add main node executable
 add_executable(mxd_node src/node/main.c)
-if(APPLE)
+if(WIN32)
+    target_link_libraries(mxd_node PRIVATE mxd)
+elseif(APPLE)
     target_link_libraries(mxd_node PRIVATE mxd ${COMMON_LIBS})
 else()
     target_link_libraries(mxd_node PRIVATE mxd ${COMMON_LIBS} rt)
