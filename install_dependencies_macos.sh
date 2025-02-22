@@ -107,7 +107,7 @@ setup_pkgconfig_paths() {
     done
     
     # Add system paths for searching but not writing
-    verified_paths+=(
+    local system_paths=(
         "/usr/local/lib/pkgconfig"
         "/usr/local/share/pkgconfig"
         "/usr/lib/pkgconfig"
@@ -123,10 +123,11 @@ setup_pkgconfig_paths() {
     verified_paths+=("${BREW_PREFIX}/lib/pkgconfig")
     verified_paths+=("$HOME/.local/lib/pkgconfig")
     
-    # Create directories if they don't exist
-    for path in "${verified_paths[@]}"; do
-        mkdir -p "$path"
-    done
+    # Create only user-writable directories
+    mkdir -p "$HOME/.local/lib/pkgconfig"
+    
+    # Add system paths for searching only
+    verified_paths+=("${system_paths[@]}")
     
     export PKG_CONFIG_PATH=$(IFS=:; echo "${verified_paths[*]}"):${PKG_CONFIG_PATH:-}
     log "PKG_CONFIG_PATH set to: $PKG_CONFIG_PATH"
@@ -300,14 +301,12 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wasm3.pc
 EOL
 
     # Configure for macOS
-    # Use home directory for installation
-    local install_dir="$HOME/.local"
-    mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
+    # Create necessary directories
+    mkdir -p "$HOME/.local"/{lib,include/wasm3,lib/pkgconfig}
     
-    # Create pkg-config file manually first
-    mkdir -p "$install_dir/lib/pkgconfig"
-    cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
-prefix=$install_dir
+    # Create pkg-config file in user's local directory
+    cat > "$HOME/.local/lib/pkgconfig/wasm3.pc" << EOL
+prefix=$HOME/.local
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
 includedir=\${prefix}/include
@@ -320,20 +319,16 @@ Libs: -L\${libdir} -lm3
 Cflags: -I\${includedir}/wasm3
 EOL
 
-    # Ensure pkg-config can find our file
-    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
+    # Update pkg-config path
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
     
-    # Clone wasm3 if not already cloned
-    if [ ! -d "wasm3" ]; then
-        log "Cloning wasm3..."
-        git clone https://github.com/wasm3/wasm3.git || {
-            log "Failed to clone wasm3"
-            return 1
-        }
-    fi
-
-    # Create necessary directories
-    mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
+    # Clean up and clone wasm3
+    rm -rf wasm3
+    log "Cloning wasm3..."
+    git clone https://github.com/wasm3/wasm3.git || {
+        log "Failed to clone wasm3"
+        return 1
+    }
 
     # Build wasm3
     cd wasm3 || {
@@ -349,99 +344,55 @@ EOL
     }
 
     # Configure with correct installation paths
-    cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
+    cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-          -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
+          -DPKGCONFIG_INSTALL_DIR="$HOME/.local/lib/pkgconfig" \
           -DCMAKE_C_FLAGS="-fPIC" \
-          -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
+          -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-          -DCMAKE_INSTALL_NAME_DIR="$install_dir/lib" \
+          -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_MACOSX_RPATH=ON \
           .. || {
         log "Failed to configure wasm3"
         return 1
     }
 
-    # Build wasm3
-    make || {
-        log "Failed to build wasm3"
-        return 1
-    }
-
-    # Install files manually
-    cp -f ../source/wasm3.h "$install_dir/include/wasm3/" || {
-        log "Failed to install wasm3 header"
-        return 1
-    }
-
-    cp -f ./libm3.* "$install_dir/lib/" || {
-        log "Failed to install wasm3 library"
-        return 1
-    }
-
-    # Create symbolic links for compatibility
-    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
-
-    # Create pkg-config file
-    mkdir -p "$install_dir/lib/pkgconfig"
-    cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
-prefix=$install_dir
-exec_prefix=\${prefix}
-libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
-
-Name: wasm3
-Description: High performance WebAssembly interpreter
-Version: 1.0.0
-Requires: libuv uvwasi
-Libs: -L\${libdir} -lm3
-Cflags: -I\${includedir}/wasm3
-EOL
-
-    # Update pkg-config path
-    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
-
-    # Return to original directory
-    cd ../.. || {
-        log "Failed to return to original directory"
+    # Build and install wasm3
+    make && make install || {
+        log "Failed to build and install wasm3"
         return 1
     }
 
     # Verify installation
-    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ]; then
-        log "Failed to verify wasm3 header file"
+    if [ ! -f "$HOME/.local/include/wasm3/wasm3.h" ] || \
+       [ ! -f "$HOME/.local/include/wasm3/wasm3_defs.h" ] || \
+       ! ls "$HOME/.local/lib/libm3"* >/dev/null 2>&1; then
+        log "Failed to verify wasm3 installation"
+        echo "Current directory: $(pwd)"
+        echo "Files in $HOME/.local/lib:"
+        ls -la "$HOME/.local/lib"
+        echo "Files in $HOME/.local/include/wasm3:"
+        ls -la "$HOME/.local/include/wasm3"
         return 1
     fi
 
-    if ! ls "$install_dir/lib/libm3"* >/dev/null 2>&1; then
-        log "Failed to verify wasm3 library"
+    # Create symbolic links for compatibility
+    ln -sf "$HOME/.local/include/wasm3/wasm3.h" "$HOME/.local/include/wasm3.h" 2>/dev/null || true
+
+    # Verify pkg-config file is found
+    if ! pkg-config --exists wasm3; then
+        log "Failed to find wasm3.pc in pkg-config path"
+        echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+        echo "Contents of $HOME/.local/lib/pkgconfig:"
+        ls -la "$HOME/.local/lib/pkgconfig"
         return 1
     fi
 
-    # Verify pkg-config file
-    if ! PKG_CONFIG_PATH="$install_dir/lib/pkgconfig" pkg-config --exists wasm3; then
-        log "Failed to verify wasm3.pc in pkg-config path"
-        return 1
-    fi
-    
-    # Try CMake installation first
-    if ! make install || ! verify_pkgconfig wasm3 "1.0.0"; then
-        log "CMake pkg-config installation failed, trying manual installation..."
-        install_pkgconfig_manually
-    fi
-    
-    # Final verification
-    if ! verify_pkgconfig wasm3; then
-        log "Error: pkg-config installation failed after all attempts"
-        log "Debug information:"
-        pkg-config --debug --exists wasm3 2>&1 || true
-        exit 1
-    fi
-    
+    # Return to original directory and clean up
     cd ../..
     rm -rf wasm3
 }
@@ -449,60 +400,57 @@ EOL
 install_libuv() {
     if [ "$FORCE_BUILD" = "true" ]; then
         log "Force rebuilding libuv..."
-        rm -rf "${BREW_PREFIX}/lib/libuv.dylib*" "${BREW_PREFIX}/include/uv*"
+        rm -rf "$HOME/.local/lib/libuv.*" "$HOME/.local/include/uv.h"
     elif check_libuv_installed; then
         log "libuv is already installed, skipping"
         return 0
     fi
     
     log "Installing libuv..."
+    # Clean up existing directory if it exists
+    rm -rf libuv
     git clone https://github.com/libuv/libuv
     cd libuv
     mkdir -p build && cd build
     
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+    # Configure with correct installation paths and disable tests
+    cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-          -DCMAKE_INSTALL_NAME_DIR="${BREW_PREFIX}/lib" \
+          -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_MACOSX_RPATH=ON \
-          ..
-    
-    make
-    
-    # Try installation with fallback paths
-    local install_dir="$HOME/.local"
-    mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
-    
-    # Configure with correct installation paths
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+          -DLIBUV_BUILD_TESTS=OFF \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-          -DCMAKE_INSTALL_RPATH="${BREW_PREFIX}/lib" \
+          -DCMAKE_INSTALL_INCLUDEDIR=include \
+          -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_MACOSX_RPATH=ON \
           ..
     
-    if ! make install; then
-        log "Homebrew installation failed, trying user local directory..."
-        cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-              -DCMAKE_INSTALL_LIBDIR=lib \
-              -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-              -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
-              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_MACOSX_RPATH=ON \
-              ..
-        make install
-    fi
+    # Build and install
+    make && make install || {
+        log "Failed to build and install libuv"
+        return 1
+    }
     
-    # Create symbolic links for compatibility
-    mkdir -p "$install_dir/include/wasm3"
-    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
-    
-    # Update pkg-config path to include the new location
-    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
-    log "Installed to $install_dir"
+    # Create pkg-config file
+    mkdir -p "$HOME/.local/lib/pkgconfig"
+    cat > "$HOME/.local/lib/pkgconfig/libuv.pc" << EOL
+prefix=$HOME/.local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libuv
+Description: multi-platform support library with a focus on asynchronous I/O
+Version: 1.0.0
+Libs: -L\${libdir} -luv
+Cflags: -I\${includedir}
+EOL
+
+    # Update pkg-config path
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+    log "Installed to $HOME/.local"
     
     cd ../..
     rm -rf libuv
@@ -510,7 +458,10 @@ install_libuv() {
     # Verify libuv installation
     if ! verify_pkgconfig libuv "1.0.0"; then
         log "Error: libuv pkg-config verification failed"
-        exit 1
+        echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+        echo "Contents of $HOME/.local/lib/pkgconfig:"
+        ls -la "$HOME/.local/lib/pkgconfig"
+        return 1
     fi
 }
 
@@ -524,53 +475,50 @@ install_uvwasi() {
     fi
     
     log "Installing uvwasi..."
+    # Clean up existing directory if it exists
+    rm -rf uvwasi
     git clone https://github.com/nodejs/uvwasi
     cd uvwasi
     mkdir -p build && cd build
     
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+    # Configure with correct installation paths
+    cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-          -DCMAKE_INSTALL_NAME_DIR="${BREW_PREFIX}/lib" \
-          -DCMAKE_MACOSX_RPATH=ON \
-          ..
-    
-    make
-    
-    # Try installation with fallback paths
-    local install_dir="$HOME/.local"
-    mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
-    
-    # Configure with correct installation paths
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+          -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-          -DCMAKE_INSTALL_RPATH="${BREW_PREFIX}/lib" \
+          -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_MACOSX_RPATH=ON \
           ..
     
-    if ! make install; then
-        log "Homebrew installation failed, trying user local directory..."
-        cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-              -DCMAKE_INSTALL_LIBDIR=lib \
-              -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-              -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
-              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_MACOSX_RPATH=ON \
-              ..
-        make install
-    fi
+    # Build and install
+    make && make install || {
+        log "Failed to build and install uvwasi"
+        return 1
+    }
     
-    # Create symbolic links for compatibility
-    mkdir -p "$install_dir/include/wasm3"
-    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
-    
-    # Update pkg-config path to include the new location
-    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
-    log "Installed to $install_dir"
+    # Create pkg-config file
+    mkdir -p "$HOME/.local/lib/pkgconfig"
+    cat > "$HOME/.local/lib/pkgconfig/uvwasi.pc" << EOL
+prefix=$HOME/.local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: uvwasi
+Description: WASI system call implementation using libuv
+Version: 0.0.20
+Requires: libuv >= 1.0.0
+Libs: -L\${libdir} -luvwasi
+Cflags: -I\${includedir}/wasm3
+EOL
+
+    # Update pkg-config path
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+    log "Installed to $HOME/.local"
     
     cd ../..
     rm -rf uvwasi
@@ -578,7 +526,10 @@ install_uvwasi() {
     # Verify uvwasi installation
     if ! verify_pkgconfig uvwasi "0.0.20"; then
         log "Error: uvwasi pkg-config verification failed"
-        exit 1
+        echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+        echo "Contents of $HOME/.local/lib/pkgconfig:"
+        ls -la "$HOME/.local/lib/pkgconfig"
+        return 1
     fi
 }
 
