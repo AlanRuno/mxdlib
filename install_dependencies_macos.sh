@@ -363,15 +363,25 @@ EOL
 prefix=$HOME/.local
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
+includedir=\${prefix}/include/wasm3
 
 Name: wasm3
 Description: High performance WebAssembly interpreter
 Version: 1.0.0
 Requires: libuv uvwasi
 Libs: -L\${libdir} -lm3
-Cflags: -I\${includedir}/wasm3
+Cflags: -I\${includedir}
 EOL
+
+    # Ensure pkg-config can find our file
+    pkg-config --validate wasm3 || {
+        log "Failed to validate wasm3.pc"
+        echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+        echo "Contents of $HOME/.local/lib/pkgconfig:"
+        ls -la "$HOME/.local/lib/pkgconfig"
+        cat "$HOME/.local/lib/pkgconfig/wasm3.pc"
+        return 1
+    }
 
     cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
