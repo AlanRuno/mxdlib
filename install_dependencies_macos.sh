@@ -295,6 +295,7 @@ EOL
     mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
     
     # Create pkg-config file manually first
+    mkdir -p "$install_dir/lib/pkgconfig"
     cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
 prefix=$install_dir
 exec_prefix=\${prefix}
@@ -308,6 +309,9 @@ Requires: libuv uvwasi
 Libs: -L\${libdir} -lm3
 Cflags: -I\${includedir}/wasm3
 EOL
+
+    # Ensure pkg-config can find our file
+    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
     
     # Configure with correct installation paths
     cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
@@ -315,7 +319,7 @@ EOL
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include \
+          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
           -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
           -DCMAKE_C_FLAGS="-fPIC" \
           -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
@@ -324,7 +328,11 @@ EOL
           -DCMAKE_MACOSX_RPATH=ON \
           ..
     
-    make && make install
+    make && make install || exit 1
+
+    # Create symbolic links for compatibility
+    mkdir -p "$install_dir/include/wasm3"
+    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
     
     # Try CMake installation first
     if ! make install || ! verify_pkgconfig wasm3 "1.0.0"; then
