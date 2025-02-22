@@ -7,10 +7,13 @@ typedef struct {
     char node_id[64];
     uint16_t port;
     char data_dir[256];
-    char node_name[64];    // Added for node naming
-    char node_data[1024];  // Added for custom data
+    char network_type[32];     // mainnet, testnet
+    char node_name[64];        // Node display name
+    double initial_stake;      // Initial stake amount
+    uint32_t metrics_interval; // Display refresh interval (ms)
     char bootstrap_nodes[10][256];
     int bootstrap_count;
+    char node_data[1024];      // Custom node data
 } mxd_config_t;
 
 int mxd_load_config(const char* config_file, mxd_config_t* config);
