@@ -72,6 +72,18 @@ add_library(mxd STATIC
     src/mxd_blockchain_sync.c
     src/node/metrics_display.c)
 
+# Define common libraries for Unix-like systems
+set(COMMON_LIBS
+    ${OPENSSL_LIBRARIES}
+    sodium
+    gmp
+    ${WASM3_LIBRARIES}
+    ${UVWASI_LIBRARIES}
+    ${LIBUV_LIBRARIES}
+    m
+    pthread
+    dl)
+
 # Link libraries
 if(WIN32)
     target_link_libraries(mxd PRIVATE
@@ -84,28 +96,14 @@ if(WIN32)
         ws2_32
         iphlpapi
         userenv)
+elseif(APPLE)
+    target_link_libraries(mxd PRIVATE ${COMMON_LIBS})
 else()
-    # Define common libraries
-    set(COMMON_LIBS
-        ${OPENSSL_LIBRARIES}
-        sodium
-        gmp
-        ${WASM3_LIBRARIES}
-        ${UVWASI_LIBRARIES}
-        ${LIBUV_LIBRARIES}
-        m
-        pthread
-        dl)
-
-    if(APPLE)
-        target_link_libraries(mxd PRIVATE ${COMMON_LIBS})
-    else()
-        target_link_libraries(mxd PRIVATE
-            ${COMMON_LIBS}
-            -static-libgcc
-            -static-libstdc++
-            rt)
-    endif()
+    target_link_libraries(mxd PRIVATE
+        ${COMMON_LIBS}
+        -static-libgcc
+        -static-libstdc++
+        rt)
 endif()
 
 # Include directories
