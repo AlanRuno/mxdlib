@@ -373,13 +373,21 @@ EOL
     }
 
     # Install files manually
-    cp -f ../source/wasm3.h "$install_dir/include/wasm3/" || {
-        log "Failed to install wasm3 header"
+    cp -f ../source/wasm3.h ../source/wasm3_defs.h "$install_dir/include/wasm3/" || {
+        log "Failed to install wasm3 headers"
         return 1
     }
 
     cp -f source/libm3.* "$install_dir/lib/" || {
         log "Failed to install wasm3 library"
+        return 1
+    }
+
+    # Verify files were installed correctly
+    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ] || \
+       [ ! -f "$install_dir/include/wasm3/wasm3_defs.h" ] || \
+       ! ls "$install_dir/lib/libm3"* >/dev/null 2>&1; then
+        log "Failed to verify wasm3 file installation"
         return 1
     }
 
