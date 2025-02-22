@@ -474,53 +474,50 @@ install_uvwasi() {
     fi
     
     log "Installing uvwasi..."
+    # Clean up existing directory if it exists
+    rm -rf uvwasi
     git clone https://github.com/nodejs/uvwasi
     cd uvwasi
     mkdir -p build && cd build
     
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+    # Configure with correct installation paths
+    cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-          -DCMAKE_INSTALL_NAME_DIR="${BREW_PREFIX}/lib" \
-          -DCMAKE_MACOSX_RPATH=ON \
-          ..
-    
-    make
-    
-    # Try installation with fallback paths
-    local install_dir="$HOME/.local"
-    mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
-    
-    # Configure with correct installation paths
-    cmake -DCMAKE_INSTALL_PREFIX="${BREW_PREFIX}" \
+          -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-          -DCMAKE_INSTALL_RPATH="${BREW_PREFIX}/lib" \
+          -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_MACOSX_RPATH=ON \
           ..
     
-    if ! make install; then
-        log "Homebrew installation failed, trying user local directory..."
-        cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
-              -DCMAKE_INSTALL_LIBDIR=lib \
-              -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-              -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
-              -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_MACOSX_RPATH=ON \
-              ..
-        make install
-    fi
+    # Build and install
+    make && make install || {
+        log "Failed to build and install uvwasi"
+        return 1
+    }
     
-    # Create symbolic links for compatibility
-    mkdir -p "$install_dir/include/wasm3"
-    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
-    
-    # Update pkg-config path to include the new location
-    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
-    log "Installed to $install_dir"
+    # Create pkg-config file
+    mkdir -p "$HOME/.local/lib/pkgconfig"
+    cat > "$HOME/.local/lib/pkgconfig/uvwasi.pc" << EOL
+prefix=$HOME/.local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: uvwasi
+Description: WASI system call implementation using libuv
+Version: 0.0.20
+Requires: libuv >= 1.0.0
+Libs: -L\${libdir} -luvwasi
+Cflags: -I\${includedir}/wasm3
+EOL
+
+    # Update pkg-config path
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+    log "Installed to $HOME/.local"
     
     cd ../..
     rm -rf uvwasi
@@ -528,7 +525,10 @@ install_uvwasi() {
     # Verify uvwasi installation
     if ! verify_pkgconfig uvwasi "0.0.20"; then
         log "Error: uvwasi pkg-config verification failed"
-        exit 1
+        echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+        echo "Contents of $HOME/.local/lib/pkgconfig:"
+        ls -la "$HOME/.local/lib/pkgconfig"
+        return 1
     fi
 }
 
