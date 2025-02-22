@@ -9,10 +9,20 @@ BREW_PREFIX=$(brew --prefix)
 # Set up PKG_CONFIG_PATH at the start
 export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
-# Verify PKG_CONFIG_PATH is set
+# Ensure PKG_CONFIG_PATH is set in the environment
 if [ -z "$PKG_CONFIG_PATH" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Error: PKG_CONFIG_PATH is not set"
     exit 1
+fi
+
+# Create pkg-config directory if it doesn't exist
+mkdir -p "$HOME/.local/lib/pkgconfig"
+
+# Add PKG_CONFIG_PATH to shell profile if not already there
+if ! grep -q "PKG_CONFIG_PATH.*\.local/lib/pkgconfig" "$HOME/.bashrc" 2>/dev/null; then
+    echo 'export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"' >> "$HOME/.bashrc"
+    # Also export it in the current session
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
 fi
 
 log() {
