@@ -356,12 +356,29 @@ EOL
 
     # Configure with correct installation paths
     export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    
+    # Create pkg-config file before CMake configuration
+    mkdir -p "$HOME/.local/lib/pkgconfig"
+    cat > "$HOME/.local/lib/pkgconfig/wasm3.pc" << EOL
+prefix=$HOME/.local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: wasm3
+Description: High performance WebAssembly interpreter
+Version: 1.0.0
+Requires: libuv uvwasi
+Libs: -L\${libdir} -lm3
+Cflags: -I\${includedir}/wasm3
+EOL
+
     cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include \
+          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
           -DCMAKE_MODULE_PATH="$HOME/.local/lib/cmake" \
           -DCMAKE_PREFIX_PATH="$HOME/.local" \
           -DCMAKE_C_FLAGS="-fPIC -I$HOME/.local/include" \
