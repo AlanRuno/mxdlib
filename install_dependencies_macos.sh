@@ -393,16 +393,6 @@ EOL
         ls -la "$HOME/.local/include/wasm3"
         return 1
     fi
-        return 1
-    }
-
-    # Verify files were installed correctly
-    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ] || \
-       [ ! -f "$install_dir/include/wasm3/wasm3_defs.h" ] || \
-       ! ls "$install_dir/lib/libm3"* >/dev/null 2>&1; then
-        log "Failed to verify wasm3 file installation"
-        return 1
-    fi
 
     # Create symbolic links for compatibility
     ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
