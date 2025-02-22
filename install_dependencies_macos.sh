@@ -219,9 +219,7 @@ install_wasm3() {
     
     # Create pkg-config file and directory
     mkdir -p source
-    for prefix in "${BREW_PREFIX}" "$HOME/.local"; do
-        mkdir -p "$prefix/lib/pkgconfig"
-    done
+    mkdir -p "$HOME/.local/lib/pkgconfig"
     
     echo "Creating source directory and copying pkg-config file..."
     cp ../../wasm3.pc.in source/wasm3.pc.in || {
@@ -301,7 +299,7 @@ EOL
 prefix=$install_dir
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
+includedir=\${prefix}/include/wasm3
 
 Name: wasm3
 Description: High performance WebAssembly interpreter
@@ -317,7 +315,7 @@ EOL
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
-          -DCMAKE_INSTALL_INCLUDEDIR=include \
+          -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
           -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
           -DCMAKE_C_FLAGS="-fPIC" \
           -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
