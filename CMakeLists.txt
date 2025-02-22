@@ -152,6 +152,10 @@ target_link_libraries(mxd_node PRIVATE mxd)
 install(TARGETS mxd_node
     RUNTIME DESTINATION bin)
 
+# Install default configuration file alongside the executable
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/node/default_config.json
+    DESTINATION bin)
+
 # Ensure whole-archive linking
 set_target_properties(mxd_node PROPERTIES
     LINK_FLAGS "-Wl,--whole-archive"
