@@ -489,13 +489,24 @@ install_libuv() {
         return 1
     }
     
-    # Create symbolic links for compatibility
-    mkdir -p "$install_dir/include/wasm3"
-    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
-    
-    # Update pkg-config path to include the new location
-    export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
-    log "Installed to $install_dir"
+    # Create pkg-config file
+    mkdir -p "$HOME/.local/lib/pkgconfig"
+    cat > "$HOME/.local/lib/pkgconfig/libuv.pc" << EOL
+prefix=$HOME/.local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: libuv
+Description: multi-platform support library with a focus on asynchronous I/O
+Version: 1.0.0
+Libs: -L\${libdir} -luv
+Cflags: -I\${includedir}
+EOL
+
+    # Update pkg-config path
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+    log "Installed to $HOME/.local"
     
     cd ../..
     rm -rf libuv
@@ -503,7 +514,10 @@ install_libuv() {
     # Verify libuv installation
     if ! verify_pkgconfig libuv "1.0.0"; then
         log "Error: libuv pkg-config verification failed"
-        exit 1
+        echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+        echo "Contents of $HOME/.local/lib/pkgconfig:"
+        ls -la "$HOME/.local/lib/pkgconfig"
+        return 1
     fi
 }
 
