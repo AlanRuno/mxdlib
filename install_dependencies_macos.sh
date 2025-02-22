@@ -352,17 +352,17 @@ EOL
     }
 
     # Configure with correct installation paths
-    cmake -DCMAKE_INSTALL_PREFIX="$install_dir" \
+    cmake -DCMAKE_INSTALL_PREFIX="$HOME/.local" \
           -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_INSTALL_INCLUDEDIR=include/wasm3 \
-          -DPKGCONFIG_INSTALL_DIR="$install_dir/lib/pkgconfig" \
+          -DPKGCONFIG_INSTALL_DIR="$HOME/.local/lib/pkgconfig" \
           -DCMAKE_C_FLAGS="-fPIC" \
-          -DCMAKE_INSTALL_RPATH="$install_dir/lib" \
+          -DCMAKE_INSTALL_RPATH="$HOME/.local/lib" \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
-          -DCMAKE_INSTALL_NAME_DIR="$install_dir/lib" \
+          -DCMAKE_INSTALL_NAME_DIR="$HOME/.local/lib" \
           -DCMAKE_MACOSX_RPATH=ON \
           .. || {
         log "Failed to configure wasm3"
@@ -375,26 +375,22 @@ EOL
         return 1
     }
 
-    # Build wasm3
-    make || {
-        log "Failed to build wasm3"
+    # Build and install wasm3
+    make && make install || {
+        log "Failed to build and install wasm3"
         return 1
     }
 
-    # Install files manually
-    mkdir -p "$HOME/.local/include/wasm3" "$HOME/.local/lib"
-    
-    # Copy header files from source directory
-    cp -f ../source/wasm3.h ../source/wasm3_defs.h "$HOME/.local/include/wasm3/" || {
-        log "Failed to install wasm3 headers"
-        return 1
-    }
-
-    # Copy library files from build directory
-    find . -name "libm3.*" -exec cp -f {} "$HOME/.local/lib/" \; || {
-        log "Failed to install wasm3 library"
+    # Verify installation
+    if [ ! -f "$HOME/.local/include/wasm3/wasm3.h" ] || \
+       [ ! -f "$HOME/.local/include/wasm3/wasm3_defs.h" ] || \
+       ! ls "$HOME/.local/lib/libm3"* >/dev/null 2>&1; then
+        log "Failed to verify wasm3 installation"
         echo "Current directory: $(pwd)"
-        find . -name "libm3.*"
+        echo "Files in $HOME/.local/lib:"
+        ls -la "$HOME/.local/lib"
+        echo "Files in $HOME/.local/include/wasm3:"
+        ls -la "$HOME/.local/include/wasm3"
         return 1
     }
 
