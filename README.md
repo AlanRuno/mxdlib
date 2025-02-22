@@ -67,6 +67,17 @@ The library's architecture is designed for optimal performance and security in c
 
 ## 🛠️ Quick Start
 
+### Node Configuration
+The node can be started with or without a configuration file:
+```bash
+# Start with custom config
+./mxd_node custom_config.json
+
+# Start with default config
+./mxd_node
+```
+The default configuration file (`default_config.json`) is automatically loaded from the same directory as the executable if no configuration file is specified.
+
 ### Prerequisites
 
 ⚠️ **Important**: Before proceeding with any build or test operations, you must first install all dependencies:
