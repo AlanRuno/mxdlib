@@ -292,21 +292,21 @@ EOL
     # Configure for macOS
     # Use home directory for installation
     local install_dir="$HOME/.local"
-    mkdir -p "$install_dir"/{lib,include,lib/pkgconfig}
+    mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
     
     # Create pkg-config file manually first
     cat > "$install_dir/lib/pkgconfig/wasm3.pc" << EOL
 prefix=$install_dir
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include/wasm3
+includedir=\${prefix}/include
 
 Name: wasm3
 Description: High performance WebAssembly interpreter
 Version: 1.0.0
 Requires: libuv uvwasi
 Libs: -L\${libdir} -lm3
-Cflags: -I\${includedir}
+Cflags: -I\${includedir}/wasm3
 EOL
     
     # Configure with correct installation paths
@@ -395,10 +395,8 @@ install_libuv() {
     fi
     
     # Create symbolic links for compatibility
-    for prefix in "${BREW_PREFIX}" "$HOME/.local"; do
-        mkdir -p "$prefix/include/wasm3"
-        ln -sf "$prefix/include/wasm3.h" "$prefix/include/wasm3/wasm3.h" 2>/dev/null || true
-    done
+    mkdir -p "$install_dir/include/wasm3"
+    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
     
     # Update pkg-config path to include the new location
     export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -465,10 +463,8 @@ install_uvwasi() {
     fi
     
     # Create symbolic links for compatibility
-    for prefix in "${BREW_PREFIX}" "$HOME/.local"; do
-        mkdir -p "$prefix/include/wasm3"
-        ln -sf "$prefix/include/wasm3.h" "$prefix/include/wasm3/wasm3.h" 2>/dev/null || true
-    done
+    mkdir -p "$install_dir/include/wasm3"
+    ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
     
     # Update pkg-config path to include the new location
     export PKG_CONFIG_PATH="$install_dir/lib/pkgconfig:$PKG_CONFIG_PATH"
