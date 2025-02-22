@@ -140,7 +140,19 @@ target_sources(mxd PRIVATE
     src/mxd_dht_network.c
 )
 
-# Add config source
+# Add library sources
 target_sources(mxd PRIVATE
     src/mxd_config.c
-    src/mxd_blockchain_sync.c)
+    src/mxd_blockchain_sync.c
+    src/node/metrics_display.c)
+
+# Add main node executable
+add_executable(mxd_node src/node/main.c)
+target_link_libraries(mxd_node PRIVATE mxd)
+install(TARGETS mxd_node
+    RUNTIME DESTINATION bin)
+
+# Ensure whole-archive linking
+set_target_properties(mxd_node PROPERTIES
+    LINK_FLAGS "-Wl,--whole-archive"
+    LINK_WHAT_YOU_USE TRUE)

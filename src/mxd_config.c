@@ -32,7 +32,10 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     
     // Initialize config with defaults
     memset(config, 0, sizeof(mxd_config_t));
-    config->port = 8000;  // Default port
+    config->port = 8000;           // Default port
+    config->initial_stake = 0.0;   // No default stake - must be set in config
+    config->metrics_interval = 1000;// Default refresh interval (1s)
+    strncpy(config->network_type, "testnet", sizeof(config->network_type) - 1);
     strncpy(config->node_name, "unnamed_node", sizeof(config->node_name) - 1);
     strncpy(config->node_data, "", sizeof(config->node_data) - 1);
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
@@ -62,6 +65,27 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
                 strncpy(config->node_name, trimmed_value, sizeof(config->node_name) - 1);
             } else if (strcmp(key, "node_data") == 0) {
                 strncpy(config->node_data, trimmed_value, sizeof(config->node_data) - 1);
+            } else if (strcmp(key, "initial_stake") == 0) {
+                config->initial_stake = atof(trimmed_value);
+            } else if (strcmp(key, "network_type") == 0) {
+                strncpy(config->network_type, trimmed_value, sizeof(config->network_type) - 1);
+            } else if (strcmp(key, "metrics_interval") == 0) {
+                config->metrics_interval = (uint32_t)atoi(trimmed_value);
+            } else if (strcmp(key, "bootstrap_nodes") == 0) {
+                // Parse bootstrap nodes array
+                char* node = strtok(trimmed_value, "[], ");
+                config->bootstrap_count = 0;
+                while (node != NULL && config->bootstrap_count < 10) {
+                    // Remove quotes if present
+                    if (node[0] == '"') {
+                        node++;
+                        node[strlen(node)-1] = '\0';
+                    }
+                    strncpy(config->bootstrap_nodes[config->bootstrap_count], 
+                           node, sizeof(config->bootstrap_nodes[0]) - 1);
+                    config->bootstrap_count++;
+                    node = strtok(NULL, "[], ");
+                }
             }
         }
     }
