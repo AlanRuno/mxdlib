@@ -6,6 +6,15 @@ FORCE_BUILD=false
 ARCH=$(uname -m)
 BREW_PREFIX=$(brew --prefix)
 
+# Set up PKG_CONFIG_PATH at the start
+export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+
+# Verify PKG_CONFIG_PATH is set
+if [ -z "$PKG_CONFIG_PATH" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Error: PKG_CONFIG_PATH is not set"
+    exit 1
+fi
+
 log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
 }
@@ -129,8 +138,10 @@ setup_pkgconfig_paths() {
     # Add system paths for searching only
     verified_paths+=("${system_paths[@]}")
     
-    export PKG_CONFIG_PATH=$(IFS=:; echo "${verified_paths[*]}"):${PKG_CONFIG_PATH:-}
-    log "PKG_CONFIG_PATH set to: $PKG_CONFIG_PATH"
+    # Update PKG_CONFIG_PATH with additional paths
+    local new_paths=$(IFS=:; echo "${verified_paths[*]}")
+    export PKG_CONFIG_PATH="$new_paths:$PKG_CONFIG_PATH"
+    log "PKG_CONFIG_PATH updated to: $PKG_CONFIG_PATH"
     return 0
 }
 
