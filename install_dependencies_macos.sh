@@ -221,23 +221,23 @@ install_wasm3() {
     mkdir -p source
     mkdir -p "$HOME/.local/lib/pkgconfig"
     
-    echo "Creating source directory and copying pkg-config file..."
-    cp ../../wasm3.pc.in source/wasm3.pc.in || {
-        log "Failed to copy wasm3.pc.in, creating it manually..."
-        cat > source/wasm3.pc.in << 'EOL'
-prefix=@CMAKE_INSTALL_PREFIX@
-exec_prefix=${prefix}
-libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
-includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+    # Create pkg-config file manually
+    cat > "$HOME/.local/lib/pkgconfig/wasm3.pc" << EOL
+prefix=$HOME/.local
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
 
 Name: wasm3
 Description: High performance WebAssembly interpreter
-Version: @PROJECT_VERSION@
+Version: 1.0.0
 Requires: libuv uvwasi
-Libs: -L${libdir} -lm3
-Cflags: -I${includedir}
+Libs: -L\${libdir} -lm3
+Cflags: -I\${includedir}/wasm3
 EOL
-    }
+
+    # Update pkg-config path
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
     
     # Create main CMakeLists.txt
     cat > CMakeLists.txt << 'EOL'
