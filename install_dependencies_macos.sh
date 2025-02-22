@@ -375,19 +375,26 @@ EOL
         return 1
     }
 
+    # Build wasm3
+    make || {
+        log "Failed to build wasm3"
+        return 1
+    }
+
     # Install files manually
     mkdir -p "$HOME/.local/include/wasm3" "$HOME/.local/lib"
     
-    # Copy header files
+    # Copy header files from source directory
     cp -f ../source/wasm3.h ../source/wasm3_defs.h "$HOME/.local/include/wasm3/" || {
         log "Failed to install wasm3 headers"
         return 1
     }
 
     # Copy library files from build directory
-    cp -f source/libm3.* "$HOME/.local/lib/" || {
+    find . -name "libm3.*" -exec cp -f {} "$HOME/.local/lib/" \; || {
         log "Failed to install wasm3 library"
-        ls -la source/
+        echo "Current directory: $(pwd)"
+        find . -name "libm3.*"
         return 1
     }
 
