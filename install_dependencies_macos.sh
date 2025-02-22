@@ -392,6 +392,8 @@ EOL
         echo "Files in $HOME/.local/include/wasm3:"
         ls -la "$HOME/.local/include/wasm3"
         return 1
+    fi
+        return 1
     }
 
     # Verify files were installed correctly
