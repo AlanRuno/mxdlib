@@ -222,22 +222,32 @@ install_wasm3() {
     mkdir -p "$HOME/.local/lib/pkgconfig"
     
     # Create pkg-config file manually
-    cat > "$HOME/.local/lib/pkgconfig/wasm3.pc" << EOL
+    local pkgconfig_dir="$HOME/.local/lib/pkgconfig"
+    mkdir -p "$pkgconfig_dir"
+    
+    # Create pkg-config file
+    cat > "$pkgconfig_dir/wasm3.pc" << EOL
 prefix=$HOME/.local
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
+includedir=\${prefix}/include/wasm3
 
 Name: wasm3
 Description: High performance WebAssembly interpreter
 Version: 1.0.0
 Requires: libuv uvwasi
 Libs: -L\${libdir} -lm3
-Cflags: -I\${includedir}/wasm3
+Cflags: -I\${includedir}
 EOL
 
     # Update pkg-config path
-    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"
+    export PKG_CONFIG_PATH="$pkgconfig_dir:$PKG_CONFIG_PATH"
+    
+    # Verify pkg-config file is found
+    if ! pkg-config --exists wasm3; then
+        log "Failed to find wasm3.pc in pkg-config path"
+        return 1
+    fi
     
     # Create main CMakeLists.txt
     cat > CMakeLists.txt << 'EOL'
@@ -330,9 +340,17 @@ EOL
     
     make && make install || exit 1
 
+    # Create necessary directories
+    mkdir -p "$install_dir"/{lib,include/wasm3,lib/pkgconfig}
+    
     # Create symbolic links for compatibility
-    mkdir -p "$install_dir/include/wasm3"
     ln -sf "$install_dir/include/wasm3/wasm3.h" "$install_dir/include/wasm3.h" 2>/dev/null || true
+    
+    # Verify installation
+    if [ ! -f "$install_dir/include/wasm3/wasm3.h" ] || [ ! -f "$install_dir/lib/libm3.dylib" ]; then
+        log "Failed to install wasm3 files"
+        return 1
+    fi
     
     # Try CMake installation first
     if ! make install || ! verify_pkgconfig wasm3 "1.0.0"; then
