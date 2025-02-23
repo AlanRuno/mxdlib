@@ -23,22 +23,67 @@ static char* strip_quotes(char* str) {
     return str;
 }
 
+static int mxd_validate_config(mxd_config_t* config) {
+    if (!config) return -1;
+    
+    // Validate port range
+    if (config->port < 1024 || config->port > 65535) return -1;
+    
+    // Validate stake amount
+    if (config->initial_stake < 0.0) return -1;
+    
+    // Validate intervals
+    if (config->metrics_interval < 100) return -1;
+    
+    // Validate network type
+    if (strcmp(config->network_type, "mainnet") != 0 && 
+        strcmp(config->network_type, "testnet") != 0) return -1;
+    
+    // Validate bootstrap nodes
+    if (config->bootstrap_count > 10) return -1;
+    
+    return 0;
+}
+
+static void mxd_set_default_config(mxd_config_t* config) {
+    memset(config, 0, sizeof(mxd_config_t));
+    
+    // Node identification
+    snprintf(config->node_id, sizeof(config->node_id), "node_%lu", (unsigned long)time(NULL));
+    strncpy(config->node_name, "MXD Default Node", sizeof(config->node_name) - 1);
+    strncpy(config->network_type, "mainnet", sizeof(config->network_type) - 1);
+    
+    // Basic settings
+    config->port = 8000;
+    config->initial_stake = 100.0;
+    config->metrics_interval = 1000;
+    strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
+    
+    // Default bootstrap nodes
+    config->bootstrap_count = 2;
+    strncpy(config->bootstrap_nodes[0], "127.0.0.1:8001", sizeof(config->bootstrap_nodes[0]) - 1);
+    strncpy(config->bootstrap_nodes[1], "127.0.0.1:8002", sizeof(config->bootstrap_nodes[1]) - 1);
+    
+    // Node data (empty by default)
+    strncpy(config->node_data, "", sizeof(config->node_data) - 1);
+}
+
 int mxd_load_config(const char* config_file, mxd_config_t* config) {
-    FILE* fp = fopen(config_file, "r");
-    if (!fp) {
-        printf("Failed to open config file: %s\n", config_file);
-        return 1;
+    // Set default configuration first
+    mxd_set_default_config(config);
+    
+    // If no config file specified, validate and use defaults
+    if (config_file == NULL) {
+        printf("Using default configuration\n");
+        return mxd_validate_config(config);
     }
     
-    // Initialize config with defaults
-    memset(config, 0, sizeof(mxd_config_t));
-    config->port = 8000;           // Default port
-    config->initial_stake = 0.0;   // No default stake - must be set in config
-    config->metrics_interval = 1000;// Default refresh interval (1s)
-    strncpy(config->network_type, "testnet", sizeof(config->network_type) - 1);
-    strncpy(config->node_name, "unnamed_node", sizeof(config->node_name) - 1);
-    strncpy(config->node_data, "", sizeof(config->node_data) - 1);
-    strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
+    // Try to open config file
+    FILE* fp = fopen(config_file, "r");
+    if (!fp) {
+        printf("Failed to open config file: %s, using default configuration\n", config_file);
+        return mxd_validate_config(config);
+    }
     
     char line[1024];
     char key[256], value[768];
@@ -91,6 +136,13 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     }
     
     fclose(fp);
+    
+    // Validate final configuration
+    if (mxd_validate_config(config) != 0) {
+        printf("Invalid configuration values, using defaults\n");
+        mxd_set_default_config(config);
+        return mxd_validate_config(config);
+    }
     
     printf("Loaded config: node_id=%s, port=%d, data_dir=%s, node_name=%s\n",
            config->node_id, config->port, config->data_dir, config->node_name);
