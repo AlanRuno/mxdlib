@@ -16,6 +16,9 @@ typedef struct {
     char node_data[1024];      // Custom node data
 } mxd_config_t;
 
+// Load configuration from file or use built-in defaults.
+// If config_file is NULL or file cannot be opened, default configuration will be used.
+// Returns 0 on success, -1 on validation failure.
 int mxd_load_config(const char* config_file, mxd_config_t* config);
 
 #endif // MXD_CONFIG_H
