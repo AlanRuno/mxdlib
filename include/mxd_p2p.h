@@ -96,6 +96,13 @@ int mxd_start_peer_discovery(void);
 // Stop DHT-based peer discovery
 int mxd_stop_peer_discovery(void);
 
+/**
+ * Reset rate limiting counters.
+ * 
+ * @return 0 on success, -1 if P2P is not initialized
+ */
+int mxd_reset_rate_limit(void);
+
 // Enable NAT traversal
 int mxd_enable_nat_traversal(void);
 
