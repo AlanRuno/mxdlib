@@ -1,14 +1,67 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include "mxd_config.h"
+#include "mxd_crypto.h"
 #include "mxd_dht.h"
 #include "mxd_p2p.h"
+
+#define MXD_NETWORK_MAGIC 0x4D584431 // "MXD1" in ASCII
 
 static int p2p_initialized = 0;
 static uint16_t p2p_port = 0;
 static uint8_t node_public_key[32] = {0};
 static mxd_config_t node_config;
+static uint64_t last_message_time = 0;
+static size_t messages_this_second = 0;
+static uint32_t consecutive_errors = 0;
+
+// Message validation function
+static int validate_message(const mxd_message_header_t *header, const void *payload) {
+    if (!header || !payload) {
+        return -1;
+    }
+
+    // Check magic number
+    if (header->magic != MXD_NETWORK_MAGIC) {
+        return -1;
+    }
+
+    // Check message size
+    if (header->length > MXD_MAX_MESSAGE_SIZE) {
+        return -1;
+    }
+    
+    // Validate message type
+    if (header->type > MXD_MSG_TRANSACTIONS) {
+        return -1;
+    }
+
+    // Compute and verify SHA-512 checksum
+    uint8_t computed_checksum[64];
+    if (mxd_sha512(payload, header->length, computed_checksum) != 0) {
+        return -1;
+    }
+    
+    return memcmp(header->checksum, computed_checksum, 64) == 0 ? 0 : -1;
+}
+
+// Rate limiting function
+static int check_rate_limit(void) {
+    uint64_t current_time = time(NULL);
+    
+    if (current_time != last_message_time) {
+        last_message_time = current_time;
+        messages_this_second = 0;
+    }
+    
+    if (++messages_this_second > 100) {
+        return -1; // Rate limit exceeded
+    }
+    
+    return 0;
+}
 
 int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     if (p2p_initialized) {
