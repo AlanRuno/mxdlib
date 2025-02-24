@@ -16,6 +16,49 @@ static mxd_config_t node_config;
 static uint64_t last_message_time = 0;
 static size_t messages_this_second = 0;
 static uint32_t consecutive_errors = 0;
+static mxd_message_handler_t message_handler = NULL;
+
+// Set message handler callback
+int mxd_set_message_handler(mxd_message_handler_t handler) {
+    if (!p2p_initialized) {
+        return -1;
+    }
+    message_handler = handler;
+    return 0;
+}
+
+// Handle incoming message
+static int handle_incoming_message(const char *address, uint16_t port, 
+                                 const mxd_message_header_t *header, 
+                                 const void *payload) {
+    if (!address || !header || !payload) {
+        return -1;
+    }
+
+    // Check rate limit
+    if (check_rate_limit() != 0) {
+        return -1;
+    }
+
+    // Validate message
+    if (validate_message(header, payload) != 0) {
+        consecutive_errors++;
+        if (consecutive_errors >= 10) {
+            return -1;
+        }
+        return -1;
+    }
+
+    // Reset error count on successful validation
+    consecutive_errors = 0;
+
+    // Call message handler if registered
+    if (message_handler) {
+        message_handler(address, port, header->type, payload, header->length);
+    }
+
+    return 0;
+}
 
 // Message validation function
 static int validate_message(const mxd_message_header_t *header, const void *payload) {
