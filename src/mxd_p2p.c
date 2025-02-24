@@ -109,10 +109,58 @@ int mxd_add_peer(const char* address, uint16_t port) {
 }
 
 int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t payload_length) {
-    if (!p2p_initialized) {
-        return 1;
+    if (!p2p_initialized || !payload || payload_length > MXD_MAX_MESSAGE_SIZE) {
+        return -1;
     }
-    printf("Broadcasting message type %d\n", type);
+
+    // Check rate limit
+    if (check_rate_limit() != 0) {
+        return -1;
+    }
+
+    // Prepare message header
+    mxd_message_header_t header = {
+        .magic = MXD_NETWORK_MAGIC,
+        .type = type,
+        .length = payload_length
+    };
+    
+    // Calculate checksum
+    if (mxd_sha512(payload, payload_length, header.checksum) != 0) {
+        return -1;
+    }
+
+    // Get list of peers
+    mxd_peer_t peers[MXD_MAX_PEERS];
+    size_t peer_count = MXD_MAX_PEERS;
+    if (mxd_get_peers(peers, &peer_count) != 0) {
+        return -1;
+    }
+
+    // Broadcast to all peers
+    uint32_t errors = 0;
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peers[i].state != MXD_PEER_CONNECTED) {
+            continue;
+        }
+
+        // Check peer latency
+        if (peers[i].latency > 3000) { // 3 second maximum latency
+            continue;
+        }
+
+        if (mxd_send_message(peers[i].address, peers[i].port, type, payload, payload_length) != 0) {
+            errors++;
+            if (errors >= 10) { // Maximum consecutive errors
+                consecutive_errors = errors;
+                return -1;
+            }
+        } else {
+            errors = 0; // Reset error count on successful send
+        }
+    }
+
+    consecutive_errors = errors;
     return 0;
 }
 
