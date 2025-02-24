@@ -58,23 +58,65 @@ int test_p2p_networking(void) {
     printf("Peer management test completed\n");
     fflush(stdout);
 
-    // Test message handling
-    retry_count = 0;
-    while (mxd_add_peer("127.0.0.1", 8001) != 0 && retry_count < 5) {
-        retry_count++;
-        sleep(1);
-    }
-    printf("Peer connection established after %d retries\n", retry_count);
-
+    // Test message validation and rate limiting
+    TEST_START("Message Validation");
+    
+    // Test message size limits
+    char large_payload[MXD_MAX_MESSAGE_SIZE + 1];
+    memset(large_payload, 'A', sizeof(large_payload));
+    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_PING, large_payload, sizeof(large_payload)) != 0, "Oversized message rejected");
+    
+    // Test valid message
     const char* test_msg = "test_message";
     size_t msg_len = strlen(test_msg);
-    
-    TEST_START("Message Broadcasting");
     TEST_VALUE("Message", "%s", test_msg);
     TEST_VALUE("Message length", "%zu", msg_len);
-    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_PEERS, test_msg, msg_len) == 0, "Message broadcast successful");
-    TEST_END("Message Broadcasting");
-    printf("Message handling test completed\n");
+    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_PEERS, test_msg, msg_len) == 0, "Valid message accepted");
+    
+    // Test all message types
+    for (mxd_message_type_t type = MXD_MSG_HANDSHAKE; type <= MXD_MSG_TRANSACTIONS; type++) {
+        TEST_ASSERT(mxd_broadcast_message(type, test_msg, msg_len) == 0, "Message type valid");
+    }
+    
+    // Test invalid message type
+    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_TRANSACTIONS + 1, test_msg, msg_len) != 0, "Invalid message type rejected");
+    
+    // Test rate limiting
+    clock_t start = clock();
+    for (int i = 0; i < 10; i++) {
+        TEST_ASSERT(mxd_broadcast_message(MXD_MSG_TRANSACTIONS, test_msg, msg_len) == 0, "Transaction validation within rate limit");
+    }
+    clock_t end = clock();
+    double time_taken = ((double)(end - start)) / CLOCKS_PER_SEC;
+    TEST_ASSERT(time_taken <= 1.0, "Transaction rate meets 10 TPS requirement");
+    
+    // Test general message rate limit (100/s)
+    for (int i = 0; i < 100; i++) {
+        TEST_ASSERT(mxd_broadcast_message(MXD_MSG_PING, test_msg, msg_len) == 0, "Message within rate limit");
+    }
+    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_PING, test_msg, msg_len) != 0, "Rate limit enforced");
+    
+    TEST_END("Message Validation");
+    printf("Message validation test completed\n");
+    fflush(stdout);
+    
+    // Test error resilience
+    TEST_START("Error Resilience");
+    int errors = 0;
+    for (int i = 0; i < 15; i++) {
+        if (mxd_broadcast_message(MXD_MSG_PING, test_msg, msg_len) != 0) {
+            errors++;
+        }
+    }
+    TEST_ASSERT(errors <= 10, "Error limit enforced");
+    
+    // Test latency
+    uint64_t start_time = time(NULL);
+    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_PING, test_msg, msg_len) == 0, "Message sent within latency limit");
+    uint64_t end_time = time(NULL);
+    TEST_ASSERT(end_time - start_time <= 3, "Latency within 3s limit");
+    TEST_END("Error Resilience");
+    printf("Error resilience test completed\n");
     fflush(stdout);
 
     // Start peer discovery
