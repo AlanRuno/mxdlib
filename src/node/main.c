@@ -121,6 +121,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     
+    // Override port if specified on command line
+    if (override_port > 0) {
+        current_config.port = override_port;
+        printf("Port overridden from command line: %d\n", override_port);
+    }
+    
     // Initialize metrics
     if (mxd_init_metrics(&node_metrics) != 0) {
         fprintf(stderr, "Failed to initialize metrics\n");
