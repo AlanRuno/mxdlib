@@ -75,14 +75,27 @@ void* metrics_collector(void* arg) {
 int main(int argc, char** argv) {
     char default_config_path[PATH_MAX];
     const char* config_path = NULL;
+    uint16_t override_port = 0;
     
     // Handle command line arguments
-    if (argc > 2) {
-        printf("Usage: %s [config_file]\n", argv[0]);
-        return 1;
-    } else if (argc == 2) {
-        config_path = argv[1];
-    } else {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            config_path = argv[++i];
+        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            int port = atoi(argv[++i]);
+            if (port < 1024 || port > 65535) {
+                fprintf(stderr, "Error: Port must be between 1024 and 65535\n");
+                return 1;
+            }
+            override_port = (uint16_t)port;
+        } else {
+            printf("Usage: %s [--config <file>] [--port <number>]\n", argv[0]);
+            return 1;
+        }
+    }
+    
+    // Set default config path if not specified
+    if (!config_path) {
         // Get the directory of the executable
         char* last_slash = strrchr(argv[0], '/');
         if (last_slash != NULL) {
