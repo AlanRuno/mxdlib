@@ -9,6 +9,7 @@
 #include "../include/mxd_config.h"
 #include "../include/mxd_metrics.h"
 #include "../include/mxd_dht.h"
+#include "../include/mxd_p2p.h"
 #include "../include/blockchain/mxd_rsc.h"
 #include "metrics_display.h"
 
