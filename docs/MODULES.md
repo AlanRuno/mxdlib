@@ -158,6 +158,13 @@ Handles peer-to-peer communication with robust networking features:
   * NAT traversal (planned)
   * Connection encryption
 
+## 🔧 Node Configuration
+The node supports the following command line arguments:
+- `--config <path>`: Path to configuration file (optional)
+- `--port <number>`: Port number (1024-65535) to override config file (optional)
+
+Default configuration is loaded from default_config.json in the executable directory.
+
 ## 📜 Smart Contracts (`mxd_smart_contracts`)
 WebAssembly-based smart contract system providing secure, sandboxed execution:
 - Contract deployment with code size validation
