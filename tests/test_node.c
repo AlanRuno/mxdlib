@@ -64,6 +64,59 @@ int test_node_arguments(const char* node_path) {
     }
     TEST_END("Invalid Port (High)");
 
+    // Test DHT node discovery with overridden port
+    TEST_START("DHT Node Discovery");
+    snprintf(cmd, sizeof(cmd), "%s --port 8888", node_path);
+    fp = popen(cmd, "r");
+    if (fp) {
+        char buf[1024];
+        int found_dht = 0;
+        int found_peers = 0;
+        while (fgets(buf, sizeof(buf), fp)) {
+            if (strstr(buf, "DHT service started on port 8888")) {
+                found_dht = 1;
+            }
+            if (strstr(buf, "Regular node initialized with 1 connected peers")) {
+                found_peers = 1;
+            }
+        }
+        pclose(fp);
+        TEST_ASSERT(found_dht, "DHT service started on correct port");
+        TEST_ASSERT(found_peers, "Node connected to peers");
+    }
+    TEST_END("DHT Node Discovery");
+
+    // Test bootstrap node connections
+    TEST_START("Bootstrap Node Connection");
+    snprintf(cmd, sizeof(cmd), "%s --port 8888", node_path);
+    fp = popen(cmd, "r");
+    if (fp) {
+        char buf[1024];
+        int found_bootstrap = 0;
+        uint64_t latency = 0;
+        int error_count = 0;
+        while (fgets(buf, sizeof(buf), fp)) {
+            if (strstr(buf, "Connecting to bootstrap node")) {
+                found_bootstrap = 1;
+            }
+            if (strstr(buf, "Debug: Metrics - TPS=")) {
+                // Extract latency from metrics
+                char* latency_str = strstr(buf, "Latency=");
+                if (latency_str) {
+                    sscanf(latency_str + 8, "%lu", &latency);
+                }
+            }
+            if (strstr(buf, "Warning: High consecutive error count:")) {
+                error_count++;
+            }
+        }
+        pclose(fp);
+        TEST_ASSERT(found_bootstrap, "Connected to bootstrap nodes");
+        TEST_ASSERT(latency <= 3000, "Latency within 3s limit");
+        TEST_ASSERT(error_count <= 10, "Error count within limit");
+    }
+    TEST_END("Bootstrap Node Connection");
+
     printf("Node argument tests completed\n");
     fflush(stdout);
     return 0;
