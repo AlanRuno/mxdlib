@@ -19,6 +19,7 @@ typedef struct {
     double performance_score;      // Combined performance metric
     uint64_t last_update;         // NTP synchronized timestamp
     double tip_share;             // Node's share of voluntary tips
+    size_t peer_count;           // Number of connected peers
 } mxd_node_metrics_t;
 
 // Node stake information
