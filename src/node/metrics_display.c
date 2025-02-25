@@ -51,6 +51,7 @@ void display_node_metrics(const mxd_node_metrics_t* metrics, const mxd_node_stak
     printf("\n=== Network Position ===\n");
     printf("Rank: %d\n", stake->rank);
     printf("Active: %s\n", is_active ? "Yes" : "No");
+    printf("Connected Peers: %zu\n", metrics->peer_count);
     printf("Earnings (Tips): %.6f MXD\n", metrics->tip_share);
     
     // Performance indicators

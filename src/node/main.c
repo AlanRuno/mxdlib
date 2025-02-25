@@ -36,6 +36,13 @@ void* metrics_collector(void* arg) {
         uint64_t current_time = time(NULL);
         uint64_t response_time = mxd_get_network_latency();
         
+        // Update peer count
+        size_t peer_count = 0;
+        mxd_peer_t peers[MXD_MAX_PEERS];
+        if (mxd_get_peers(peers, &peer_count) == 0) {
+            node_metrics.peer_count = peer_count;
+        }
+        
         if (response_time < 3000) {  // Performance requirement: latency < 3s
             mxd_update_metrics(&node_metrics, response_time);
             consecutive_errors = 0;
@@ -131,6 +138,13 @@ int main(int argc, char** argv) {
     if (mxd_init_metrics(&node_metrics) != 0) {
         fprintf(stderr, "Failed to initialize metrics\n");
         return 1;
+    }
+    
+    // Display initial peer count
+    size_t peer_count = 0;
+    mxd_peer_t peers[MXD_MAX_PEERS];
+    if (mxd_get_peers(peers, &peer_count) == 0) {
+        printf("Connected peers: %zu\n", peer_count);
     }
     
     // Initialize DHT node

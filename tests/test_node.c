@@ -76,7 +76,7 @@ int test_node_arguments(const char* node_path) {
             if (strstr(buf, "DHT service started on port 8888")) {
                 found_dht = 1;
             }
-            if (strstr(buf, "Regular node initialized with 1 connected peers")) {
+            if (strstr(buf, "Connected peers: 1")) {
                 found_peers = 1;
             }
         }
@@ -116,6 +116,24 @@ int test_node_arguments(const char* node_path) {
         TEST_ASSERT(error_count <= 10, "Error count within limit");
     }
     TEST_END("Bootstrap Node Connection");
+
+    // Test peer count display
+    TEST_START("Peer Count Display");
+    snprintf(cmd, sizeof(cmd), "%s --port 8888", node_path);
+    fp = popen(cmd, "r");
+    if (fp) {
+        char buf[1024];
+        int found_peer_count = 0;
+        while (fgets(buf, sizeof(buf), fp)) {
+            if (strstr(buf, "Connected Peers:")) {
+                found_peer_count = 1;
+                break;
+            }
+        }
+        pclose(fp);
+        TEST_ASSERT(found_peer_count, "Peer count display found");
+    }
+    TEST_END("Peer Count Display");
 
     printf("Node argument tests completed\n");
     fflush(stdout);
