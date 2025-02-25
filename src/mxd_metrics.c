@@ -20,6 +20,7 @@ int mxd_init_metrics(mxd_node_metrics_t *metrics) {
     metrics->reliability_score = 0.0;
     metrics->performance_score = 0.0;
     metrics->last_update = 0;
+    metrics->peer_count = 0;  // Initialize peer count
 
     return 0;
 }
@@ -162,12 +163,14 @@ int mxd_format_metrics(const mxd_node_metrics_t *metrics, char *buffer, size_t s
     return snprintf(buffer, size,
         "Response Time (avg/min/max): %lu/%lu/%lu ms, "
         "Messages (success/total): %u/%u, "
+        "Peers: %zu, "
         "Reliability: %.2f, Performance: %.2f",
         metrics->avg_response_time,
         metrics->min_response_time,
         metrics->max_response_time,
         metrics->message_success,
         metrics->message_total,
+        metrics->peer_count,
         metrics->reliability_score,
         metrics->performance_score
     );
