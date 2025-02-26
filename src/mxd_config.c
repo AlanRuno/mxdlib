@@ -2,7 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
+#include <cjson/cJSON.h>
 #include "mxd_config.h"
+#include "utils/mxd_http.h"
 
 static char* trim(char* str) {
     char* end;
@@ -146,5 +149,79 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     
     printf("Loaded config: node_id=%s, port=%d, data_dir=%s, node_name=%s\n",
            config->node_id, config->port, config->data_dir, config->node_name);
+           
+    // Fetch bootstrap nodes from network
+    if (mxd_fetch_bootstrap_nodes(config) != 0) {
+        printf("Failed to fetch bootstrap nodes, using default configuration\n");
+        mxd_set_default_config(config);
+        return mxd_validate_config(config);
+    }
+    
+    return 0;
+}
+
+int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
+    if (!config) return -1;
+    
+    printf("Fetching bootstrap nodes from https://mxd.network/bootstrap\n");
+
+    mxd_http_response_t* response = mxd_http_get("https://mxd.network/bootstrap");
+    if (!response || response->status_code != 200) {
+        // Fall back to hardcoded nodes
+        printf("Failed to fetch bootstrap nodes, using fallback nodes\n");
+        mxd_http_free_response(response);
+        return 0;
+    }
+    
+    cJSON* root = cJSON_Parse(response->data);
+    if (!root) {
+        printf("Failed to parse bootstrap nodes JSON (error: %s), using fallback nodes\n",
+           cJSON_GetErrorPtr() ? cJSON_GetErrorPtr() : "unknown");
+        mxd_http_free_response(response);
+        return 0;
+    }
+    
+    cJSON* nodes = cJSON_GetObjectItem(root, "bootstrap_nodes");
+    if (!nodes || !cJSON_IsArray(nodes)) {
+        printf("Invalid bootstrap nodes format, using fallback nodes\n");
+        cJSON_Delete(root);
+        mxd_http_free_response(response);
+        return 0;
+    }
+    
+    // Start with fresh node list
+    config->bootstrap_count = 0;
+    
+    cJSON* node;
+    cJSON_ArrayForEach(node, nodes) {
+        if (!cJSON_IsObject(node)) continue;
+        
+        cJSON* hostname = cJSON_GetObjectItem(node, "hostname");
+        cJSON* port = cJSON_GetObjectItem(node, "port");
+        
+        if (hostname && cJSON_IsString(hostname) && 
+            port && cJSON_IsNumber(port)) {
+            
+            snprintf(config->bootstrap_nodes[config->bootstrap_count],
+                    sizeof(config->bootstrap_nodes[0]),
+                    "%s:%d",
+                    hostname->valuestring,
+                    port->valueint);
+            
+            config->bootstrap_count++;
+            if (config->bootstrap_count >= 10) break;  // Max nodes limit
+        }
+    }
+    
+    // If no valid nodes found, keep fallback nodes
+    if (config->bootstrap_count == 0) {
+        printf("No valid bootstrap nodes found, using fallback nodes\n");
+        mxd_set_default_config(config);
+    } else {
+        printf("Loaded %d bootstrap nodes from network\n", config->bootstrap_count);
+    }
+    
+    cJSON_Delete(root);
+    mxd_http_free_response(response);
     return 0;
 }

@@ -21,4 +21,8 @@ typedef struct {
 // Returns 0 on success, -1 on validation failure.
 int mxd_load_config(const char* config_file, mxd_config_t* config);
 
+// Fetch bootstrap nodes from network
+// Returns 0 on success (including fallback), -1 on critical failure
+int mxd_fetch_bootstrap_nodes(mxd_config_t* config);
+
 #endif // MXD_CONFIG_H

@@ -31,6 +31,8 @@ find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 # Use pkg-config to find libraries
+pkg_check_modules(CJSON REQUIRED libcjson)
+pkg_check_modules(CURL REQUIRED libcurl)
 pkg_check_modules(LIBUV REQUIRED libuv)
 pkg_check_modules(UVWASI REQUIRED uvwasi)
 pkg_check_modules(WASM3 REQUIRED wasm3)
@@ -39,6 +41,8 @@ include_directories(
     ${LIBUV_INCLUDE_DIRS}
     ${UVWASI_INCLUDE_DIRS}
     ${WASM3_INCLUDE_DIRS}
+    ${CJSON_INCLUDE_DIRS}
+    ${CURL_INCLUDE_DIRS}
 )
 
 # Find other required libraries
@@ -108,6 +112,8 @@ else()
         ${LIBUV_LIBRARIES}
         ${UVWASI_LIBRARIES}
         ${WASM3_LIBRARIES}
+        ${CJSON_LIBRARIES}
+        ${CURL_LIBRARIES}
         -Wl,--no-whole-archive
         m
         pthread
@@ -144,7 +150,8 @@ target_sources(mxd PRIVATE
 target_sources(mxd PRIVATE
     src/mxd_config.c
     src/mxd_blockchain_sync.c
-    src/node/metrics_display.c)
+    src/node/metrics_display.c
+    src/utils/mxd_http.c)
 
 # Add main node executable
 add_executable(mxd_node src/node/main.c)
