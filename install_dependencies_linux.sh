@@ -12,9 +12,29 @@ check_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+ensure_ldconfig_available() {
+    if ! check_command ldconfig; then
+        log "ldconfig not found, installing libc-bin package..."
+        sudo apt-get update
+        sudo apt-get install -y libc-bin
+        if ! check_command ldconfig; then
+            log "Error: Failed to install ldconfig. Using alternative methods to check libraries."
+            return 1
+        fi
+    fi
+    return 0
+}
+
 check_library_installed() {
     local lib=$1
-    ldconfig -p | grep "$lib" >/dev/null 2>&1
+    if check_command ldconfig; then
+        ldconfig -p | grep "$lib" >/dev/null 2>&1
+        return $?
+    else
+        # Alternative method: check if the library exists in common library paths
+        find /usr/lib /usr/local/lib /lib /lib64 -name "$lib*" 2>/dev/null | grep -q "$lib"
+        return $?
+    fi
 }
 
 verify_pkgconfig() {
@@ -41,10 +61,16 @@ check_wasm3_installed() {
         [ -f "/usr/local/include/wasm3.h" ] && \
         [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
     else
-        # Use ldconfig to check for library
-        (ldconfig -p | grep -E "libm3\.(so|a)" >/dev/null 2>&1) && \
-        [ -f "/usr/local/include/wasm3.h" ] && \
-        [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
+        # Check for library using ldconfig or find
+        if check_command ldconfig; then
+            (ldconfig -p | grep -E "libm3\.(so|a)" >/dev/null 2>&1) && \
+            [ -f "/usr/local/include/wasm3.h" ] && \
+            [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
+        else
+            (find /usr/local/lib -name "libm3.so*" -o -name "libm3.a" 2>/dev/null | grep -q "libm3") && \
+            [ -f "/usr/local/include/wasm3.h" ] && \
+            [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
+        fi
     fi
 }
 
@@ -84,8 +110,12 @@ verify_system_deps() {
 
 install_system_deps() {
     sudo apt-get update
-    sudo apt-get install -y build-essential cmake pkg-config libssl-dev libsodium-dev libgmp-dev
-    sudo ldconfig
+    sudo apt-get install -y build-essential cmake pkg-config libssl-dev libsodium-dev libgmp-dev libc-bin
+    
+    # Run ldconfig if available
+    if check_command ldconfig; then
+        sudo ldconfig
+    fi
     
     if ! verify_system_deps; then
         log "Error: Some system dependencies are still missing"
@@ -338,7 +368,7 @@ verify_installation() {
 
     # Check libraries
     for lib in libssl.so libsodium.so libgmp.so; do
-        if ! ldconfig -p | grep "$lib" >/dev/null 2>&1; then
+        if ! check_library_installed "$lib"; then
             log "Error: $lib not found"
             errors=$((errors + 1))
         fi
@@ -364,13 +394,18 @@ main() {
     log "Starting installation..."
     parse_args "$@"
     
+    # Ensure ldconfig is available
+    ensure_ldconfig_available
+    
     install_system_deps
     install_libuv
     install_uvwasi
     install_wasm3
-    sudo ldconfig
-
-    sudo ldconfig
+    
+    # Run ldconfig if available
+    if check_command ldconfig; then
+        sudo ldconfig
+    fi
 
     if verify_installation; then
         log "Installation completed successfully"
