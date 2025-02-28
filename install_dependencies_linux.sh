@@ -14,48 +14,72 @@ check_command() {
 
 # Function to get the full path to ldconfig
 get_ldconfig_path() {
-    # Common locations for ldconfig
+    # First try the normal command
+    if command -v ldconfig >/dev/null 2>&1; then
+        command -v ldconfig
+        return 0
+    fi
+    
+    # If normal command fails, check common locations
     for path in /sbin/ldconfig /usr/sbin/ldconfig /usr/bin/ldconfig /bin/ldconfig; do
         if [ -x "$path" ]; then
             echo "$path"
             return 0
         fi
     done
+    
     # If not found in common locations, try to find it
     ldconfig_path=$(which ldconfig 2>/dev/null)
     if [ -n "$ldconfig_path" ] && [ -x "$ldconfig_path" ]; then
         echo "$ldconfig_path"
         return 0
     fi
+    
     return 1
 }
 
 ensure_ldconfig_available() {
-    if ! get_ldconfig_path >/dev/null; then
-        log "ldconfig not found, installing libc-bin package..."
-        sudo apt-get update
-        sudo apt-get install -y libc-bin
-        
-        # After installation, we need to refresh the shell's PATH
-        # or use the full path to ldconfig
-        if ! get_ldconfig_path >/dev/null; then
-            log "Error: Failed to find ldconfig. Using alternative methods to check libraries."
-            return 1
-        fi
+    # First try the normal ldconfig command
+    if command -v ldconfig >/dev/null 2>&1; then
+        return 0
     fi
-    return 0
+    
+    # If normal command fails, try to find the full path
+    if get_ldconfig_path >/dev/null; then
+        return 0
+    fi
+    
+    # If still not found, try to install it
+    log "ldconfig not found, installing libc-bin package..."
+    sudo apt-get update
+    sudo apt-get install -y libc-bin
+    
+    # After installation, check again
+    if command -v ldconfig >/dev/null 2>&1 || get_ldconfig_path >/dev/null; then
+        return 0
+    fi
+    
+    log "Error: Failed to find ldconfig. Using alternative methods to check libraries."
+    return 1
 }
 
 check_library_installed() {
     local lib=$1
-    local ldconfig_path=$(get_ldconfig_path)
-    if [ -n "$ldconfig_path" ]; then
-        "$ldconfig_path" -p | grep "$lib" >/dev/null 2>&1
+    # First try the normal ldconfig command
+    if command -v ldconfig >/dev/null 2>&1; then
+        ldconfig -p | grep "$lib" >/dev/null 2>&1
         return $?
     else
-        # Alternative method: check if the library exists in common library paths
-        find /usr/lib /usr/local/lib /lib /lib64 -name "$lib*" 2>/dev/null | grep -q "$lib"
-        return $?
+        # If normal command fails, try to find the full path
+        local ldconfig_path=$(get_ldconfig_path)
+        if [ -n "$ldconfig_path" ]; then
+            "$ldconfig_path" -p | grep "$lib" >/dev/null 2>&1
+            return $?
+        else
+            # Alternative method: check if the library exists in common library paths
+            find /usr/lib /usr/local/lib /lib /lib64 -name "$lib*" 2>/dev/null | grep -q "$lib"
+            return $?
+        fi
     fi
 }
 
@@ -84,15 +108,22 @@ check_wasm3_installed() {
         [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
     else
         # Check for library using ldconfig or find
-        local ldconfig_path=$(get_ldconfig_path)
-        if [ -n "$ldconfig_path" ]; then
-            ("$ldconfig_path" -p | grep -E "libm3\.(so|a)" >/dev/null 2>&1) && \
+        if command -v ldconfig >/dev/null 2>&1; then
+            (ldconfig -p | grep -E "libm3\.(so|a)" >/dev/null 2>&1) && \
             [ -f "/usr/local/include/wasm3.h" ] && \
             [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
         else
-            (find /usr/local/lib -name "libm3.so*" -o -name "libm3.a" 2>/dev/null | grep -q "libm3") && \
-            [ -f "/usr/local/include/wasm3.h" ] && \
-            [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
+            # If normal command fails, try to find the full path
+            local ldconfig_path=$(get_ldconfig_path)
+            if [ -n "$ldconfig_path" ]; then
+                ("$ldconfig_path" -p | grep -E "libm3\.(so|a)" >/dev/null 2>&1) && \
+                [ -f "/usr/local/include/wasm3.h" ] && \
+                [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
+            else
+                (find /usr/local/lib -name "libm3.so*" -o -name "libm3.a" 2>/dev/null | grep -q "libm3") && \
+                [ -f "/usr/local/include/wasm3.h" ] && \
+                [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
+            fi
         fi
     fi
 }
@@ -136,9 +167,14 @@ install_system_deps() {
     sudo apt-get install -y build-essential cmake pkg-config libssl-dev libsodium-dev libgmp-dev libc-bin
     
     # Run ldconfig if available
-    local ldconfig_path=$(get_ldconfig_path)
-    if [ -n "$ldconfig_path" ]; then
-        sudo "$ldconfig_path"
+    if command -v ldconfig >/dev/null 2>&1; then
+        sudo ldconfig
+    else
+        # Only use full path as fallback
+        local ldconfig_path=$(get_ldconfig_path)
+        if [ -n "$ldconfig_path" ]; then
+            sudo "$ldconfig_path"
+        fi
     fi
     
     if ! verify_system_deps; then
@@ -319,9 +355,14 @@ EOL
     make
     sudo make install
     # Run ldconfig if available
-    local ldconfig_path=$(get_ldconfig_path)
-    if [ -n "$ldconfig_path" ]; then
-        sudo "$ldconfig_path"
+    if command -v ldconfig >/dev/null 2>&1; then
+        sudo ldconfig
+    else
+        # Only use full path as fallback
+        local ldconfig_path=$(get_ldconfig_path)
+        if [ -n "$ldconfig_path" ]; then
+            sudo "$ldconfig_path"
+        fi
     fi
     cd ../..
     rm -rf wasm3
@@ -431,9 +472,14 @@ main() {
     install_wasm3
     
     # Run ldconfig if available
-    local ldconfig_path=$(get_ldconfig_path)
-    if [ -n "$ldconfig_path" ]; then
-        sudo "$ldconfig_path"
+    if command -v ldconfig >/dev/null 2>&1; then
+        sudo ldconfig
+    else
+        # Only use full path as fallback
+        local ldconfig_path=$(get_ldconfig_path)
+        if [ -n "$ldconfig_path" ]; then
+            sudo "$ldconfig_path"
+        fi
     fi
 
     if verify_installation; then
