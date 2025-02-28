@@ -12,13 +12,34 @@ check_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to get the full path to ldconfig
+get_ldconfig_path() {
+    # Common locations for ldconfig
+    for path in /sbin/ldconfig /usr/sbin/ldconfig /usr/bin/ldconfig /bin/ldconfig; do
+        if [ -x "$path" ]; then
+            echo "$path"
+            return 0
+        fi
+    done
+    # If not found in common locations, try to find it
+    ldconfig_path=$(which ldconfig 2>/dev/null)
+    if [ -n "$ldconfig_path" ] && [ -x "$ldconfig_path" ]; then
+        echo "$ldconfig_path"
+        return 0
+    fi
+    return 1
+}
+
 ensure_ldconfig_available() {
-    if ! check_command ldconfig; then
+    if ! get_ldconfig_path >/dev/null; then
         log "ldconfig not found, installing libc-bin package..."
         sudo apt-get update
         sudo apt-get install -y libc-bin
-        if ! check_command ldconfig; then
-            log "Error: Failed to install ldconfig. Using alternative methods to check libraries."
+        
+        # After installation, we need to refresh the shell's PATH
+        # or use the full path to ldconfig
+        if ! get_ldconfig_path >/dev/null; then
+            log "Error: Failed to find ldconfig. Using alternative methods to check libraries."
             return 1
         fi
     fi
@@ -27,8 +48,9 @@ ensure_ldconfig_available() {
 
 check_library_installed() {
     local lib=$1
-    if check_command ldconfig; then
-        ldconfig -p | grep "$lib" >/dev/null 2>&1
+    local ldconfig_path=$(get_ldconfig_path)
+    if [ -n "$ldconfig_path" ]; then
+        "$ldconfig_path" -p | grep "$lib" >/dev/null 2>&1
         return $?
     else
         # Alternative method: check if the library exists in common library paths
@@ -62,8 +84,9 @@ check_wasm3_installed() {
         [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
     else
         # Check for library using ldconfig or find
-        if check_command ldconfig; then
-            (ldconfig -p | grep -E "libm3\.(so|a)" >/dev/null 2>&1) && \
+        local ldconfig_path=$(get_ldconfig_path)
+        if [ -n "$ldconfig_path" ]; then
+            ("$ldconfig_path" -p | grep -E "libm3\.(so|a)" >/dev/null 2>&1) && \
             [ -f "/usr/local/include/wasm3.h" ] && \
             [ -f "/usr/local/lib/cmake/wasm3/wasm3Config.cmake" ]
         else
@@ -113,8 +136,9 @@ install_system_deps() {
     sudo apt-get install -y build-essential cmake pkg-config libssl-dev libsodium-dev libgmp-dev libc-bin
     
     # Run ldconfig if available
-    if check_command ldconfig; then
-        sudo ldconfig
+    local ldconfig_path=$(get_ldconfig_path)
+    if [ -n "$ldconfig_path" ]; then
+        sudo "$ldconfig_path"
     fi
     
     if ! verify_system_deps; then
@@ -294,7 +318,11 @@ EOL
           ..
     make
     sudo make install
-    sudo ldconfig
+    # Run ldconfig if available
+    local ldconfig_path=$(get_ldconfig_path)
+    if [ -n "$ldconfig_path" ]; then
+        sudo "$ldconfig_path"
+    fi
     cd ../..
     rm -rf wasm3
     
@@ -403,8 +431,9 @@ main() {
     install_wasm3
     
     # Run ldconfig if available
-    if check_command ldconfig; then
-        sudo ldconfig
+    local ldconfig_path=$(get_ldconfig_path)
+    if [ -n "$ldconfig_path" ]; then
+        sudo "$ldconfig_path"
     fi
 
     if verify_installation; then
