@@ -2,6 +2,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdarg.h>
 #include "mxd_config.h"
 #include "mxd_crypto.h"
 #include "mxd_dht.h"
@@ -21,8 +22,50 @@ static uint32_t consecutive_errors = 0;
 static mxd_message_handler_t message_handler = NULL;
 static int error_simulation_count = 0;
 
+// Log levels for P2P module
+typedef enum {
+    MXD_LOG_ERROR = 0,
+    MXD_LOG_WARN = 1,
+    MXD_LOG_INFO = 2,
+    MXD_LOG_DEBUG = 3
+} mxd_log_level_t;
+
+static mxd_log_level_t current_log_level = MXD_LOG_INFO;
+
+// P2P logging function
+static void mxd_p2p_log(mxd_log_level_t level, const char* format, ...) {
+    if (level > current_log_level) return;
+    
+    const char* level_str = "UNKNOWN";
+    switch (level) {
+        case MXD_LOG_ERROR: level_str = "ERROR"; break;
+        case MXD_LOG_WARN:  level_str = "WARN"; break;
+        case MXD_LOG_INFO:  level_str = "INFO"; break;
+        case MXD_LOG_DEBUG: level_str = "DEBUG"; break;
+    }
+    
+    // Get current time for timestamp
+    time_t now = time(NULL);
+    struct tm* tm_info = localtime(&now);
+    char time_str[20];
+    strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", tm_info);
+    
+    // Print log header
+    printf("[P2P][%s][%s] ", time_str, level_str);
+    
+    // Print formatted message
+    va_list args;
+    va_start(args, format);
+    vprintf(format, args);
+    va_end(args);
+    
+    printf("\n");
+    fflush(stdout);
+}
+
 // Reset rate limiting state
 static void reset_rate_limit(void) {
+    mxd_p2p_log(MXD_LOG_DEBUG, "Resetting rate limiting state");
     last_message_time = 0;
     messages_this_second = 0;
     last_tx_time = 0;
@@ -34,8 +77,10 @@ static void reset_rate_limit(void) {
 // Public function to reset rate limiting
 int mxd_reset_rate_limit(void) {
     if (!p2p_initialized) {
+        mxd_p2p_log(MXD_LOG_ERROR, "Cannot reset rate limit: P2P not initialized");
         return -1;
     }
+    mxd_p2p_log(MXD_LOG_INFO, "Resetting P2P rate limits");
     reset_rate_limit();
     return 0;
 }
@@ -141,7 +186,15 @@ static int handle_incoming_message(const char *address, uint16_t port,
 
 int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     if (p2p_initialized) {
+        mxd_p2p_log(MXD_LOG_INFO, "P2P already initialized, ignoring initialization request");
         return 0;
+    }
+    
+    mxd_p2p_log(MXD_LOG_INFO, "Initializing P2P module on port %d", port);
+    
+    if (!public_key) {
+        mxd_p2p_log(MXD_LOG_ERROR, "Cannot initialize P2P: NULL public key provided");
+        return -1;
     }
     
     // Reset all counters and state
@@ -156,48 +209,87 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     memcpy(node_public_key, public_key, 32);
     
     // Initialize node configuration
+    mxd_p2p_log(MXD_LOG_DEBUG, "Setting up node configuration");
     memset(&node_config, 0, sizeof(node_config));
     node_config.port = port;
     snprintf(node_config.node_id, sizeof(node_config.node_id), "peer_%d", port);
     snprintf(node_config.data_dir, sizeof(node_config.data_dir), "data");
     
     p2p_initialized = 1;
-    printf("P2P initialized on port %d\n", port);
+    mxd_p2p_log(MXD_LOG_INFO, "P2P module successfully initialized on port %d", port);
     return 0;
 }
 
 int mxd_start_p2p(void) {
     if (!p2p_initialized) {
-        printf("P2P not initialized\n");
+        mxd_p2p_log(MXD_LOG_ERROR, "Cannot start P2P: module not initialized");
         return 1;
     }
-    printf("P2P started on port %d\n", p2p_port);
+    
+    mxd_p2p_log(MXD_LOG_INFO, "Starting P2P service on port %d", p2p_port);
+    
+    // In a real implementation, we would start listening for connections here
+    // For now, just log the start
+    mxd_p2p_log(MXD_LOG_INFO, "P2P service started successfully on port %d", p2p_port);
     return 0;
 }
 
 int mxd_stop_p2p(void) {
     if (!p2p_initialized) {
+        mxd_p2p_log(MXD_LOG_DEBUG, "P2P already stopped, ignoring stop request");
         return 0;
     }
+    
+    mxd_p2p_log(MXD_LOG_INFO, "Stopping P2P service");
+    
+    // In a real implementation, we would close all connections and clean up resources
+    // For now, just reset the state
     p2p_initialized = 0;
-    printf("P2P stopped\n");
+    
+    mxd_p2p_log(MXD_LOG_INFO, "P2P service stopped successfully");
     return 0;
 }
 
 int mxd_add_peer(const char* address, uint16_t port) {
     if (!p2p_initialized) {
+        mxd_p2p_log(MXD_LOG_ERROR, "Cannot add peer: P2P not initialized");
         return 1;
     }
-    printf("Added peer %s:%d\n", address, port);
+    
+    if (!address) {
+        mxd_p2p_log(MXD_LOG_ERROR, "Cannot add peer: NULL address provided");
+        return 1;
+    }
+    
+    mxd_p2p_log(MXD_LOG_INFO, "Adding peer %s:%d to peer list", address, port);
+    
+    // In a real implementation, we would add the peer to our peer list
+    // For now, just log the addition
+    
+    mxd_p2p_log(MXD_LOG_INFO, "Peer %s:%d added successfully", address, port);
     return 0;
 }
 
 // Get list of connected peers
 int mxd_get_peers(mxd_peer_t* peers, size_t* peer_count) {
-    if (!p2p_initialized || !peers || !peer_count || *peer_count == 0) {
+    if (!p2p_initialized) {
+        mxd_p2p_log(MXD_LOG_ERROR, "Cannot get peers: P2P not initialized");
         return -1;
     }
     
+    if (!peers || !peer_count) {
+        mxd_p2p_log(MXD_LOG_ERROR, "Cannot get peers: Invalid parameters");
+        return -1;
+    }
+    
+    if (*peer_count == 0) {
+        mxd_p2p_log(MXD_LOG_WARN, "Requested peer count is 0, no peers will be returned");
+        return 0;
+    }
+    
+    mxd_p2p_log(MXD_LOG_INFO, "Retrieving connected peers (max requested: %zu)", *peer_count);
+    
+    // In a real implementation, we would return the actual connected peers
     // For now, return test peer for development
     if (*peer_count >= 1) {
         peers[0].state = MXD_PEER_CONNECTED;
@@ -205,6 +297,11 @@ int mxd_get_peers(mxd_peer_t* peers, size_t* peer_count) {
         strncpy(peers[0].address, "127.0.0.1", sizeof(peers[0].address) - 1);
         peers[0].port = 8000;
         *peer_count = 1;
+        
+        mxd_p2p_log(MXD_LOG_INFO, "Returning %zu peers (peer[0]: %s:%d)", 
+                   *peer_count, peers[0].address, peers[0].port);
+    } else {
+        mxd_p2p_log(MXD_LOG_INFO, "No peers available to return");
     }
     
     return 0;
@@ -265,27 +362,36 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
 
 int mxd_start_peer_discovery(void) {
     if (!p2p_initialized) {
-        printf("Error: P2P not initialized\n");
+        mxd_p2p_log(MXD_LOG_ERROR, "Cannot start peer discovery: P2P not initialized");
         return 1;
     }
+    
+    mxd_p2p_log(MXD_LOG_INFO, "Starting peer discovery service");
     
     // Initialize DHT for peer discovery
+    mxd_p2p_log(MXD_LOG_DEBUG, "Initializing DHT node for peer discovery");
     if (mxd_init_node(&node_config) != 0) {
-        printf("Error: Failed to initialize DHT node\n");
+        mxd_p2p_log(MXD_LOG_ERROR, "Failed to initialize DHT node");
         return 1;
     }
     
+    mxd_p2p_log(MXD_LOG_DEBUG, "Starting DHT service on port %d", p2p_port);
     if (mxd_start_dht(p2p_port) != 0) {
-        printf("Error: Failed to start DHT service\n");
+        mxd_p2p_log(MXD_LOG_ERROR, "Failed to start DHT service");
         return 1;
     }
     
-    printf("Peer discovery started\n");
+    mxd_p2p_log(MXD_LOG_INFO, "Peer discovery service started successfully");
     return 0;
 }
 
 int mxd_stop_peer_discovery(void) {
+    mxd_p2p_log(MXD_LOG_INFO, "Stopping peer discovery service");
+    
+    // In a real implementation, we would clean up resources and close connections
+    // For now, just stop the DHT service
     mxd_stop_dht();
-    printf("Peer discovery stopped\n");
+    
+    mxd_p2p_log(MXD_LOG_INFO, "Peer discovery service stopped successfully");
     return 0;
 }
