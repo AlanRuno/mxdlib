@@ -16,8 +16,15 @@ static uint8_t test_public_key2[256];
 static void setup_test_keys(void) {
   memset(test_public_key, 0, 256);
   memset(test_public_key2, 0, 256);
-  memcpy(test_public_key, test_private_key, 32);
-  memcpy(test_public_key2, test_private_key2, 32);
+  
+  for (int i = 0; i < 32; i++) {
+    test_public_key[i] = test_private_key[i];
+  }
+  
+  for (int i = 0; i < 32; i++) {
+    test_public_key2[i] = test_private_key2[i];
+  }
+  
 }
 
 static void test_transaction_validation_with_utxo(void) {
