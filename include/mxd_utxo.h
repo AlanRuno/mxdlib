@@ -47,6 +47,15 @@ int mxd_create_multisig_utxo(mxd_utxo_t *utxo, const uint8_t *cosigner_keys,
 // Free UTXO resources
 void mxd_free_utxo(mxd_utxo_t *utxo);
 
+// Save UTXO database to disk
+int mxd_save_utxo_db(const char* filename);
+
+// Load UTXO database from disk
+int mxd_load_utxo_db(const char* filename);
+
+// Calculate UTXO Merkle root
+int mxd_calculate_utxo_merkle_root(uint8_t root[64]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -68,6 +68,9 @@ int mxd_calculate_tx_hash(const mxd_transaction_t *tx, uint8_t hash[64]);
 // Validate entire transaction
 int mxd_validate_transaction(const mxd_transaction_t *tx);
 
+// Process transaction (remove spent inputs, add new outputs)
+int mxd_process_transaction(const mxd_transaction_t *tx);
+
 // Set voluntary tip for transaction
 int mxd_set_voluntary_tip(mxd_transaction_t *tx, double tip_amount);
 

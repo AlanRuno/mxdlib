@@ -213,10 +213,25 @@ int mxd_validate_transaction(const mxd_transaction_t *tx) {
     total_output += tx->outputs[i].amount;
   }
 
+  double total_input = 0.0;
+  for (uint32_t i = 0; i < tx->input_count; i++) {
+    mxd_utxo_t utxo;
+    if (mxd_find_utxo(tx->inputs[i].prev_tx_hash, tx->inputs[i].output_index, &utxo) != 0) {
+      return -1; // Input UTXO not found
+    }
+    
+    if (mxd_verify_utxo(tx->inputs[i].prev_tx_hash, tx->inputs[i].output_index, 
+                        tx->inputs[i].public_key) != 0) {
+      return -1; // Input not spendable by this key
+    }
+    
+    total_input += utxo.amount;
+  }
+
   // Verify total output plus tip doesn't exceed input amount
-  // Note: In a full implementation, we would verify against actual UTXO amounts
-  // For testing purposes, we'll skip this check since we don't have UTXO info
-  (void)total_output; // Suppress unused variable warning
+  if (total_output + tx->voluntary_tip > total_input) {
+    return -1; // Insufficient funds
+  }
 
   // Verify timestamp is set
   if (tx->timestamp == 0) {
@@ -241,6 +256,40 @@ double mxd_get_voluntary_tip(const mxd_transaction_t *tx) {
     return -1;
   }
   return tx->voluntary_tip;
+}
+
+int mxd_process_transaction(const mxd_transaction_t *tx) {
+  if (!tx || !validation_initialized) {
+    return -1;
+  }
+  
+  if (mxd_validate_transaction(tx) != 0) {
+    return -1;
+  }
+  
+  for (uint32_t i = 0; i < tx->input_count; i++) {
+    if (mxd_remove_utxo(tx->inputs[i].prev_tx_hash, tx->inputs[i].output_index) != 0) {
+      return -1;
+    }
+  }
+  
+  for (uint32_t i = 0; i < tx->output_count; i++) {
+    mxd_utxo_t utxo = {0};
+    
+    memcpy(utxo.tx_hash, tx->tx_hash, 64);
+    
+    utxo.output_index = i;
+    
+    memcpy(utxo.owner_key, tx->outputs[i].recipient_key, 256);
+    
+    utxo.amount = tx->outputs[i].amount;
+    
+    if (mxd_add_utxo(&utxo) != 0) {
+      return -1;
+    }
+  }
+  
+  return 0;
 }
 
 // Free transaction resources

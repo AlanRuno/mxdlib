@@ -192,3 +192,192 @@ void mxd_free_utxo(mxd_utxo_t *utxo) {
     memset(utxo, 0, sizeof(mxd_utxo_t));
   }
 }
+
+int mxd_save_utxo_db(const char* filename) {
+  if (!filename || !utxo_db) {
+    return -1;
+  }
+  
+  FILE* file = fopen(filename, "wb");
+  if (!file) {
+    return -1;
+  }
+  
+  if (fwrite(&utxo_count, sizeof(size_t), 1, file) != 1) {
+    fclose(file);
+    return -1;
+  }
+  
+  for (size_t i = 0; i < utxo_count; i++) {
+    if (fwrite(&utxo_db[i], offsetof(mxd_utxo_t, cosigner_keys), 1, file) != 1) {
+      fclose(file);
+      return -1;
+    }
+    
+    if (fwrite(&utxo_db[i].cosigner_count, sizeof(uint32_t), 1, file) != 1) {
+      fclose(file);
+      return -1;
+    }
+    
+    if (utxo_db[i].cosigner_count > 0 && utxo_db[i].cosigner_keys) {
+      if (fwrite(utxo_db[i].cosigner_keys, 256, utxo_db[i].cosigner_count, file) 
+          != utxo_db[i].cosigner_count) {
+        fclose(file);
+        return -1;
+      }
+    }
+  }
+  
+  fclose(file);
+  return 0;
+}
+
+int mxd_load_utxo_db(const char* filename) {
+  if (!filename) {
+    return -1;
+  }
+  
+  FILE* file = fopen(filename, "rb");
+  if (!file) {
+    return -1;
+  }
+  
+  if (utxo_db) {
+    for (size_t i = 0; i < utxo_count; i++) {
+      free(utxo_db[i].cosigner_keys);
+    }
+    free(utxo_db);
+    utxo_db = NULL;
+  }
+  
+  size_t count;
+  if (fread(&count, sizeof(size_t), 1, file) != 1) {
+    fclose(file);
+    return -1;
+  }
+  
+  utxo_db = malloc(count * sizeof(mxd_utxo_t));
+  if (!utxo_db) {
+    fclose(file);
+    return -1;
+  }
+  
+  for (size_t i = 0; i < count; i++) {
+    if (fread(&utxo_db[i], offsetof(mxd_utxo_t, cosigner_keys), 1, file) != 1) {
+      fclose(file);
+      return -1;
+    }
+    
+    utxo_db[i].cosigner_keys = NULL;
+    
+    if (fread(&utxo_db[i].cosigner_count, sizeof(uint32_t), 1, file) != 1) {
+      fclose(file);
+      return -1;
+    }
+    
+    if (utxo_db[i].cosigner_count > 0) {
+      utxo_db[i].cosigner_keys = malloc(utxo_db[i].cosigner_count * 256);
+      if (!utxo_db[i].cosigner_keys) {
+        fclose(file);
+        return -1;
+      }
+      
+      if (fread(utxo_db[i].cosigner_keys, 256, utxo_db[i].cosigner_count, file) 
+          != utxo_db[i].cosigner_count) {
+        fclose(file);
+        return -1;
+      }
+    }
+  }
+  
+  utxo_count = count;
+  utxo_capacity = count > 0 ? count : 1000;
+  
+  fclose(file);
+  return 0;
+}
+
+int mxd_calculate_utxo_merkle_root(uint8_t root[64]) {
+  if (!root || !utxo_db || utxo_count == 0) {
+    return -1;
+  }
+  
+  uint8_t **hashes = malloc(utxo_count * sizeof(uint8_t*));
+  if (!hashes) {
+    return -1;
+  }
+  
+  for (size_t i = 0; i < utxo_count; i++) {
+    hashes[i] = malloc(64);
+    if (!hashes[i]) {
+      for (size_t j = 0; j < i; j++) {
+        free(hashes[j]);
+      }
+      free(hashes);
+      return -1;
+    }
+    
+    size_t buffer_size = 64 + sizeof(uint32_t) + 256 + sizeof(double) + 
+                        sizeof(uint32_t) + utxo_db[i].cosigner_count * 256;
+    uint8_t *buffer = malloc(buffer_size);
+    if (!buffer) {
+      for (size_t j = 0; j <= i; j++) {
+        free(hashes[j]);
+      }
+      free(hashes);
+      return -1;
+    }
+    
+    size_t offset = 0;
+    memcpy(buffer + offset, utxo_db[i].tx_hash, 64);
+    offset += 64;
+    memcpy(buffer + offset, &utxo_db[i].output_index, sizeof(uint32_t));
+    offset += sizeof(uint32_t);
+    memcpy(buffer + offset, utxo_db[i].owner_key, 256);
+    offset += 256;
+    memcpy(buffer + offset, &utxo_db[i].amount, sizeof(double));
+    offset += sizeof(double);
+    memcpy(buffer + offset, &utxo_db[i].required_signatures, sizeof(uint32_t));
+    offset += sizeof(uint32_t);
+    
+    if (utxo_db[i].cosigner_count > 0 && utxo_db[i].cosigner_keys) {
+      memcpy(buffer + offset, utxo_db[i].cosigner_keys, utxo_db[i].cosigner_count * 256);
+      offset += utxo_db[i].cosigner_count * 256;
+    }
+    
+    mxd_sha512(buffer, offset, hashes[i]);
+    free(buffer);
+  }
+  
+  size_t current_count = utxo_count;
+  while (current_count > 1) {
+    size_t new_count = (current_count + 1) / 2;
+    for (size_t i = 0; i < new_count; i++) {
+      size_t left = i * 2;
+      size_t right = left + 1;
+      
+      if (right >= current_count) {
+        right = left;
+      }
+      
+      uint8_t combined[128];
+      memcpy(combined, hashes[left], 64);
+      memcpy(combined + 64, hashes[right], 64);
+      
+      mxd_sha512(combined, 128, hashes[i]);
+    }
+    
+    for (size_t i = new_count; i < current_count; i++) {
+      free(hashes[i]);
+    }
+    
+    current_count = new_count;
+  }
+  
+  memcpy(root, hashes[0], 64);
+  
+  free(hashes[0]);
+  free(hashes);
+  
+  return 0;
+}
