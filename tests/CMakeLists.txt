@@ -26,6 +26,14 @@ add_executable(mxd_utxo_tests
     test_utxo.c
 )
 
+add_executable(mxd_utxo_persistence_tests
+    test_utxo_persistence.c
+)
+
+add_executable(mxd_transaction_utxo_tests
+    test_transaction_utxo.c
+)
+
 add_executable(mxd_mempool_tests
     test_mempool.c
 )
@@ -74,6 +82,18 @@ target_link_libraries(mxd_utxo_tests
     sodium
 )
 
+target_link_libraries(mxd_utxo_persistence_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+)
+
+target_link_libraries(mxd_transaction_utxo_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+)
+
 target_link_libraries(mxd_mempool_tests
     mxd
     ${OPENSSL_LIBRARIES}
@@ -115,6 +135,8 @@ add_test(NAME blockchain_tests COMMAND mxd_blockchain_tests)
 add_test(NAME rsc_tests COMMAND mxd_rsc_tests)
 add_test(NAME transaction_tests COMMAND mxd_transaction_tests)
 add_test(NAME utxo_tests COMMAND mxd_utxo_tests)
+add_test(NAME utxo_persistence_tests COMMAND mxd_utxo_persistence_tests)
+add_test(NAME transaction_utxo_tests COMMAND mxd_transaction_utxo_tests)
 add_test(NAME mempool_tests COMMAND mxd_mempool_tests)
 add_test(NAME p2p_tests COMMAND mxd_p2p_tests)
 set_tests_properties(p2p_tests PROPERTIES TIMEOUT 120)
