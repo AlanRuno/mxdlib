@@ -125,6 +125,13 @@ static void test_node_lifecycle(void) {
     TEST_ASSERT(mxd_calculate_tx_hash(&genesis_tx, genesis_hash) == 0,
                "Genesis hash calculation");
     
+    mxd_utxo_t genesis_utxo = {0};
+    memcpy(genesis_utxo.tx_hash, genesis_hash, 64);
+    genesis_utxo.output_index = 0;
+    memcpy(genesis_utxo.owner_key, nodes[0].public_key, 256);
+    genesis_utxo.amount = 1000.0;
+    TEST_ASSERT(mxd_add_utxo(&genesis_utxo) == 0, "Genesis UTXO addition");
+    
     // Pre-create all transactions
     for (int i = 0; i < TEST_TRANSACTIONS; i++) {
         TEST_ASSERT(mxd_create_transaction(&transactions[i]) == 0,

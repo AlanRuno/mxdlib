@@ -1,5 +1,6 @@
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_transaction.h"
+#include "../include/mxd_utxo.h"
 #include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
@@ -87,8 +88,17 @@ static void test_transaction_validation(void) {
   uint8_t pub_key[256];
   uint8_t priv_key[128];
 
+  assert(mxd_init_utxo_db() == 0);
+
   // Generate keypair
   assert(mxd_dilithium_keygen(pub_key, priv_key) == 0);
+
+  mxd_utxo_t test_utxo = {0};
+  memcpy(test_utxo.tx_hash, prev_hash, 64);
+  test_utxo.output_index = 0;
+  memcpy(test_utxo.owner_key, pub_key, 256);
+  test_utxo.amount = 1.5; // Enough for output + tip
+  assert(mxd_add_utxo(&test_utxo) == 0);
 
   // Create valid transaction
   assert(mxd_create_transaction(&tx) == 0);
@@ -97,6 +107,10 @@ static void test_transaction_validation(void) {
   assert(mxd_set_voluntary_tip(&tx, 0.1) == 0);
   tx.timestamp = 1708198204; // Set a valid timestamp
   assert(mxd_sign_tx_input(&tx, 0, priv_key) == 0);
+
+  uint8_t tx_hash[64];
+  assert(mxd_calculate_tx_hash(&tx, tx_hash) == 0);
+  memcpy(tx.tx_hash, tx_hash, 64);
 
   // Validate transaction
   assert(mxd_validate_transaction(&tx) == 0);
