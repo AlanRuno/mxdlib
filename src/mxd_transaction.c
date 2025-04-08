@@ -1,5 +1,6 @@
 #include "../include/mxd_transaction.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_utxo.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
