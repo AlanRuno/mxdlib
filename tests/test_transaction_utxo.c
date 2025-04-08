@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 static uint8_t test_private_key[32] = {1, 2, 3, 4, 5};
 static uint8_t test_public_key[256];
@@ -43,6 +44,8 @@ static void test_transaction_validation_with_utxo(void) {
   TEST_ASSERT(mxd_add_tx_output(&tx, test_public_key2, 9.5) == 0, "Add transaction output");
   
   TEST_ASSERT(mxd_set_voluntary_tip(&tx, 0.5) == 0, "Set voluntary tip");
+  
+  tx.timestamp = time(NULL);
   
   uint8_t tx_hash[64];
   TEST_ASSERT(mxd_calculate_tx_hash(&tx, tx_hash) == 0, "Calculate transaction hash");
@@ -87,6 +90,8 @@ static void test_double_spend_prevention(void) {
   TEST_ASSERT(mxd_add_tx_input(&tx1, initial_tx_hash, 0, test_public_key) == 0, "Add input to first transaction");
   TEST_ASSERT(mxd_add_tx_output(&tx1, test_public_key2, 10.0) == 0, "Add output to first transaction");
   
+  tx1.timestamp = time(NULL);
+  
   uint8_t tx1_hash[64];
   TEST_ASSERT(mxd_calculate_tx_hash(&tx1, tx1_hash) == 0, "Calculate first transaction hash");
   memcpy(tx1.tx_hash, tx1_hash, 64);
@@ -101,6 +106,8 @@ static void test_double_spend_prevention(void) {
   
   TEST_ASSERT(mxd_add_tx_input(&tx2, initial_tx_hash, 0, test_public_key) == 0, "Add input to second transaction");
   TEST_ASSERT(mxd_add_tx_output(&tx2, test_public_key, 10.0) == 0, "Add output to second transaction");
+  
+  tx2.timestamp = time(NULL);
   
   uint8_t tx2_hash[64];
   TEST_ASSERT(mxd_calculate_tx_hash(&tx2, tx2_hash) == 0, "Calculate second transaction hash");
@@ -135,6 +142,8 @@ static void test_insufficient_funds(void) {
   
   TEST_ASSERT(mxd_add_tx_input(&tx, initial_tx_hash, 0, test_public_key) == 0, "Add transaction input");
   TEST_ASSERT(mxd_add_tx_output(&tx, test_public_key2, 6.0) == 0, "Add transaction output");
+  
+  tx.timestamp = time(NULL);
   
   uint8_t tx_hash[64];
   TEST_ASSERT(mxd_calculate_tx_hash(&tx, tx_hash) == 0, "Calculate transaction hash");
