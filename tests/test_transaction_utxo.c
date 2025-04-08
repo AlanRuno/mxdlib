@@ -61,7 +61,6 @@ static void test_transaction_validation_with_utxo(void) {
   TEST_ASSERT(found_utxo.amount == 9.5, "New UTXO amount should be correct");
   TEST_ASSERT(memcmp(found_utxo.owner_key, test_public_key2, 256) == 0, "New UTXO owner should be correct");
   
-  mxd_free_transaction(tx);
   
   TEST_END("Transaction Validation with UTXO");
 }
