@@ -1,13 +1,11 @@
 #include "../include/mxd_blockchain_db.h"
+#include "../include/mxd_rocksdb_globals.h"
 #include <rocksdb/c.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static rocksdb_t *db = NULL;
 static rocksdb_options_t *options = NULL;
-static rocksdb_readoptions_t *readoptions = NULL;
-static rocksdb_writeoptions_t *writeoptions = NULL;
 static char *db_path_global = NULL;
 
 static uint32_t current_height = 0;
@@ -91,8 +89,8 @@ int mxd_init_blockchain_db(const char *db_path) {
     db_path_global = strdup(db_path);
     
     options = rocksdb_options_create();
-    readoptions = rocksdb_readoptions_create();
-    writeoptions = rocksdb_writeoptions_create();
+    mxd_set_rocksdb_readoptions(rocksdb_readoptions_create());
+    mxd_set_rocksdb_writeoptions(rocksdb_writeoptions_create());
     
     rocksdb_options_set_create_if_missing(options, 1);
     rocksdb_options_set_compression(options, rocksdb_lz4_compression);
@@ -107,12 +105,12 @@ int mxd_init_blockchain_db(const char *db_path) {
     rocksdb_block_based_options_set_block_cache(table_options, cache);
     rocksdb_options_set_block_based_table_factory(options, table_options);
     
-    rocksdb_readoptions_set_verify_checksums(readoptions, 1);
+    rocksdb_readoptions_set_verify_checksums(mxd_get_rocksdb_readoptions(), 1);
     
-    rocksdb_writeoptions_set_sync(writeoptions, 1);
+    rocksdb_writeoptions_set_sync(mxd_get_rocksdb_writeoptions(), 1);
     
     char *err = NULL;
-    db = rocksdb_open(options, db_path, &err);
+    mxd_set_rocksdb_db(rocksdb_open(options, db_path, &err));
     if (err) {
         printf("Failed to open blockchain database: %s\n", err);
         free(err);
@@ -125,19 +123,19 @@ int mxd_init_blockchain_db(const char *db_path) {
 }
 
 int mxd_close_blockchain_db(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
-    rocksdb_close(db);
-    db = NULL;
+    rocksdb_close(mxd_get_rocksdb_db());
+    mxd_set_rocksdb_db(NULL);
     
     rocksdb_options_destroy(options);
-    rocksdb_readoptions_destroy(readoptions);
-    rocksdb_writeoptions_destroy(writeoptions);
+    rocksdb_readoptions_destroy(mxd_get_rocksdb_readoptions());
+    rocksdb_writeoptions_destroy(mxd_get_rocksdb_writeoptions());
     options = NULL;
-    readoptions = NULL;
-    writeoptions = NULL;
+    mxd_set_rocksdb_readoptions(NULL);
+    mxd_set_rocksdb_writeoptions(NULL);
     
     free(db_path_global);
     db_path_global = NULL;
@@ -146,7 +144,7 @@ int mxd_close_blockchain_db(void) {
 }
 
 int mxd_store_block(const mxd_block_t *block) {
-    if (!block || !db) {
+    if (!block || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -165,7 +163,7 @@ int mxd_store_block(const mxd_block_t *block) {
     }
     
     char *err = NULL;
-    rocksdb_put(db, writeoptions, (char *)height_key, height_key_len, (char *)data, data_len, &err);
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)height_key, height_key_len, (char *)data, data_len, &err);
     if (err) {
         printf("Failed to store block by height: %s\n", err);
         free(err);
@@ -173,7 +171,7 @@ int mxd_store_block(const mxd_block_t *block) {
         return -1;
     }
     
-    rocksdb_put(db, writeoptions, (char *)hash_key, hash_key_len, (char *)data, data_len, &err);
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)hash_key, hash_key_len, (char *)data, data_len, &err);
     if (err) {
         printf("Failed to store block by hash: %s\n", err);
         free(err);
@@ -190,7 +188,7 @@ int mxd_store_block(const mxd_block_t *block) {
         current_height = block->height;
         
         uint8_t height_meta_key[] = "current_height";
-        rocksdb_put(db, writeoptions, (char *)height_meta_key, sizeof(height_meta_key) - 1, 
+        rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)height_meta_key, sizeof(height_meta_key) - 1, 
                    (char *)&current_height, sizeof(current_height), &err);
         if (err) {
             printf("Failed to store current height: %s\n", err);
@@ -203,7 +201,7 @@ int mxd_store_block(const mxd_block_t *block) {
 }
 
 int mxd_retrieve_block_by_height(uint32_t height, mxd_block_t *block) {
-    if (!block || !db) {
+    if (!block || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -214,7 +212,7 @@ int mxd_retrieve_block_by_height(uint32_t height, mxd_block_t *block) {
     char *err = NULL;
     char *value = NULL;
     size_t value_len = 0;
-    value = rocksdb_get(db, readoptions, (char *)key, key_len, &value_len, &err);
+    value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, key_len, &value_len, &err);
     if (err) {
         printf("Failed to retrieve block by height: %s\n", err);
         free(err);
@@ -232,7 +230,7 @@ int mxd_retrieve_block_by_height(uint32_t height, mxd_block_t *block) {
 }
 
 int mxd_retrieve_block_by_hash(const uint8_t hash[64], mxd_block_t *block) {
-    if (!hash || !block || !db) {
+    if (!hash || !block || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -243,7 +241,7 @@ int mxd_retrieve_block_by_hash(const uint8_t hash[64], mxd_block_t *block) {
     char *err = NULL;
     char *value = NULL;
     size_t value_len = 0;
-    value = rocksdb_get(db, readoptions, (char *)key, key_len, &value_len, &err);
+    value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, key_len, &value_len, &err);
     if (err) {
         printf("Failed to retrieve block by hash: %s\n", err);
         free(err);
@@ -261,7 +259,7 @@ int mxd_retrieve_block_by_hash(const uint8_t hash[64], mxd_block_t *block) {
 }
 
 int mxd_get_blockchain_height(uint32_t *height) {
-    if (!height || !db) {
+    if (!height || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -269,7 +267,7 @@ int mxd_get_blockchain_height(uint32_t *height) {
     char *err = NULL;
     char *value = NULL;
     size_t value_len = 0;
-    value = rocksdb_get(db, readoptions, (char *)key, sizeof(key) - 1, &value_len, &err);
+    value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, sizeof(key) - 1, &value_len, &err);
     if (err) {
         printf("Failed to retrieve current height: %s\n", err);
         free(err);
@@ -291,7 +289,7 @@ int mxd_get_blockchain_height(uint32_t *height) {
 }
 
 int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const uint8_t signature[128]) {
-    if (!validator_id || !signature || !db) {
+    if (!validator_id || !signature || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -300,7 +298,7 @@ int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const u
     create_signature_key(height, validator_id, sig_key, &sig_key_len);
     
     char *err = NULL;
-    rocksdb_put(db, writeoptions, (char *)sig_key, sig_key_len, (char *)signature, 128, &err);
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)sig_key, sig_key_len, (char *)signature, 128, &err);
     if (err) {
         printf("Failed to store signature: %s\n", err);
         free(err);
@@ -313,7 +311,7 @@ int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const u
     memcpy(validator_key + validator_key_len, &height, sizeof(uint32_t));
     validator_key_len += sizeof(uint32_t);
     
-    rocksdb_put(db, writeoptions, (char *)validator_key, validator_key_len, "", 0, &err);
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)validator_key, validator_key_len, "", 0, &err);
     if (err) {
         printf("Failed to store validator signature index: %s\n", err);
         free(err);
@@ -324,7 +322,7 @@ int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const u
 }
 
 int mxd_signature_exists(uint32_t height, const uint8_t validator_id[20], const uint8_t signature[128]) {
-    if (!validator_id || !signature || !db) {
+    if (!validator_id || !signature || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -335,7 +333,7 @@ int mxd_signature_exists(uint32_t height, const uint8_t validator_id[20], const 
     char *err = NULL;
     char *value = NULL;
     size_t value_len = 0;
-    value = rocksdb_get(db, readoptions, (char *)key, key_len, &value_len, &err);
+    value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, key_len, &value_len, &err);
     if (err) {
         printf("Failed to check signature: %s\n", err);
         free(err);
@@ -353,13 +351,13 @@ int mxd_signature_exists(uint32_t height, const uint8_t validator_id[20], const 
 }
 
 int mxd_prune_expired_signatures(uint32_t current_height) {
-    if (!db || current_height < 5) {
+    if (!mxd_get_rocksdb_db() || current_height < 5) {
         return -1;
     }
     
     uint32_t expiry_height = current_height - 5;
     
-    rocksdb_iterator_t *iter = rocksdb_create_iterator(db, readoptions);
+    rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions());
     rocksdb_iter_seek(iter, "sig:", 4);
     
     size_t pruned = 0;
@@ -383,13 +381,13 @@ int mxd_prune_expired_signatures(uint32_t current_height) {
                 validator_key_len += sizeof(uint32_t);
                 
                 char *err = NULL;
-                rocksdb_delete(db, writeoptions, (char *)validator_key, validator_key_len, &err);
+                rocksdb_delete(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)validator_key, validator_key_len, &err);
                 if (err) {
                     printf("Failed to remove validator signature index: %s\n", err);
                     free(err);
                 }
                 
-                rocksdb_delete(db, writeoptions, key, key_len, &err);
+                rocksdb_delete(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), key, key_len, &err);
                 if (err) {
                     printf("Failed to remove signature: %s\n", err);
                     free(err);
@@ -410,7 +408,7 @@ int mxd_prune_expired_signatures(uint32_t current_height) {
 }
 
 int mxd_get_signatures_by_height(uint32_t height, mxd_validator_signature_t **signatures, size_t *signature_count) {
-    if (!signatures || !signature_count || !db) {
+    if (!signatures || !signature_count || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -419,7 +417,7 @@ int mxd_get_signatures_by_height(uint32_t height, mxd_validator_signature_t **si
     memcpy(prefix_key + 4, &height, sizeof(uint32_t));
     size_t prefix_key_len = 4 + sizeof(uint32_t);
     
-    rocksdb_iterator_t *iter = rocksdb_create_iterator(db, readoptions);
+    rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions());
     rocksdb_iter_seek(iter, (char *)prefix_key, prefix_key_len);
     
     size_t count = 0;
@@ -484,7 +482,7 @@ int mxd_get_signatures_by_height(uint32_t height, mxd_validator_signature_t **si
 
 int mxd_get_signatures_by_validator(const uint8_t validator_id[20], mxd_validator_signature_t **signatures, 
                                    uint32_t **heights, size_t *signature_count) {
-    if (!validator_id || !signatures || !heights || !signature_count || !db) {
+    if (!validator_id || !signatures || !heights || !signature_count || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -492,7 +490,7 @@ int mxd_get_signatures_by_validator(const uint8_t validator_id[20], mxd_validato
     size_t prefix_key_len;
     create_validator_key(validator_id, prefix_key, &prefix_key_len);
     
-    rocksdb_iterator_t *iter = rocksdb_create_iterator(db, readoptions);
+    rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions());
     rocksdb_iter_seek(iter, (char *)prefix_key, prefix_key_len);
     
     size_t count = 0;
@@ -555,7 +553,7 @@ int mxd_get_signatures_by_validator(const uint8_t validator_id[20], mxd_validato
         char *err = NULL;
         char *value = NULL;
         size_t value_len = 0;
-        value = rocksdb_get(db, readoptions, (char *)sig_key, sig_key_len, &value_len, &err);
+        value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)sig_key, sig_key_len, &value_len, &err);
         if (err) {
             printf("Failed to retrieve signature: %s\n", err);
             free(err);
@@ -592,7 +590,7 @@ double mxd_calculate_block_latency_score(const mxd_block_t *block) {
 }
 
 int mxd_flush_blockchain_db(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -600,7 +598,7 @@ int mxd_flush_blockchain_db(void) {
     rocksdb_flushoptions_t *flushoptions = rocksdb_flushoptions_create();
     rocksdb_flushoptions_set_wait(flushoptions, 1);
     
-    rocksdb_flush(db, flushoptions, &err);
+    rocksdb_flush(mxd_get_rocksdb_db(), flushoptions, &err);
     rocksdb_flushoptions_destroy(flushoptions);
     
     if (err) {
@@ -613,11 +611,11 @@ int mxd_flush_blockchain_db(void) {
 }
 
 int mxd_compact_blockchain_db(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
-    rocksdb_compact_range(db, NULL, 0, NULL, 0);
+    rocksdb_compact_range(mxd_get_rocksdb_db(), NULL, 0, NULL, 0);
     
     printf("Blockchain database compaction completed\n");
     return 0;

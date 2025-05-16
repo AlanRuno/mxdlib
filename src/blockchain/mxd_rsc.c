@@ -21,9 +21,7 @@
 #define MXD_BLACKLIST_DURATION 100     // Default blacklist duration (in blocks)
 #define MXD_MAX_TIMESTAMP_DRIFT 60     // Maximum timestamp drift allowed (in seconds)
 
-extern rocksdb_t *db;
-extern rocksdb_writeoptions_t *writeoptions;
-extern rocksdb_readoptions_t *readoptions;
+#include "../../include/mxd_rocksdb_globals.h"
 
 // Initialize node metrics
 int mxd_init_node_metrics(mxd_node_metrics_t *metrics) {
@@ -617,7 +615,7 @@ int mxd_blacklist_validator(const uint8_t validator_id[20], uint32_t duration) {
     }
     
     char *err = NULL;
-    rocksdb_put(db, writeoptions, (char *)key, sizeof(key), 
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)key, sizeof(key), 
                value, strlen(value), &err);
     
     if (err) {
@@ -653,7 +651,7 @@ int mxd_is_validator_blacklisted(const uint8_t validator_id[20]) {
     char *value = NULL;
     size_t value_len = 0;
     
-    value = rocksdb_get(db, readoptions, (char *)key, sizeof(key), &value_len, &err);
+    value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, sizeof(key), &value_len, &err);
     
     if (err) {
         printf("Failed to check blacklist status: %s\n", err);

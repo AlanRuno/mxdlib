@@ -26,7 +26,12 @@ static int create_test_block_with_validation(mxd_block_t *block, uint32_t height
         prev_hash[i] = i;
     }
     
-    if (mxd_init_block_with_validation(block, prev_hash) != 0) {
+    uint8_t proposer_id[20] = {0};
+    for (int i = 0; i < 20; i++) {
+        proposer_id[i] = i + 10;
+    }
+    
+    if (mxd_init_block_with_validation(block, prev_hash, proposer_id, height) != 0) {
         printf("Failed to initialize block with validation\n");
         return -1;
     }
@@ -35,11 +40,6 @@ static int create_test_block_with_validation(mxd_block_t *block, uint32_t height
     block->timestamp = time(NULL);
     block->nonce = 12345;
     
-    uint8_t proposer_id[20] = {0};
-    for (int i = 0; i < 20; i++) {
-        proposer_id[i] = i + 10;
-    }
-    memcpy(block->proposer_id, proposer_id, 20);
     
     return 0;
 }

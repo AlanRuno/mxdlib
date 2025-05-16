@@ -35,6 +35,10 @@ int mxd_remove_utxo(const uint8_t tx_hash[64], uint32_t output_index);
 int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
                   mxd_utxo_t *utxo);
 
+// Get UTXO by transaction hash and output index (wrapper for mxd_find_utxo)
+int mxd_get_utxo(const uint8_t tx_hash[64], uint32_t output_index,
+                 mxd_utxo_t *utxo);
+
 // Get total balance for a public key
 double mxd_get_balance(const uint8_t public_key[256]);
 

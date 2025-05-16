@@ -85,12 +85,16 @@ add_library(mxd SHARED
     src/mxd_address.c
     src/base58.c
     src/blockchain/mxd_blockchain.c
+    src/blockchain/mxd_blockchain_validation.c
     src/blockchain/mxd_rsc.c
     src/mxd_transaction.c
     src/mxd_utxo.c
     src/mxd_mempool.c
     src/mxd_p2p.c
     src/mxd_p2p_validation.c
+    src/mxd_p2p_peer.c
+    src/mxd_get_utxo.c
+    src/mxd_rocksdb_globals.c
     src/mxd_smart_contracts.c
     src/checkpoints/mxd_checkpoints.c
     src/quantization/mxd_data_quantization.c

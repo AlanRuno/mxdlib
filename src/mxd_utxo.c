@@ -5,10 +5,9 @@
 #include <string.h>
 #include <rocksdb/c.h>
 
-static rocksdb_t *db = NULL;
+#include "../include/mxd_rocksdb_globals.h"
+
 static rocksdb_options_t *options = NULL;
-static rocksdb_readoptions_t *readoptions = NULL;
-static rocksdb_writeoptions_t *writeoptions = NULL;
 static char *db_path_global = NULL;
 
 static size_t utxo_count = 0;
@@ -201,13 +200,17 @@ static int find_in_lru_cache(const uint8_t tx_hash[64], uint32_t output_index, m
 int mxd_init_utxo_db(const char *db_path) {
     if (!db_path) return -1;
     
+    if (mxd_get_rocksdb_db() != NULL) {
+        mxd_close_utxo_db();
+    }
+    
     if (db_path_global) free(db_path_global);
     db_path_global = strdup(db_path);
     
     // Create RocksDB options
     options = rocksdb_options_create();
-    readoptions = rocksdb_readoptions_create();
-    writeoptions = rocksdb_writeoptions_create();
+    rocksdb_readoptions_t *readoptions = rocksdb_readoptions_create();
+    rocksdb_writeoptions_t *writeoptions = rocksdb_writeoptions_create();
     
     rocksdb_options_set_create_if_missing(options, 1);
     rocksdb_options_set_compression(options, rocksdb_lz4_compression);
@@ -215,6 +218,10 @@ int mxd_init_utxo_db(const char *db_path) {
     rocksdb_options_set_write_buffer_size(options, 64 * 1024 * 1024); // 64MB
     rocksdb_options_set_max_write_buffer_number(options, 3);
     rocksdb_options_set_target_file_size_base(options, 32 * 1024 * 1024); // 32MB
+    
+    rocksdb_options_set_paranoid_checks(options, 1);
+    rocksdb_options_set_recycle_log_file_num(options, 1);
+    rocksdb_options_set_skip_stats_update_on_db_open(options, 1);
     
     rocksdb_cache_t *cache = rocksdb_cache_create_lru(128 * 1024 * 1024); // 128MB
     rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
@@ -226,17 +233,43 @@ int mxd_init_utxo_db(const char *db_path) {
     rocksdb_writeoptions_set_sync(writeoptions, 1);
     
     char *err = NULL;
-    db = rocksdb_open(options, db_path, &err);
+    rocksdb_destroy_db(options, db_path, &err);
+    if (err != NULL) {
+        free(err);
+        err = NULL;
+    }
+    
+    char lock_path[1024];
+    snprintf(lock_path, sizeof(lock_path), "%s/LOCK", db_path);
+    remove(lock_path);
+    
+    // Open database
+    rocksdb_t *db = rocksdb_open(options, db_path, &err);
+    
     if (err) {
         printf("Failed to open UTXO database: %s\n", err);
         free(err);
-        return -1;
+        
+        rocksdb_options_set_error_if_exists(options, 0);
+        rocksdb_options_set_create_if_missing(options, 1);
+        
+        err = NULL;
+        db = rocksdb_open(options, db_path, &err);
+        if (err) {
+            printf("Second attempt to open UTXO database failed: %s\n", err);
+            free(err);
+            return -1;
+        }
     }
+    
+    mxd_set_rocksdb_db(db);
+    mxd_set_rocksdb_readoptions(readoptions);
+    mxd_set_rocksdb_writeoptions(writeoptions);
     
     // Initialize LRU cache
     if (init_lru_cache() != 0) {
-        rocksdb_close(db);
-        db = NULL;
+        rocksdb_close(mxd_get_rocksdb_db());
+        mxd_set_rocksdb_db(NULL);
         return -1;
     }
     
@@ -249,7 +282,7 @@ int mxd_init_utxo_db(const char *db_path) {
 }
 
 int mxd_add_utxo(const mxd_utxo_t *utxo) {
-    if (!utxo || !db) {
+    if (!utxo || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -265,7 +298,7 @@ int mxd_add_utxo(const mxd_utxo_t *utxo) {
     }
     
     char *err = NULL;
-    rocksdb_put(db, writeoptions, (char *)key, key_len, (char *)data, data_len, &err);
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)key, key_len, (char *)data, data_len, &err);
     if (err) {
         printf("Failed to store UTXO: %s\n", err);
         free(err);
@@ -281,7 +314,7 @@ int mxd_add_utxo(const mxd_utxo_t *utxo) {
     memcpy(pubkey_key + pubkey_key_len + 64, &utxo->output_index, sizeof(uint32_t));
     pubkey_key_len += 64 + sizeof(uint32_t);
     
-    rocksdb_put(db, writeoptions, (char *)pubkey_key, pubkey_key_len, "", 0, &err);
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)pubkey_key, pubkey_key_len, "", 0, &err);
     if (err) {
         printf("Failed to store pubkey hash index: %s\n", err);
         free(err);
@@ -301,7 +334,7 @@ int mxd_add_utxo(const mxd_utxo_t *utxo) {
 }
 
 int mxd_remove_utxo(const uint8_t tx_hash[64], uint32_t output_index) {
-    if (!tx_hash || !db) {
+    if (!tx_hash || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -317,7 +350,7 @@ int mxd_remove_utxo(const uint8_t tx_hash[64], uint32_t output_index) {
     create_utxo_key(tx_hash, output_index, key, &key_len);
     
     char *err = NULL;
-    rocksdb_delete(db, writeoptions, (char *)key, key_len, &err);
+    rocksdb_delete(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)key, key_len, &err);
     if (err) {
         printf("Failed to remove UTXO: %s\n", err);
         free(err);
@@ -332,12 +365,34 @@ int mxd_remove_utxo(const uint8_t tx_hash[64], uint32_t output_index) {
     memcpy(pubkey_key + pubkey_key_len + 64, &output_index, sizeof(uint32_t));
     pubkey_key_len += 64 + sizeof(uint32_t);
     
-    rocksdb_delete(db, writeoptions, (char *)pubkey_key, pubkey_key_len, &err);
+    rocksdb_delete(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)pubkey_key, pubkey_key_len, &err);
     if (err) {
         printf("Failed to remove pubkey hash index: %s\n", err);
         free(err);
         mxd_free_utxo(&utxo);
         return -1;
+    }
+    
+    // Remove from LRU cache
+    if (lru_cache) {
+        for (size_t i = 0; i < lru_cache_count; i++) {
+            if (memcmp(lru_cache[i].tx_hash, tx_hash, 64) == 0 &&
+                lru_cache[i].output_index == output_index) {
+                // Free cosigner keys if present
+                free(lru_cache[i].cosigner_keys);
+                lru_cache[i].cosigner_keys = NULL;
+                
+                if (i < lru_cache_count - 1) {
+                    memcpy(&lru_cache[i], &lru_cache[lru_cache_count - 1], sizeof(mxd_utxo_t));
+                    lru_access_counter[i] = lru_access_counter[lru_cache_count - 1];
+                    
+                    lru_cache[lru_cache_count - 1].cosigner_keys = NULL;
+                }
+                
+                lru_cache_count--;
+                break;
+            }
+        }
     }
     
     // Update statistics
@@ -350,7 +405,7 @@ int mxd_remove_utxo(const uint8_t tx_hash[64], uint32_t output_index) {
 
 int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
                   mxd_utxo_t *utxo) {
-    if (!tx_hash || !utxo || !db) {
+    if (!tx_hash || !utxo || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -366,7 +421,7 @@ int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
     char *err = NULL;
     char *value = NULL;
     size_t value_len = 0;
-    value = rocksdb_get(db, readoptions, (char *)key, key_len, &value_len, &err);
+    value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, key_len, &value_len, &err);
     if (err) {
         printf("Failed to retrieve UTXO: %s\n", err);
         free(err);
@@ -389,7 +444,7 @@ int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
 }
 
 double mxd_get_balance(const uint8_t public_key[256]) {
-    if (!public_key || !db) {
+    if (!public_key || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -422,7 +477,7 @@ double mxd_get_balance(const uint8_t public_key[256]) {
 
 int mxd_verify_utxo(const uint8_t tx_hash[64], uint32_t output_index,
                     const uint8_t public_key[256]) {
-    if (!tx_hash || !public_key || !db) {
+    if (!tx_hash || !public_key || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -497,7 +552,7 @@ void mxd_free_utxo(mxd_utxo_t *utxo) {
 }
 
 int mxd_save_utxo_db(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -505,7 +560,7 @@ int mxd_save_utxo_db(void) {
 }
 
 int mxd_load_utxo_db(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -514,19 +569,19 @@ int mxd_load_utxo_db(void) {
 }
 
 int mxd_close_utxo_db(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
-    rocksdb_close(db);
-    db = NULL;
+    rocksdb_close(mxd_get_rocksdb_db());
+    mxd_set_rocksdb_db(NULL);
     
     rocksdb_options_destroy(options);
-    rocksdb_readoptions_destroy(readoptions);
-    rocksdb_writeoptions_destroy(writeoptions);
+    rocksdb_readoptions_destroy(mxd_get_rocksdb_readoptions());
+    rocksdb_writeoptions_destroy(mxd_get_rocksdb_writeoptions());
     options = NULL;
-    readoptions = NULL;
-    writeoptions = NULL;
+    mxd_set_rocksdb_readoptions(NULL);
+    mxd_set_rocksdb_writeoptions(NULL);
     
     free(db_path_global);
     db_path_global = NULL;
@@ -546,7 +601,7 @@ int mxd_close_utxo_db(void) {
 }
 
 int mxd_verify_utxo_funds(const uint8_t tx_hash[64], uint32_t output_index, double amount) {
-    if (!tx_hash || !db) {
+    if (!tx_hash || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -570,7 +625,7 @@ int mxd_verify_utxo_funds(const uint8_t tx_hash[64], uint32_t output_index, doub
 }
 
 int mxd_get_utxos_by_pubkey_hash(const uint8_t pubkey_hash[20], mxd_utxo_t **utxos, size_t *utxo_count) {
-    if (!pubkey_hash || !utxos || !utxo_count || !db) {
+    if (!pubkey_hash || !utxos || !utxo_count || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -580,7 +635,7 @@ int mxd_get_utxos_by_pubkey_hash(const uint8_t pubkey_hash[20], mxd_utxo_t **utx
     create_pubkey_hash_key(pubkey_hash, prefix_key, &prefix_key_len);
     
     // Create iterator
-    rocksdb_iterator_t *iter = rocksdb_create_iterator(db, readoptions);
+    rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions());
     rocksdb_iter_seek(iter, (char *)prefix_key, prefix_key_len);
     
     size_t count = 0;
@@ -643,12 +698,12 @@ int mxd_get_utxos_by_pubkey_hash(const uint8_t pubkey_hash[20], mxd_utxo_t **utx
 }
 
 int mxd_prune_spent_utxos(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
     // Create iterator
-    rocksdb_iterator_t *iter = rocksdb_create_iterator(db, readoptions);
+    rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions());
     rocksdb_iter_seek_to_first(iter);
     
     size_t pruned = 0;
@@ -690,7 +745,7 @@ int mxd_prune_spent_utxos(void) {
 }
 
 int mxd_get_utxo_count(size_t *count) {
-    if (!count || !db) {
+    if (!count || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -700,7 +755,7 @@ int mxd_get_utxo_count(size_t *count) {
 
 // Get UTXO database statistics
 int mxd_get_utxo_stats(size_t *total_count, size_t *pruned_count_out, double *total_value_out) {
-    if (!total_count || !pruned_count_out || !total_value_out || !db) {
+    if (!total_count || !pruned_count_out || !total_value_out || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -710,7 +765,7 @@ int mxd_get_utxo_stats(size_t *total_count, size_t *pruned_count_out, double *to
     double value = 0.0;
     
     // Create iterator
-    rocksdb_iterator_t *iter = rocksdb_create_iterator(db, readoptions);
+    rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions());
     rocksdb_iter_seek_to_first(iter);
     
     while (rocksdb_iter_valid(iter)) {
@@ -754,7 +809,7 @@ int mxd_get_utxo_stats(size_t *total_count, size_t *pruned_count_out, double *to
 }
 
 int mxd_mark_utxo_spent(const uint8_t tx_hash[64], uint32_t output_index) {
-    if (!tx_hash || !db) {
+    if (!tx_hash || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -780,7 +835,7 @@ int mxd_mark_utxo_spent(const uint8_t tx_hash[64], uint32_t output_index) {
 }
 
 int mxd_flush_utxo_db(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
@@ -788,7 +843,7 @@ int mxd_flush_utxo_db(void) {
     rocksdb_flushoptions_t *flushoptions = rocksdb_flushoptions_create();
     rocksdb_flushoptions_set_wait(flushoptions, 1);
     
-    rocksdb_flush(db, flushoptions, &err);
+    rocksdb_flush(mxd_get_rocksdb_db(), flushoptions, &err);
     rocksdb_flushoptions_destroy(flushoptions);
     
     if (err) {
@@ -801,12 +856,12 @@ int mxd_flush_utxo_db(void) {
 }
 
 int mxd_compact_utxo_db(void) {
-    if (!db) {
+    if (!mxd_get_rocksdb_db()) {
         return -1;
     }
     
     char *err = NULL;
-    rocksdb_compact_range(db, NULL, 0, NULL, 0);
+    rocksdb_compact_range(mxd_get_rocksdb_db(), NULL, 0, NULL, 0);
     
     if (err) {
         printf("Failed to compact UTXO database: %s\n", err);

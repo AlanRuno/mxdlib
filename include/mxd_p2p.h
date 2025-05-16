@@ -118,6 +118,12 @@ int mxd_update_peer_rapid_table_status(const char *address, uint16_t port,
 // Get peers from Rapid Table only
 int mxd_get_rapid_table_peers(mxd_peer_t *peers, size_t *peer_count);
 
+// Set minimum number of signatures required for block relay
+int mxd_set_min_relay_signatures(uint32_t threshold);
+
+// Get minimum number of signatures required for block relay
+uint32_t mxd_get_min_relay_signatures(void);
+
 // Set message handler callback
 typedef void (*mxd_message_handler_t)(const char *address, uint16_t port,
                                       mxd_message_type_t type,
