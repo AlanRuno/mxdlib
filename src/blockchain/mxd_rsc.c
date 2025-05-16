@@ -20,6 +20,10 @@
 #define MXD_BLACKLIST_DURATION 100     // Default blacklist duration (in blocks)
 #define MXD_MAX_TIMESTAMP_DRIFT 60     // Maximum timestamp drift allowed (in seconds)
 
+extern rocksdb_t *db;
+extern rocksdb_writeoptions_t *writeoptions;
+extern rocksdb_readoptions_t *readoptions;
+
 // Initialize node metrics
 int mxd_init_node_metrics(mxd_node_metrics_t *metrics) {
     if (!metrics) {
