@@ -128,6 +128,42 @@ int mxd_ripemd160(const uint8_t *input, size_t length, uint8_t output[20]) {
   return 0;
 }
 
+int mxd_hash160(const uint8_t *input, size_t length, uint8_t output[20]) {
+  if (ensure_crypto_init() < 0) {
+    printf("HASH160: Failed to initialize crypto\n");
+    return -1;
+  }
+  
+  uint8_t sha256_output[32];
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+  if (!ctx) {
+    printf("HASH160: Failed to create SHA-256 context\n");
+    return -1;
+  }
+  
+  if (!EVP_DigestInit_ex(ctx, EVP_sha256(), NULL)) {
+    printf("HASH160: Failed to initialize SHA-256 digest\n");
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+  
+  if (!EVP_DigestUpdate(ctx, input, length)) {
+    printf("HASH160: Failed to update SHA-256 digest\n");
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+  
+  if (!EVP_DigestFinal_ex(ctx, sha256_output, NULL)) {
+    printf("HASH160: Failed to finalize SHA-256 digest\n");
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+  
+  EVP_MD_CTX_free(ctx);
+  
+  return mxd_ripemd160(sha256_output, 32, output);
+}
+
 // Argon2 key derivation implementation
 int mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output,
                size_t output_length) {

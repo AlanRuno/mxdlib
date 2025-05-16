@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <rocksdb/c.h>
 
 // Performance thresholds
 #define MXD_MAX_RESPONSE_TIME 5000     // Maximum acceptable response time (ms)
