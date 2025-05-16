@@ -11,6 +11,9 @@ extern "C" {
 // SHA-512 hashing
 int mxd_sha512(const uint8_t *input, size_t length, uint8_t output[64]);
 
+// SHA-256 hashing
+int mxd_sha256(const uint8_t *input, size_t length, uint8_t output[32]);
+
 // SHA-1 hashing
 int mxd_sha1(const uint8_t *input, size_t length, uint8_t output[20]);
 

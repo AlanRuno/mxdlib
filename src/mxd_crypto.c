@@ -61,6 +61,41 @@ int mxd_sha1(const uint8_t *input, size_t length, uint8_t output[20]) {
   return 0;
 }
 
+// SHA-256 hashing implementation using OpenSSL 3.0 EVP interface
+int mxd_sha256(const uint8_t *input, size_t length, uint8_t output[32]) {
+  if (ensure_crypto_init() < 0) {
+    printf("SHA-256: Failed to initialize crypto\n");
+    return -1;
+  }
+
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+  if (!ctx) {
+    printf("SHA-256: Failed to create context\n");
+    return -1;
+  }
+
+  if (!EVP_DigestInit_ex(ctx, EVP_sha256(), NULL)) {
+    printf("SHA-256: Failed to initialize digest\n");
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+
+  if (!EVP_DigestUpdate(ctx, input, length)) {
+    printf("SHA-256: Failed to update digest\n");
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+
+  if (!EVP_DigestFinal_ex(ctx, output, NULL)) {
+    printf("SHA-256: Failed to finalize digest\n");
+    EVP_MD_CTX_free(ctx);
+    return -1;
+  }
+
+  EVP_MD_CTX_free(ctx);
+  return 0;
+}
+
 // SHA-512 hashing implementation using OpenSSL 3.0 EVP interface
 int mxd_sha512(const uint8_t *input, size_t length, uint8_t output[64]) {
   if (ensure_crypto_init() < 0) {
