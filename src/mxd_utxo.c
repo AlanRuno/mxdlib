@@ -217,8 +217,8 @@ int mxd_init_utxo_db(const char *db_path) {
     rocksdb_options_set_target_file_size_base(options, 32 * 1024 * 1024); // 32MB
     
     rocksdb_cache_t *cache = rocksdb_cache_create_lru(128 * 1024 * 1024); // 128MB
-    rocksdb_block_based_options_t *table_options = rocksdb_block_based_options_create();
-    rocksdb_block_based_options_set_block_cache(table_options, cache);
+    rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_table_options_create();
+    rocksdb_block_based_table_options_set_block_cache(table_options, cache);
     rocksdb_options_set_block_based_table_factory(options, table_options);
     
     rocksdb_readoptions_set_verify_checksums(readoptions, 1);
@@ -806,44 +806,12 @@ int mxd_compact_utxo_db(void) {
     }
     
     char *err = NULL;
-    rocksdb_compact_range(db, NULL, 0, NULL, 0, &err);
+    rocksdb_compact_range(db, NULL, 0, NULL, 0);
     
     if (err) {
         printf("Failed to compact UTXO database: %s\n", err);
         free(err);
         return -1;
-    }
-    
-    return 0;
-}
-
-int mxd_close_utxo_db(void) {
-    if (!db) {
-        return -1;
-    }
-    
-    rocksdb_close(db);
-    db = NULL;
-    
-    rocksdb_options_destroy(options);
-    rocksdb_readoptions_destroy(readoptions);
-    rocksdb_writeoptions_destroy(writeoptions);
-    options = NULL;
-    readoptions = NULL;
-    writeoptions = NULL;
-    
-    free(db_path_global);
-    db_path_global = NULL;
-    
-    if (lru_cache) {
-        for (size_t i = 0; i < lru_cache_count; i++) {
-            free(lru_cache[i].cosigner_keys);
-        }
-        free(lru_cache);
-        free(lru_access_counter);
-        lru_cache = NULL;
-        lru_access_counter = NULL;
-        lru_cache_count = 0;
     }
     
     return 0;

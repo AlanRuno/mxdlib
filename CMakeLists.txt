@@ -36,7 +36,14 @@ pkg_check_modules(CURL REQUIRED libcurl)
 pkg_check_modules(LIBUV REQUIRED libuv)
 pkg_check_modules(UVWASI REQUIRED uvwasi)
 pkg_check_modules(WASM3 REQUIRED wasm3)
-pkg_check_modules(ROCKSDB REQUIRED rocksdb)
+
+# Find RocksDB using find_library instead of pkg-config
+find_path(ROCKSDB_INCLUDE_DIR rocksdb/c.h PATHS /usr/include /usr/local/include)
+find_library(ROCKSDB_LIBRARY rocksdb PATHS /usr/lib /usr/local/lib)
+
+if(NOT ROCKSDB_INCLUDE_DIR OR NOT ROCKSDB_LIBRARY)
+    message(FATAL_ERROR "RocksDB library not found")
+endif()
 
 include_directories(
     ${LIBUV_INCLUDE_DIRS}
@@ -44,7 +51,7 @@ include_directories(
     ${WASM3_INCLUDE_DIRS}
     ${CJSON_INCLUDE_DIRS}
     ${CURL_INCLUDE_DIRS}
-    ${ROCKSDB_INCLUDE_DIRS}
+    ${ROCKSDB_INCLUDE_DIR}
 )
 
 # Find other required libraries
@@ -101,7 +108,7 @@ if(WIN32)
         ${LIBUV_LIBRARIES}
         ${UVWASI_LIBRARIES}
         ${WASM3_LIBRARIES}
-        ${ROCKSDB_LIBRARIES}
+        ${ROCKSDB_LIBRARY}
         ws2_32
         iphlpapi
         userenv)
@@ -118,7 +125,7 @@ else()
         ${WASM3_LIBRARIES}
         ${CJSON_LIBRARIES}
         ${CURL_LIBRARIES}
-        ${ROCKSDB_LIBRARIES}
+        ${ROCKSDB_LIBRARY}
         -Wl,--no-whole-archive
         m
         pthread

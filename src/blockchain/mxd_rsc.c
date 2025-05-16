@@ -604,11 +604,24 @@ int mxd_blacklist_validator(const uint8_t validator_id[20], uint32_t duration) {
     memcpy(key, "blacklist:", 10);
     memcpy(key + 10, validator_id, 20);
     
+    char value[10];
+    snprintf(value, sizeof(value), "%u", expiry_height);
+    
+    if (mxd_init_blockchain_db(NULL) != 0) {
+        return -1;
+    }
+    
     char *err = NULL;
-    rocksdb_t *db = NULL;
-    rocksdb_writeoptions_t *writeoptions = NULL;
+    rocksdb_put(db, writeoptions, (char *)key, sizeof(key), 
+               value, strlen(value), &err);
     
+    if (err) {
+        printf("Failed to blacklist validator: %s\n", err);
+        free(err);
+        return -1;
+    }
     
+    printf("Validator blacklisted until height %u\n", expiry_height);
     return 0;
 }
 
@@ -627,14 +640,32 @@ int mxd_is_validator_blacklisted(const uint8_t validator_id[20]) {
     memcpy(key, "blacklist:", 10);
     memcpy(key + 10, validator_id, 20);
     
+    if (mxd_init_blockchain_db(NULL) != 0) {
+        return -1;
+    }
+    
     char *err = NULL;
     char *value = NULL;
     size_t value_len = 0;
-    rocksdb_t *db = NULL;
-    rocksdb_readoptions_t *readoptions = NULL;
     
+    value = rocksdb_get(db, readoptions, (char *)key, sizeof(key), &value_len, &err);
     
-    return 0;
+    if (err) {
+        printf("Failed to check blacklist status: %s\n", err);
+        free(err);
+        return -1;
+    }
+    
+    if (value && value_len > 0) {
+        uint32_t expiry_height = atoi(value);
+        free(value);
+        
+        if (expiry_height > current_height) {
+            return 1; // Validator is blacklisted
+        }
+    }
+    
+    return 0; // Not blacklisted
 }
 
 int mxd_get_next_validator(const mxd_block_t *block, const mxd_rapid_table_t *table, 
