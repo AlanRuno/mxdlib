@@ -57,7 +57,7 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
     }
     
     // Validate message type
-    if (header->type > MXD_MSG_TRANSACTIONS) {
+    if (header->type > MXD_MSG_RAPID_TABLE_UPDATE) {
         return -1;
     }
 
@@ -234,7 +234,7 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
     }
 
     // Size and type validation - these should always fail without counting as errors
-    if (payload_length > MXD_MAX_MESSAGE_SIZE || type > MXD_MSG_TRANSACTIONS) {
+    if (payload_length > MXD_MAX_MESSAGE_SIZE || type > MXD_MSG_RAPID_TABLE_UPDATE) {
         return -1;
     }
 
