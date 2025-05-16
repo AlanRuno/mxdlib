@@ -103,8 +103,8 @@ int mxd_init_blockchain_db(const char *db_path) {
     rocksdb_options_set_level_compaction_dynamic_level_bytes(options, 1);
     
     rocksdb_cache_t *cache = rocksdb_cache_create_lru(256 * 1024 * 1024); // 256MB
-    rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_table_options_create();
-    rocksdb_block_based_table_options_set_block_cache(table_options, cache);
+    rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
+    rocksdb_block_based_options_set_block_cache(table_options, cache);
     rocksdb_options_set_block_based_table_factory(options, table_options);
     
     rocksdb_readoptions_set_verify_checksums(readoptions, 1);
