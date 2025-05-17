@@ -41,15 +41,17 @@ Manages blockchain structure and validation with robust security features:
   * Support for parallel validation
 
 ## ⚡ Rapid Stake Consensus (`mxd_rsc`)
-Implements the Rapid Stake Consensus mechanism for efficient block validation:
+Implements the Rapid Stake Consensus mechanism with Validation Chain Protocol:
+- Sequential validation by ≥50% of Rapid Table nodes with cryptographic signatures
 - Node stake validation (minimum 0.1% of total stake)
-- Response time metrics with latency tracking
+- Response time metrics with latency tracking (3-second maximum)
 - Dynamic node ranking based on stake and speed
 - Rapid table management for validator selection
-- Sharding pool support for smaller nodes
-- Automatic validator rotation
-- Performance-based incentive system
-- Double-signing prevention
+- Cumulative latency weight calculation for fork resolution (Σ(1/latency_i))
+- Timestamp drift verification (±60 seconds)
+- Validator blacklisting for double-signing (100-block ban period)
+- Performance-based incentive system with voluntary tips
+- RocksDB persistence for validation chain storage
 
 ## 💸 Transaction Management (`mxd_transaction`)
 Handles transaction creation and validation with comprehensive security features:
