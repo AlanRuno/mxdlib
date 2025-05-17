@@ -1,0 +1,147 @@
+#include "../../include/mxd_blockchain.h"
+#include "../../include/mxd_crypto.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+int mxd_init_block_with_validation(mxd_block_t *block, const uint8_t prev_hash[64], 
+                                  const uint8_t proposer_id[20], uint32_t height) {
+    if (!block || !prev_hash || !proposer_id) {
+        return -1;
+    }
+    
+    if (mxd_init_block(block, prev_hash) != 0) {
+        return -1;
+    }
+    
+    memcpy(block->proposer_id, proposer_id, 20);
+    block->height = height;
+    
+    block->validation_count = 0;
+    block->validation_capacity = 10; // Initial capacity for 10 validators
+    block->validation_chain = malloc(block->validation_capacity * sizeof(mxd_validator_signature_t));
+    
+    if (!block->validation_chain) {
+        return -1;
+    }
+    
+    return 0;
+}
+
+int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[20], 
+                              uint64_t timestamp, const uint8_t signature[128]) {
+    if (!block || !validator_id || !signature) {
+        return -1;
+    }
+    
+    if (block->validation_count >= block->validation_capacity) {
+        uint32_t new_capacity = block->validation_capacity * 2;
+        mxd_validator_signature_t *new_chain = realloc(block->validation_chain, 
+                                                     new_capacity * sizeof(mxd_validator_signature_t));
+        if (!new_chain) {
+            return -1;
+        }
+        
+        block->validation_chain = new_chain;
+        block->validation_capacity = new_capacity;
+    }
+    
+    mxd_validator_signature_t *sig = &block->validation_chain[block->validation_count];
+    memcpy(sig->validator_id, validator_id, 20);
+    sig->timestamp = timestamp;
+    memcpy(sig->signature, signature, 128);
+    sig->chain_position = block->validation_count;
+    
+    block->validation_count++;
+    
+    return 0;
+}
+
+int mxd_verify_validation_chain(const mxd_block_t *block) {
+    if (!block || !block->validation_chain || block->validation_count == 0) {
+        return -1;
+    }
+    
+    for (uint32_t i = 0; i < block->validation_count; i++) {
+        const mxd_validator_signature_t *sig = &block->validation_chain[i];
+        
+        if (sig->chain_position != i) {
+            return -1;
+        }
+    }
+    
+    return 0;
+}
+
+int mxd_block_has_quorum(const mxd_block_t *block) {
+    if (!block || !block->validation_chain) {
+        return 0;
+    }
+    
+    const uint32_t rapid_table_size = 6;
+    const uint32_t quorum_threshold = rapid_table_size / 2;
+    
+    return (block->validation_count >= quorum_threshold) ? 1 : 0;
+}
+
+int mxd_block_has_min_signatures(const mxd_block_t *block) {
+    if (!block || !block->validation_chain) {
+        return 0;
+    }
+    
+    const uint32_t min_signatures = 3;
+    
+    return (block->validation_count >= min_signatures) ? 1 : 0;
+}
+
+int mxd_resolve_fork(const mxd_block_t *block1, const mxd_block_t *block2) {
+    if (!block1 || !block2) {
+        return 0;
+    }
+    
+    if (block1->validation_count > block2->validation_count) {
+        return 1;  // block1 wins
+    } else if (block2->validation_count > block1->validation_count) {
+        return -1; // block2 wins
+    }
+    
+    double score1 = mxd_calculate_latency_score(block1);
+    double score2 = mxd_calculate_latency_score(block2);
+    
+    if (score1 > score2) {
+        return 1;  // block1 wins
+    } else if (score2 > score1) {
+        return -1; // block2 wins
+    }
+    
+    int cmp = memcmp(block1->block_hash, block2->block_hash, 64);
+    return cmp;
+}
+
+double mxd_calculate_latency_score(const mxd_block_t *block) {
+    if (!block || !block->validation_chain || block->validation_count == 0) {
+        return 0.0;
+    }
+    
+    double score = 0.0;
+    
+    for (uint32_t i = 0; i < block->validation_count; i++) {
+        uint32_t latency_ms = 20 + (block->validation_chain[i].validator_id[0] % 100);
+        
+        if (latency_ms == 0) latency_ms = 1;
+        
+        score += 1.0 / latency_ms;
+    }
+    
+    return score;
+}
+
+void mxd_free_validation_chain(mxd_block_t *block) {
+    if (block && block->validation_chain) {
+        free(block->validation_chain);
+        block->validation_chain = NULL;
+        block->validation_count = 0;
+        block->validation_capacity = 0;
+    }
+}

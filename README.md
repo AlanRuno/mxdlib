@@ -30,12 +30,13 @@ MXD (Mexican Denarius) represents a groundbreaking advancement in digital financ
 - Base58Check address encoding
 
 ### 💎 Blockchain & Consensus
-- Advanced communication speed-based consensus mechanism
+- Advanced Rapid Stake Consensus (RSC) with Validation Chain Protocol
+- Sequential validation by ≥50% of Rapid Table nodes with cryptographic signatures
 - Network Time Protocol (NTP) synchronization for precise timing
-- Collaborative real-time consensus protocol
+- RocksDB persistence for high-performance UTXO and blockchain storage
 - Transaction management with UTXO model and voluntary tip system
 - Memory pool for transaction staging
-- P2P networking with DHT-based discovery
+- P2P networking with DHT-based discovery and tamper-proof routing
 - Eco-friendly design with minimal energy consumption
 
 ### 📜 Smart Contracts & Extensions

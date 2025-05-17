@@ -13,6 +13,7 @@
 - OpenSSL 3.0+
 - libsodium
 - GMP (GNU Multiple Precision Arithmetic Library)
+- RocksDB (for high-performance key-value storage)
 - wasm3
 - uvwasi and libuv
 

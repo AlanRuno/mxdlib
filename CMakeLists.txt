@@ -37,12 +37,21 @@ pkg_check_modules(LIBUV REQUIRED libuv)
 pkg_check_modules(UVWASI REQUIRED uvwasi)
 pkg_check_modules(WASM3 REQUIRED wasm3)
 
+# Find RocksDB using find_library instead of pkg-config
+find_path(ROCKSDB_INCLUDE_DIR rocksdb/c.h PATHS /usr/include /usr/local/include)
+find_library(ROCKSDB_LIBRARY rocksdb PATHS /usr/lib /usr/local/lib)
+
+if(NOT ROCKSDB_INCLUDE_DIR OR NOT ROCKSDB_LIBRARY)
+    message(FATAL_ERROR "RocksDB library not found")
+endif()
+
 include_directories(
     ${LIBUV_INCLUDE_DIRS}
     ${UVWASI_INCLUDE_DIRS}
     ${WASM3_INCLUDE_DIRS}
     ${CJSON_INCLUDE_DIRS}
     ${CURL_INCLUDE_DIRS}
+    ${ROCKSDB_INCLUDE_DIR}
 )
 
 # Find other required libraries
@@ -76,11 +85,16 @@ add_library(mxd SHARED
     src/mxd_address.c
     src/base58.c
     src/blockchain/mxd_blockchain.c
+    src/blockchain/mxd_blockchain_validation.c
     src/blockchain/mxd_rsc.c
     src/mxd_transaction.c
     src/mxd_utxo.c
     src/mxd_mempool.c
     src/mxd_p2p.c
+    src/mxd_p2p_validation.c
+    src/mxd_p2p_peer.c
+    src/mxd_get_utxo.c
+    src/mxd_rocksdb_globals.c
     src/mxd_smart_contracts.c
     src/checkpoints/mxd_checkpoints.c
     src/quantization/mxd_data_quantization.c
@@ -98,6 +112,7 @@ if(WIN32)
         ${LIBUV_LIBRARIES}
         ${UVWASI_LIBRARIES}
         ${WASM3_LIBRARIES}
+        ${ROCKSDB_LIBRARY}
         ws2_32
         iphlpapi
         userenv)
@@ -114,6 +129,7 @@ else()
         ${WASM3_LIBRARIES}
         ${CJSON_LIBRARIES}
         ${CURL_LIBRARIES}
+        ${ROCKSDB_LIBRARY}
         -Wl,--no-whole-archive
         m
         pthread
@@ -150,6 +166,7 @@ target_sources(mxd PRIVATE
 target_sources(mxd PRIVATE
     src/mxd_config.c
     src/mxd_blockchain_sync.c
+    src/mxd_blockchain_db.c
     src/node/metrics_display.c
     src/utils/mxd_http.c)
 
