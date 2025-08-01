@@ -87,7 +87,7 @@ int mxd_init_node(const void* config) {
             // Extract host and port
             char host[256];
             int port;
-            if (sscanf(bootstrap_addr, "%[^:]:%d", host, &port) == 2) {
+            if (sscanf(bootstrap_addr, "%255[^:]:%d", host, &port) == 2) {
                 printf("Connecting to bootstrap node %s:%d\n", host, port);
                 // Simulate successful connection for now
                 gettimeofday(&last_ping_time, NULL);
@@ -252,7 +252,7 @@ uint64_t mxd_get_network_latency(void) {
             printf("Debug: Metrics - TPS=%u, Total=%u, Reliability=%.2f\n",
                    messages_per_second, message_count, reliability);
             
-            printf("Debug: Updating metrics - TPS=%lu, Reliability=%.2f\n", 
+            printf("Debug: Updating metrics - TPS=%u, Reliability=%.2f\n", 
                    messages_per_second, reliability);
             
             printf("Debug: Messages=%u, TPS=%u, Reliability=%.2f, Time=%lu\n", 

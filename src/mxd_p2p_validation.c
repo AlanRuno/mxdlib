@@ -108,7 +108,7 @@ int mxd_update_peer_rapid_table_status(const char *address, uint16_t port,
     peer.in_rapid_table = in_rapid_table;
     peer.rapid_table_position = position;
     
-    printf("Updated peer %s:%d Rapid Table status: in_table=%d, position=%d\n",
+    printf("Updated peer %s:%d Rapid Table status: in_table=%d, position=%u\n",
            address, port, in_rapid_table, position);
     
     return 0;
