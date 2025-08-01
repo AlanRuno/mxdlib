@@ -96,6 +96,7 @@ RUN apt-get update && apt-get install -y \
     libsodium23 \
     librocksdb6.11 \
     libcjson1 \
+    libcurl4 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
@@ -105,16 +106,24 @@ RUN useradd -m -u 1001 mxdnode && \
     mkdir -p /opt/mxd/data /opt/mxd/config /opt/mxd/logs && \
     chown -R mxdnode:mxdnode /opt/mxd
 
+# Copy runtime libraries from builder stage
+COPY --from=builder /usr/local/lib/libuv.so* /usr/local/lib/
+COPY --from=builder /usr/local/lib/libuvwasi.so* /usr/local/lib/
+COPY --from=builder /usr/local/lib/libm3.so* /usr/local/lib/
+
 # Copy built binaries and libraries
 COPY --from=builder --chown=mxdnode:mxdnode /home/builder/mxdlib/build/lib/libmxd.so /opt/mxd/lib/
 COPY --from=builder --chown=mxdnode:mxdnode /home/builder/mxdlib/build/lib/mxd_node /opt/mxd/bin/
 COPY --from=builder --chown=mxdnode:mxdnode /home/builder/mxdlib/src/node/default_config.json /opt/mxd/config/
 
+# Update library cache
+RUN ldconfig
+
 # Set up environment
 USER mxdnode
 WORKDIR /opt/mxd
 ENV PATH="/opt/mxd/bin:$PATH"
-ENV LD_LIBRARY_PATH="/opt/mxd/lib:$LD_LIBRARY_PATH"
+ENV LD_LIBRARY_PATH="/opt/mxd/lib:/usr/local/lib"
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
@@ -124,4 +133,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 EXPOSE 8000 8080
 
 # Default command
-CMD ["mxd_node", "--config", "/opt/mxd/config/default_config.json", "--data-dir", "/opt/mxd/data"]
+CMD ["mxd_node", "--config", "/opt/mxd/config/default_config.json"]

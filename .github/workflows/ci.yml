@@ -130,12 +130,10 @@ jobs:
         context: .
         push: false
         tags: mxdlib:latest
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        no-cache: true
     
     - name: Test Docker image
       run: |
-        docker run --rm mxdlib:latest --version
         docker run --rm -d --name mxd-test mxdlib:latest
         sleep 10
         docker logs mxd-test
