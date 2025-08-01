@@ -257,8 +257,10 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
     uint32_t network_magic;
     if (secrets) {
         network_magic = secrets->network_magic;
+        printf("DEBUG: Using secrets network magic: 0x%08X\n", network_magic);
     } else {
         network_magic = 0x4D584431;
+        printf("DEBUG: Using fallback network magic: 0x%08X\n", network_magic);
     }
     
     mxd_message_header_t header = {

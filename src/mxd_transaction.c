@@ -212,10 +212,12 @@ int mxd_verify_tx_input(const mxd_transaction_t *tx, uint32_t input_index) {
 
 // Validate entire transaction
 int mxd_validate_transaction(const mxd_transaction_t *tx) {
+  printf("DEBUG: Transaction validation - initialized: %d\n", validation_initialized);
   if (!validation_initialized || !tx || tx->version != 1 || 
       (tx->input_count == 0 && !tx->is_coinbase) ||
       tx->input_count > MXD_MAX_TX_INPUTS || tx->output_count == 0 ||
       tx->output_count > MXD_MAX_TX_OUTPUTS || tx->voluntary_tip < 0) {
+    printf("DEBUG: Transaction validation failed - early checks\n");
     return -1;
   }
 
