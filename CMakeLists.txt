@@ -100,7 +100,12 @@ add_library(mxd SHARED
     src/quantization/mxd_data_quantization.c
     src/mxd_ntp.c
     src/mxd_metrics.c
-    src/mxd_dht.c)
+    src/mxd_dht.c
+    src/mxd_logging.c
+    src/mxd_secrets.c
+    src/mxd_monitoring.c
+    src/mxd_backup.c
+    src/mxd_load_testing.c)
 
 
 # Link libraries
@@ -184,3 +189,18 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/node/default_config.json
 set_target_properties(mxd_node PROPERTIES
     LINK_FLAGS "-Wl,--whole-archive"
     LINK_WHAT_YOU_USE TRUE)
+
+# Add enterprise features test executable
+add_executable(mxd_enterprise_features_tests
+    tests/test_enterprise_features.c
+)
+
+target_link_libraries(mxd_enterprise_features_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+# Add test for enterprise features
+add_test(NAME enterprise_features_tests COMMAND mxd_enterprise_features_tests)

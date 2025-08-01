@@ -204,6 +204,12 @@ static void test_node_lifecycle(void) {
     
     // Reset validation state before processing
     mxd_reset_transaction_validation();
+    
+    // Re-initialize transaction validation system
+    printf("DEBUG: Re-initializing transaction validation system\n");
+    TEST_ASSERT(mxd_init_transaction_validation() == 0, "Transaction validation re-initialization");
+    printf("DEBUG: Transaction validation re-initialization completed\n");
+    
     int total_transactions = TEST_TRANSACTIONS;
     
     // Process transactions in batches to maintain rate

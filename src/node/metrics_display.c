@@ -2,6 +2,7 @@
 #include <time.h>
 #include <string.h>
 #include "metrics_display.h"
+#include "../include/mxd_logging.h"
 
 void clear_console(void) {
     printf("\033[2J\033[H");  // ANSI escape codes to clear screen and move cursor to top
@@ -26,10 +27,9 @@ void display_node_metrics(const mxd_node_metrics_t* metrics, const mxd_node_stak
     // Update network status based on metrics
     int is_active = metrics->reliability_score > 0.95 && tps >= 10.0;
     
-    // Debug metrics
-    printf("Debug: Display - TPS=%.2f, Success=%u/%u, Reliability=%.2f, Active=%d\n", 
-           tps, metrics->message_success, metrics->message_total,
-           metrics->reliability_score, is_active);
+    MXD_LOG_DEBUG("metrics_display", "TPS=%.2f, Success=%u/%u, Reliability=%.2f, Active=%d", 
+                  tps, metrics->message_success, metrics->message_total,
+                  metrics->reliability_score, is_active);
     
     // Header
     printf("=== MXD Node Status === %s\n", time_str);

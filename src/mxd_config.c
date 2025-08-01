@@ -97,8 +97,8 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
             continue;
         }
         
-        if (sscanf(trimmed, "\"%[^\"]\" : \"%[^\"]\"", key, value) == 2 ||
-            sscanf(trimmed, "\"%[^\"]\":%[^,\n]", key, value) == 2) {
+        if (sscanf(trimmed, "\"%255[^\"]\" : \"%767[^\"]\"", key, value) == 2 ||
+            sscanf(trimmed, "\"%255[^\"]\":%767[^,\n]", key, value) == 2) {
             
             char* trimmed_value = trim(value);
             trimmed_value = strip_quotes(trimmed_value);
