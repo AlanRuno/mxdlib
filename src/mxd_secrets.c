@@ -73,9 +73,7 @@ int mxd_load_secret_from_env(const char *env_var, void *dest, size_t dest_size) 
     }
     
     memcpy(dest, value, value_len);
-    if (dest_size > value_len) {
-        memset((uint8_t*)dest + value_len, 0, dest_size - value_len);
-    }
+    memset((uint8_t*)dest + value_len, 0, dest_size - value_len);
     
     return 0;
 }

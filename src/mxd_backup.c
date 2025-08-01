@@ -28,10 +28,6 @@ static int calculate_file_checksum(const char *filepath, char *checksum) {
         return -1;
     }
     
-    uint8_t buffer[8192];
-    uint8_t hash[64];
-    size_t bytes_read;
-    
     fseek(file, 0, SEEK_END);
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
@@ -44,6 +40,8 @@ static int calculate_file_checksum(const char *filepath, char *checksum) {
         }
         
         fread(file_data, 1, file_size, file);
+        
+        uint8_t hash[64];
         if (mxd_sha512(file_data, file_size, hash) != 0) {
             free(file_data);
             fclose(file);

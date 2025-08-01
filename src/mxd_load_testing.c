@@ -202,7 +202,7 @@ int mxd_benchmark_crypto_operations(uint32_t iterations, double *ops_per_second)
     for (uint32_t i = 0; i < iterations; i++) {
         uint8_t hash[64];
         char test_data[256];
-        snprintf(test_data, sizeof(test_data), "test_data_%d", i);
+        snprintf(test_data, sizeof(test_data), "test_data_%u", i);
         mxd_sha512(test_data, strlen(test_data), hash);
     }
     
@@ -292,7 +292,7 @@ int mxd_stress_test_network_capacity(uint32_t max_peers, uint32_t *max_throughpu
     for (uint32_t peers = 1; peers <= max_peers; peers++) {
         for (uint32_t msg = 0; msg < messages_per_peer; msg++) {
             uint8_t test_data[64];
-            snprintf((char*)test_data, sizeof(test_data), "peer_%d_msg_%d", peers, msg);
+            snprintf((char*)test_data, sizeof(test_data), "peer_%u_msg_%u", peers, msg);
             
             if (mxd_broadcast_message(1, test_data, sizeof(test_data)) != 0) {
                 MXD_LOG_WARN("load_test", "Network capacity limit reached at %d peers", peers);
@@ -329,6 +329,6 @@ void mxd_print_load_test_results(const mxd_load_test_results_t *results) {
            results->average_response_time, results->min_response_time, results->max_response_time);
     printf("Peak Memory: %lu bytes\n", results->memory_peak_usage);
     printf("Peak CPU: %.2f%%\n", results->cpu_peak_usage);
-    printf("Error Count: %d\n", results->error_count);
+    printf("Error Count: %u\n", results->error_count);
     printf("========================\n\n");
 }
