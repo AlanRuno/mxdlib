@@ -68,6 +68,20 @@ The library's architecture is designed for optimal performance and security in c
 
 ## 🛠️ Quick Start
 
+### ⚠️ SECURITY NOTICE (August 2025)
+**CRITICAL**: This library contains security vulnerabilities and is **NOT READY** for production deployment. A comprehensive enterprise audit has identified critical issues that must be resolved before any production use.
+
+**Current Status**: 65% Production Ready - **SECURITY FIXES REQUIRED**
+**See**: `docs/planning/NEXT_STEPS_POST_AUDIT.md` for immediate action plan
+
+### 🔒 Security Development Guidelines
+If you are contributing to this project:
+
+1. **NEVER add printf statements** that expose sensitive data
+2. **NEVER hardcode security parameters** (keys, salts, magic numbers)
+3. **Always use the MXD_LOG_* macros** for logging instead of printf
+4. **Review security checklist** in `docs/planning/IMMEDIATE_ACTION_CHECKLIST.md`
+
 ### Node Configuration
 The node can be started with or without a configuration file:
 ```bash
