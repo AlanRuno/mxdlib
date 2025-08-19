@@ -50,7 +50,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake pkg-config \
           libssl-dev libsodium-dev librocksdb-dev libcjson-dev \
-          libuvwasi-dev \
+          libuv1-dev libcurl4-openssl-dev \
           valgrind cppcheck clang-tidy
     
     - name: Set CC/CXX to clang
@@ -64,7 +64,7 @@ jobs:
       run: ./install_dependencies.sh
     
     - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_TESTING=ON
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_TESTING=ON -DMXD_WITH_WASI=OFF
     
     - name: Build
       run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(nproc)
@@ -98,14 +98,14 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake pkg-config \
           libssl-dev libsodium-dev librocksdb-dev libcjson-dev \
-          libuvwasi-dev
+          libuv1-dev libcurl4-openssl-dev
     
     - name: Install MXD dependencies
       run: ./install_dependencies.sh
     
     - name: Build
       run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=ON
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=ON -DMXD_WITH_WASI=OFF
         cmake --build build --config Release -j$(nproc)
     
     - name: Run performance tests
