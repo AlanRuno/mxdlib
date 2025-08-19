@@ -55,6 +55,7 @@ jobs:
           echo "CXX=clang++" >> $GITHUB_ENV
           echo "CFLAGS=-Wno-deprecated-declarations" >> $GITHUB_ENV
         fi
+
     - name: Guard: fail on printf/fprintf usage in src/ (excluding logging implementation)
       run: |
         set +e
