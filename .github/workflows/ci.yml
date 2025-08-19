@@ -14,9 +14,9 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
     
-    - name: Run Trivy vulnerability scanner
+      - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
       with:
         scan-type: 'fs'
@@ -26,7 +26,7 @@ jobs:
     
     # Note: Upload may fail if Code Scanning is not enabled for this repository
     # This requires repository admin access to enable in Settings > Security & analysis
-    - name: Upload Trivy scan results
+      - name: Upload Trivy scan results
       uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
@@ -39,16 +39,16 @@ jobs:
         compiler: [gcc, clang]
     
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
     
-    - name: Install dependencies
+      - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential cmake pkg-config \
           libssl-dev libsodium-dev librocksdb-dev libcjson-dev \
           valgrind cppcheck clang-tidy
     
-    - name: Set up compiler
+      - name: Set up compiler
       run: |
         if [ "${{ matrix.compiler }}" = "clang" ]; then
           echo "CC=clang" >> $GITHUB_ENV
@@ -56,7 +56,7 @@ jobs:
           echo "CFLAGS=-Wno-deprecated-declarations" >> $GITHUB_ENV
         fi
 
-    - name: Guard: fail on printf/fprintf usage in src/ (excluding logging implementation)
+      - name: Guard: fail on printf/fprintf usage in src/ (excluding logging implementation)
       run: |
         set +e
         MATCHES=$(grep -RInE "printf\\(|fprintf\\(" src/ | grep -v "src/mxd_logging.c" || true)
@@ -66,7 +66,7 @@ jobs:
           exit 1
         fi
 
-    - name: Guard: fail on hardcoded secrets patterns
+      - name: Guard: fail on hardcoded secrets patterns
       run: |
         set +e
         BAD1=$(grep -RIn "0x4D584431" src/ include/ || true)
@@ -80,7 +80,7 @@ jobs:
         fi
 
     
-    - name: Guard: fail on printf/fprintf usage in src (exclude logging and tests)
+      - name: Guard: fail on printf/fprintf usage in src (exclude logging and tests)
       run: |
         set +e
         HITS=$(grep -RInE "printf\\(|fprintf\\(" src || true)
@@ -94,25 +94,25 @@ jobs:
           fi
         fi
 
-    - name: Install MXD dependencies
+      - name: Install MXD dependencies
       run: ./install_dependencies.sh
     
-    - name: Configure CMake
+      - name: Configure CMake
       run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_TESTING=ON
     
-    - name: Build
+      - name: Build
       run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(nproc)
     
-    - name: Run static analysis
+      - name: Run static analysis
       run: |
         cppcheck --enable=warning,performance,portability --error-exitcode=1 --suppress=missingIncludeSystem --suppress=unusedFunction src/
         find src/ -name "*.c" -exec clang-tidy {} -- -I include/ \;
     
-    - name: Run tests
+      - name: Run tests
       working-directory: build
       run: ctest --output-on-failure
     
-    - name: Run memory tests with Valgrind
+      - name: Run memory tests with Valgrind
       working-directory: build
       run: |
         valgrind --tool=memcheck --leak-check=full --error-exitcode=1 \
@@ -125,28 +125,28 @@ jobs:
     needs: build-and-test
     
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
     
-    - name: Install dependencies
+      - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential cmake pkg-config \
           libssl-dev libsodium-dev librocksdb-dev libcjson-dev
     
-    - name: Install MXD dependencies
+      - name: Install MXD dependencies
       run: ./install_dependencies.sh
     
-    - name: Build
+      - name: Build
       run: |
         cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=ON
         cmake --build build --config Release -j$(nproc)
     
-    - name: Run performance tests
+      - name: Run performance tests
       working-directory: build
       run: |
         ./lib/mxd_metrics_performance_tests
     
-    - name: Performance benchmark
+      - name: Performance benchmark
       run: |
         echo "## Performance Benchmark Results" >> $GITHUB_STEP_SUMMARY
         echo "| Test | Result |" >> $GITHUB_STEP_SUMMARY
@@ -158,12 +158,12 @@ jobs:
     needs: build-and-test
     
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
     
-    - name: Set up Docker Buildx
+      - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     
-    - name: Build Docker image
+      - name: Build Docker image
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -172,7 +172,7 @@ jobs:
         tags: mxdlib:latest
         no-cache: true
     
-    - name: Test Docker image
+      - name: Test Docker image
       run: |
         docker run --rm -d --name mxd-test mxdlib:latest
         sleep 10
@@ -184,14 +184,14 @@ jobs:
     needs: docker-build
     
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
     
-    - name: Start test environment
+      - name: Start test environment
       run: |
         docker compose -f docker-compose.test.yml up -d
         sleep 30
     
-    - name: Run integration tests
+      - name: Run integration tests
       run: |
         # Test that containers start successfully
         docker compose -f docker-compose.test.yml ps
@@ -204,7 +204,7 @@ jobs:
         docker exec mxd-node-1 echo "Node 1 responsive"
         docker exec mxd-node-2 echo "Node 2 responsive"
     
-    - name: Cleanup
+      - name: Cleanup
       if: always()
       run: docker compose -f docker-compose.test.yml down
 
@@ -214,14 +214,14 @@ jobs:
     if: github.ref == 'refs/heads/develop'
     
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
     
-    - name: Deploy to staging
+      - name: Deploy to staging
       run: |
         echo "Deploying to staging environment..."
         # Add actual deployment steps here
     
-    - name: Run smoke tests
+      - name: Run smoke tests
       run: |
         echo "Running smoke tests on staging..."
         # Add smoke test steps here
