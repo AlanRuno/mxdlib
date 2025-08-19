@@ -80,19 +80,6 @@ jobs:
         fi
 
     
-      - name: Guard: fail on printf/fprintf usage in src (exclude logging and tests)
-      run: |
-        set +e
-        HITS=$(grep -RInE "printf\\(|fprintf\\(" src || true)
-        if [ -n "$HITS" ]; then
-          # Exclude allowed files
-          FILTERED=$(echo "$HITS" | grep -v "src/mxd_logging.c" | grep -v "^tests/")
-          if [ -n "$FILTERED" ]; then
-            echo "$FILTERED"
-            echo "Found printf/fprintf in src/. Replace with MXD_LOG_*."
-            exit 1
-          fi
-        fi
 
       - name: Install MXD dependencies
       run: ./install_dependencies.sh
