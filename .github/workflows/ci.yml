@@ -44,13 +44,12 @@ jobs:
             libssl-dev libsodium-dev librocksdb-dev libcjson-dev \
             valgrind cppcheck clang-tidy
     
-      - name: Set up compiler
+      - name: Set CC/CXX to clang
+        if: ${{ matrix.compiler == 'clang' }}
         run: |
-          if [ "${{ matrix.compiler }}" = "clang" ]; then
-            echo "CC=clang" >> $GITHUB_ENV
-            echo "CXX=clang++" >> $GITHUB_ENV
-            echo "CFLAGS=-Wno-deprecated-declarations" >> $GITHUB_ENV
-          fi
+          echo "CC=clang" >> $GITHUB_ENV
+          echo "CXX=clang++" >> $GITHUB_ENV
+          echo 'CFLAGS=-Wno-deprecated-declarations' >> $GITHUB_ENV
 
       - name: Guard: fail on printf/fprintf usage in src/ (excluding logging implementation)
         run: |
