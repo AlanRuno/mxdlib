@@ -1,7 +1,7 @@
 #include "../../include/mxd_rsc.h"
 #include "../../include/mxd_ntp.h"
 #include "../../include/mxd_blockchain_db.h"
-#include <stdio.h>
+#include "../../include/mxd_logging.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -619,12 +619,12 @@ int mxd_blacklist_validator(const uint8_t validator_id[20], uint32_t duration) {
                value, strlen(value), &err);
     
     if (err) {
-        printf("Failed to blacklist validator: %s\n", err);
+        MXD_LOG_ERROR("rsc", "Failed to blacklist validator: %s", err);
         free(err);
         return -1;
     }
     
-    printf("Validator blacklisted until height %u\n", expiry_height);
+    MXD_LOG_INFO("rsc", "Validator blacklisted until height %u", expiry_height);
     return 0;
 }
 
@@ -654,7 +654,7 @@ int mxd_is_validator_blacklisted(const uint8_t validator_id[20]) {
     value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, sizeof(key), &value_len, &err);
     
     if (err) {
-        printf("Failed to check blacklist status: %s\n", err);
+        MXD_LOG_ERROR("rsc", "Failed to check blacklist status: %s", err);
         free(err);
         return -1;
     }
