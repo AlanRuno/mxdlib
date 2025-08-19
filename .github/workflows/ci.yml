@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+  security-events: write
+
 env:
   BUILD_TYPE: Release
 
@@ -28,6 +32,7 @@ jobs:
     - name: Upload Trivy scan results
       uses: github/codeql-action/upload-sarif@v3
       if: always()
+      continue-on-error: true
       with:
         sarif_file: 'trivy-results.sarif'
 
@@ -45,21 +50,21 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential cmake pkg-config \
           libssl-dev libsodium-dev librocksdb-dev libcjson-dev \
+          libuv1-dev libcurl4-openssl-dev \
           valgrind cppcheck clang-tidy
     
-    - name: Set up compiler
+    - name: Set CC/CXX to clang
+      if: ${{ matrix.compiler == 'clang' }}
       run: |
-        if [ "${{ matrix.compiler }}" = "clang" ]; then
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "CXX=clang++" >> $GITHUB_ENV
-          echo "CFLAGS=-Wno-deprecated-declarations" >> $GITHUB_ENV
-        fi
+        echo "CC=clang" >> $GITHUB_ENV
+        echo "CXX=clang++" >> $GITHUB_ENV
+        echo 'CFLAGS=-Wno-deprecated-declarations' >> $GITHUB_ENV
     
     - name: Install MXD dependencies
       run: ./install_dependencies.sh
     
     - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_TESTING=ON
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_TESTING=ON -DMXD_WITH_WASI=OFF
     
     - name: Build
       run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(nproc)
@@ -92,14 +97,15 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential cmake pkg-config \
-          libssl-dev libsodium-dev librocksdb-dev libcjson-dev
+          libssl-dev libsodium-dev librocksdb-dev libcjson-dev \
+          libuv1-dev libcurl4-openssl-dev
     
     - name: Install MXD dependencies
       run: ./install_dependencies.sh
     
     - name: Build
       run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=ON
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=ON -DMXD_WITH_WASI=OFF
         cmake --build build --config Release -j$(nproc)
     
     - name: Run performance tests

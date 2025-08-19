@@ -30,11 +30,15 @@ link_directories(/usr/local/lib)
 find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
+option(MXD_WITH_WASI "Build with WASI/uvwasi support" ON)
+
 # Use pkg-config to find libraries
 pkg_check_modules(CJSON REQUIRED libcjson)
 pkg_check_modules(CURL REQUIRED libcurl)
 pkg_check_modules(LIBUV REQUIRED libuv)
-pkg_check_modules(UVWASI REQUIRED uvwasi)
+if(MXD_WITH_WASI)
+  pkg_check_modules(UVWASI QUIET uvwasi)
+endif()
 pkg_check_modules(WASM3 REQUIRED wasm3)
 
 # Find RocksDB using find_library instead of pkg-config
@@ -47,25 +51,29 @@ endif()
 
 include_directories(
     ${LIBUV_INCLUDE_DIRS}
-    ${UVWASI_INCLUDE_DIRS}
     ${WASM3_INCLUDE_DIRS}
     ${CJSON_INCLUDE_DIRS}
     ${CURL_INCLUDE_DIRS}
     ${ROCKSDB_INCLUDE_DIR}
 )
+if(MXD_WITH_WASI AND UVWASI_FOUND)
+    include_directories(${UVWASI_INCLUDE_DIRS})
+endif()
 
 # Find other required libraries
-find_library(UVWASI_LIBRARY uvwasi PATHS /usr/local/lib)
-find_library(UV_LIBRARY uv PATHS /usr/local/lib)
-find_path(UVWASI_INCLUDE_DIR uvwasi/uvwasi.h PATHS /usr/local/include)
-find_path(UV_INCLUDE_DIR uv.h PATHS /usr/local/include)
-
-if(NOT UVWASI_LIBRARY OR NOT UVWASI_INCLUDE_DIR)
-    message(FATAL_ERROR "uvwasi library not found")
-endif()
+find_library(UV_LIBRARY uv PATHS /usr/local/lib /usr/lib)
+find_path(UV_INCLUDE_DIR uv.h PATHS /usr/local/include /usr/include)
 
 if(NOT UV_LIBRARY OR NOT UV_INCLUDE_DIR)
     message(FATAL_ERROR "libuv library not found")
+endif()
+
+if(MXD_WITH_WASI)
+    find_library(UVWASI_LIBRARY uvwasi PATHS /usr/local/lib /usr/lib)
+    find_path(UVWASI_INCLUDE_DIR uvwasi/uvwasi.h PATHS /usr/local/include /usr/include)
+    if(NOT UVWASI_LIBRARY OR NOT UVWASI_INCLUDE_DIR)
+        set(MXD_WITH_WASI OFF)
+    endif()
 endif()
 
 include_directories(${WASM3_INCLUDE_DIR})
@@ -115,7 +123,6 @@ if(WIN32)
         sodium
         gmp
         ${LIBUV_LIBRARIES}
-        ${UVWASI_LIBRARIES}
         ${WASM3_LIBRARIES}
         ${ROCKSDB_LIBRARY}
         ws2_32
@@ -130,7 +137,6 @@ else()
         gmp
         -Wl,--whole-archive
         ${LIBUV_LIBRARIES}
-        ${UVWASI_LIBRARIES}
         ${WASM3_LIBRARIES}
         ${CJSON_LIBRARIES}
         ${CURL_LIBRARIES}
@@ -140,6 +146,10 @@ else()
         pthread
         dl
         rt)
+endif()
+
+if(MXD_WITH_WASI)
+    target_link_libraries(mxd ${UVWASI_LIBRARIES})
 endif()
 
 # Include directories
