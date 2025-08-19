@@ -1,3 +1,5 @@
+#include "mxd_logging.h"
+
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_crypto.h"
 #include <stdio.h>
@@ -247,7 +249,7 @@ int mxd_init_utxo_db(const char *db_path) {
     rocksdb_t *db = rocksdb_open(options, db_path, &err);
     
     if (err) {
-        printf("Failed to open UTXO database: %s\n", err);
+        MXD_LOG_ERROR("utxo", "Failed to open UTXO database: %s", err);
         free(err);
         
         rocksdb_options_set_error_if_exists(options, 0);
@@ -256,7 +258,7 @@ int mxd_init_utxo_db(const char *db_path) {
         err = NULL;
         db = rocksdb_open(options, db_path, &err);
         if (err) {
-            printf("Second attempt to open UTXO database failed: %s\n", err);
+            MXD_LOG_ERROR("utxo", "Second attempt to open UTXO database failed: %s", err);
             free(err);
             return -1;
         }
@@ -300,7 +302,7 @@ int mxd_add_utxo(const mxd_utxo_t *utxo) {
     char *err = NULL;
     rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)key, key_len, (char *)data, data_len, &err);
     if (err) {
-        printf("Failed to store UTXO: %s\n", err);
+        MXD_LOG_ERROR("utxo", "Failed to store UTXO: %s", err);
         free(err);
         free(data);
         return -1;
@@ -316,7 +318,7 @@ int mxd_add_utxo(const mxd_utxo_t *utxo) {
     
     rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)pubkey_key, pubkey_key_len, "", 0, &err);
     if (err) {
-        printf("Failed to store pubkey hash index: %s\n", err);
+        MXD_LOG_ERROR("utxo", "Failed to store pubkey hash index: %s", err);
         free(err);
         free(data);
         return -1;
@@ -352,7 +354,7 @@ int mxd_remove_utxo(const uint8_t tx_hash[64], uint32_t output_index) {
     char *err = NULL;
     rocksdb_delete(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)key, key_len, &err);
     if (err) {
-        printf("Failed to remove UTXO: %s\n", err);
+        MXD_LOG_ERROR("utxo", "Failed to remove UTXO: %s", err);
         free(err);
         mxd_free_utxo(&utxo);
         return -1;
@@ -367,7 +369,7 @@ int mxd_remove_utxo(const uint8_t tx_hash[64], uint32_t output_index) {
     
     rocksdb_delete(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)pubkey_key, pubkey_key_len, &err);
     if (err) {
-        printf("Failed to remove pubkey hash index: %s\n", err);
+        MXD_LOG_ERROR("utxo", "Failed to remove pubkey hash index: %s", err);
         free(err);
         mxd_free_utxo(&utxo);
         return -1;
@@ -423,7 +425,7 @@ int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
     size_t value_len = 0;
     value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, key_len, &value_len, &err);
     if (err) {
-        printf("Failed to retrieve UTXO: %s\n", err);
+        MXD_LOG_ERROR("utxo", "Failed to retrieve UTXO: %s", err);
         free(err);
         return -1;
     }
@@ -847,7 +849,7 @@ int mxd_flush_utxo_db(void) {
     rocksdb_flushoptions_destroy(flushoptions);
     
     if (err) {
-        printf("Failed to flush UTXO database: %s\n", err);
+        MXD_LOG_ERROR("utxo", "Failed to flush UTXO database: %s", err);
         free(err);
         return -1;
     }
@@ -864,7 +866,7 @@ int mxd_compact_utxo_db(void) {
     rocksdb_compact_range(mxd_get_rocksdb_db(), NULL, 0, NULL, 0);
     
     if (err) {
-        printf("Failed to compact UTXO database: %s\n", err);
+        MXD_LOG_ERROR("utxo", "Failed to compact UTXO database: %s", err);
         free(err);
         return -1;
     }

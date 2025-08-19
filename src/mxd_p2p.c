@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
@@ -48,7 +47,11 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
 
     // Check magic number
     const mxd_secrets_t *secrets = mxd_get_secrets();
-    uint32_t expected_magic = secrets ? secrets->network_magic : 0x4D584431;
+    if (!secrets) {
+        MXD_LOG_ERROR("p2p", "Secrets not initialized");
+        return -1;
+    }
+    uint32_t expected_magic = secrets->network_magic;
     if (header->magic != expected_magic) {
         MXD_LOG_WARN("p2p", "Invalid network magic received");
         return -1;
@@ -254,14 +257,11 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
 
     // Prepare message header
     const mxd_secrets_t *secrets = mxd_get_secrets();
-    uint32_t network_magic;
-    if (secrets) {
-        network_magic = secrets->network_magic;
-        printf("DEBUG: Using secrets network magic: 0x%08X\n", network_magic);
-    } else {
-        network_magic = 0x4D584431;
-        printf("DEBUG: Using fallback network magic: 0x%08X\n", network_magic);
+    if (!secrets) {
+        MXD_LOG_ERROR("p2p", "Secrets not initialized");
+        return -1;
     }
+    uint32_t network_magic = secrets->network_magic;
     
     mxd_message_header_t header = {
         .magic = network_magic,

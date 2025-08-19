@@ -1,3 +1,4 @@
+# CI workflow updated to include printf/fprintf guard in src/
 name: MXD Library CI/CD
 
 on:
@@ -54,7 +55,44 @@ jobs:
           echo "CXX=clang++" >> $GITHUB_ENV
           echo "CFLAGS=-Wno-deprecated-declarations" >> $GITHUB_ENV
         fi
+    - name: Guard: fail on printf/fprintf usage in src/ (excluding logging implementation)
+      run: |
+        set +e
+        MATCHES=$(grep -RInE "printf\\(|fprintf\\(" src/ | grep -v "src/mxd_logging.c" || true)
+        if [ -n "$MATCHES" ]; then
+          echo "$MATCHES"
+          echo "Found printf/fprintf usage in src/. Replace with MXD_LOG_*"
+          exit 1
+        fi
+
+    - name: Guard: fail on hardcoded secrets patterns
+      run: |
+        set +e
+        BAD1=$(grep -RIn "0x4D584431" src/ include/ || true)
+        BAD2=$(grep -RIn "MXDKeyDerivation" src/ include/ || true)
+        BAD3=$(grep -RInE "memset\\s*\\(\\s*[^,]+\\s*,\\s*0xAB\\s*," src/ include/ || true)
+        ALL="$BAD1$BAD2$BAD3"
+        if [ -n "$ALL" ]; then
+          echo "$ALL"
+          echo "Found hardcoded secrets or salts. Remove them."
+          exit 1
+        fi
+
     
+    - name: Guard: fail on printf/fprintf usage in src (exclude logging and tests)
+      run: |
+        set +e
+        HITS=$(grep -RInE "printf\\(|fprintf\\(" src || true)
+        if [ -n "$HITS" ]; then
+          # Exclude allowed files
+          FILTERED=$(echo "$HITS" | grep -v "src/mxd_logging.c" | grep -v "^tests/")
+          if [ -n "$FILTERED" ]; then
+            echo "$FILTERED"
+            echo "Found printf/fprintf in src/. Replace with MXD_LOG_*."
+            exit 1
+          fi
+        fi
+
     - name: Install MXD dependencies
       run: ./install_dependencies.sh
     

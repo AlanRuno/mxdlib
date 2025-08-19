@@ -318,17 +318,17 @@ void mxd_print_load_test_results(const mxd_load_test_results_t *results) {
         return;
     }
     
-    printf("\n=== Load Test Results ===\n");
-    printf("Total Requests: %lu\n", results->total_requests);
-    printf("Successful: %lu (%.2f%%)\n", results->successful_requests, 
+    MXD_LOG_INFO("load_test", "=== Load Test Results ===");
+    MXD_LOG_INFO("load_test", "Total Requests: %lu", results->total_requests);
+    MXD_LOG_INFO("load_test", "Successful: %lu (%.2f%%)", results->successful_requests,
            (double)results->successful_requests / results->total_requests * 100.0);
-    printf("Failed: %lu (%.2f%%)\n", results->failed_requests,
+    MXD_LOG_INFO("load_test", "Failed: %lu (%.2f%%)", results->failed_requests,
            (double)results->failed_requests / results->total_requests * 100.0);
-    printf("Actual TPS: %.2f\n", results->actual_tps);
-    printf("Response Time - Avg: %.2fms, Min: %.2fms, Max: %.2fms\n",
+    MXD_LOG_INFO("load_test", "Actual TPS: %.2f", results->actual_tps);
+    MXD_LOG_INFO("load_test", "Response Time - Avg: %.2fms, Min: %.2fms, Max: %.2fms",
            results->average_response_time, results->min_response_time, results->max_response_time);
-    printf("Peak Memory: %lu bytes\n", results->memory_peak_usage);
-    printf("Peak CPU: %.2f%%\n", results->cpu_peak_usage);
-    printf("Error Count: %u\n", results->error_count);
-    printf("========================\n\n");
+    MXD_LOG_INFO("load_test", "Peak Memory: %lu bytes", results->memory_peak_usage);
+    MXD_LOG_INFO("load_test", "Peak CPU: %.2f%%", results->cpu_peak_usage);
+    MXD_LOG_INFO("load_test", "Error Count: %u", results->error_count);
+    MXD_LOG_INFO("load_test", "========================");
 }

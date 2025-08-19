@@ -1,3 +1,5 @@
+#include "mxd_logging.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -5,6 +7,7 @@
 #include "mxd_crypto.h"
 #include "mxd_p2p.h"
 #include "mxd_rsc.h"
+#include "mxd_logging.h"
 
 #define MXD_MIN_RELAY_SIGNATURES 3
 
@@ -108,7 +111,7 @@ int mxd_update_peer_rapid_table_status(const char *address, uint16_t port,
     peer.in_rapid_table = in_rapid_table;
     peer.rapid_table_position = position;
     
-    printf("Updated peer %s:%d Rapid Table status: in_table=%d, position=%u\n",
+    MXD_LOG_INFO("validation", "Updated peer %s:%d Rapid Table status: in_table=%d, position=%u",
            address, port, in_rapid_table, position);
     
     return 0;
