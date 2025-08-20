@@ -31,6 +31,8 @@ find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 option(MXD_WITH_WASI "Build with WASI/uvwasi support" ON)
+option(MXD_PQC_DILITHIUM "Enable Crystals Dilithium signatures via liboqs/PQClean" OFF)
+
 
 # Use pkg-config to find libraries
 pkg_check_modules(CJSON REQUIRED libcjson)
@@ -156,6 +158,16 @@ endif()
 target_include_directories(mxd PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+if(MXD_PQC_DILITHIUM)
+  find_package(OQS QUIET)
+  if(OQS_FOUND)
+    target_compile_definitions(mxd PRIVATE MXD_PQC_DILITHIUM=1)
+    target_link_libraries(mxd PRIVATE oqs)
+  else()
+    message(STATUS "MXD_PQC_DILITHIUM=ON but liboqs not found; build will fail if enabled without liboqs installed")
+  endif()
+endif()
+
 
 # Install rules
 install(TARGETS mxd

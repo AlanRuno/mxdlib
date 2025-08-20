@@ -203,6 +203,10 @@ int mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output,
   // Using Argon2id variant as recommended for highest security
   if (crypto_pwhash(output, output_length, input, strlen(input), salt,
                     crypto_pwhash_OPSLIMIT_SENSITIVE,
+#ifdef MXD_PQC_DILITHIUM
+#include <oqs/oqs.h>
+#endif
+
                     crypto_pwhash_MEMLIMIT_SENSITIVE,
                     crypto_pwhash_ALG_ARGON2ID13) != 0) {
     return -1; // Memory allocation or other error
@@ -215,26 +219,57 @@ int mxd_dilithium_keygen(uint8_t *public_key, uint8_t *secret_key) {
   if (ensure_crypto_init() < 0) {
     return -1;
   }
-
-  // Generate keypair using Dilithium5
+#ifdef MXD_PQC_DILITHIUM
+  OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
+  if (!sig) {
+    return -1;
+  }
+  int rc = OQS_SIG_keypair(sig, public_key, secret_key);
+  OQS_SIG_free(sig);
+  return rc == OQS_SUCCESS ? 0 : -1;
+#else
   return crypto_sign_keypair(public_key, secret_key);
+#endif
 }
 
 // Dilithium5 signing
 int mxd_dilithium_sign(uint8_t *signature, size_t *signature_length,
                        const uint8_t *message, size_t message_length,
                        const uint8_t *secret_key) {
+#ifdef MXD_PQC_DILITHIUM
+  OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
+  if (!sig) {
+    return -1;
+  }
+  size_t sig_len = 0;
+  int rc = OQS_SIG_sign(sig, signature, &sig_len, message, message_length, secret_key);
+  OQS_SIG_free(sig);
+  if (rc != OQS_SUCCESS) return -1;
+  *signature_length = sig_len;
+  return 0;
+#else
   unsigned long long sig_len;
   int result = crypto_sign_detached(signature, &sig_len, message,
                                     message_length, secret_key);
   *signature_length = (size_t)sig_len;
   return result;
+#endif
 }
 
 // Dilithium5 verification
 int mxd_dilithium_verify(const uint8_t *signature, size_t signature_length,
                          const uint8_t *message, size_t message_length,
                          const uint8_t *public_key) {
+#ifdef MXD_PQC_DILITHIUM
+  OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
+  if (!sig) {
+    return -1;
+  }
+  int rc = OQS_SIG_verify(sig, message, message_length, signature, signature_length, public_key);
+  OQS_SIG_free(sig);
+  return rc == OQS_SUCCESS ? 0 : -1;
+#else
   return crypto_sign_verify_detached(signature, message, message_length,
                                      public_key);
+#endif
 }

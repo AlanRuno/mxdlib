@@ -62,15 +62,28 @@ int mxd_verify_validation_chain(const mxd_block_t *block) {
     if (!block || !block->validation_chain || block->validation_count == 0) {
         return -1;
     }
-    
+
     for (uint32_t i = 0; i < block->validation_count; i++) {
-        const mxd_validator_signature_t *sig = &block->validation_chain[i];
-        
-        if (sig->chain_position != i) {
+        const mxd_validator_signature_t *sig_i = &block->validation_chain[i];
+
+        if (sig_i->chain_position != i) {
             return -1;
         }
+
+        time_t now = time(NULL);
+        if (sig_i->timestamp > (uint64_t)(now + 60) || sig_i->timestamp + 60 < (uint64_t)now) {
+            return -1;
+        }
+
+        for (uint32_t j = i + 1; j < block->validation_count; j++) {
+            const mxd_validator_signature_t *sig_j = &block->validation_chain[j];
+            if (memcmp(sig_i->validator_id, sig_j->validator_id, 20) == 0) {
+                return -1;
+            }
+        }
     }
-    
+
+
     return 0;
 }
 
