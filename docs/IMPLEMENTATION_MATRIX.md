@@ -9,7 +9,7 @@ Consensus and Validation
   - Implementation: mxd_block_has_min_relay_signatures in src/blockchain/mxd_rsc.c; P2P relay decision in src/mxd_p2p_validation.c calls the helper.
 - Fork resolution by cumulative latency
   - Documentation: Prefer block with higher Σ(1/latency_i) using validator latencies.
-  - Implementation: mxd_resolve_fork in src/blockchain/mxd_blockchain_validation.c uses a latency score function; canonical latency scoring exists in src/blockchain/mxd_rsc.c via mxd_calculate_validation_latency_score (uses measured peer metrics). Future refactor: centralize fork resolution into RSC for single source of truth.
+  - Implementation: mxd_resolve_fork in src/blockchain/mxd_blockchain_validation.c calls mxd_calculate_validation_latency_score from src/blockchain/mxd_rsc.c (uses measured peer metrics). The duplicate local scorer has been removed.
 - Timestamp drift
   - Documentation: ±60 seconds allowance, reject outliers.
   - Implementation: Validation chain verification enforces ±60s in src/blockchain/mxd_blockchain_validation.c.
@@ -35,7 +35,7 @@ Configuration
 P2P Propagation and Rapid Table
 - Gossip relay rules
   - Documentation: Relay after signing or when signatures ≥X; prioritize Rapid Table nodes; track ordered validation path.
-  - Implementation: src/mxd_p2p_validation.c relays using mxd_block_has_min_relay_signatures; RSC helpers validate ordered chain.
+  - Implementation: src/mxd_p2p_validation.c relays using mxd_block_has_min_relay_signatures; RSC helpers validate ordered chain and derive dynamic thresholds.
 
 CI and Supply Chain Security
 - SBOM generation
@@ -54,6 +54,6 @@ Performance Requirements
   - Implementation: Performance tests in CI; latency-based fork weighting implemented; further tuning tracked in metrics tests.
 
 Notes and Next Steps
-- Prefer centralization in RSC for consensus scoring and fork resolution to avoid duplication.
+- Centralize consensus scoring functions in RSC to avoid duplication.
 - Expand blacklisting persistence and auditing logs for enterprise compliance.
 - Maintain deterministic test inputs; avoid environment coupling.
