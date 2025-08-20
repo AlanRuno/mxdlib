@@ -146,8 +146,8 @@ int mxd_resolve_fork(const mxd_block_t *block1, const mxd_block_t *block2) {
         return -1; // block2 wins
     }
     
-    double score1 = mxd_calculate_validation_latency_score(block1);
-    double score2 = mxd_calculate_validation_latency_score(block2);
+    double score1 = mxd_calculate_validation_latency_score(block1, NULL);
+    double score2 = mxd_calculate_validation_latency_score(block2, NULL);
     
     if (score1 > score2) {
         return 1;  // block1 wins
@@ -157,6 +157,10 @@ int mxd_resolve_fork(const mxd_block_t *block1, const mxd_block_t *block2) {
     
     int cmp = memcmp(block1->block_hash, block2->block_hash, 64);
     return cmp;
+}
+
+double mxd_calculate_latency_score(const mxd_block_t *block) {
+    return mxd_calculate_validation_latency_score(block, NULL);
 }
 
 
