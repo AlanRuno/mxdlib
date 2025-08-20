@@ -196,12 +196,14 @@ jobs:
           path: .
           format: cyclonedx-json
           output-file: sbom-source.cdx.json
+          upload-artifact: false
       - name: Generate SBOM for Docker image (CycloneDX)
         uses: anchore/sbom-action@v0.15.8
         with:
           image: mxdlib:latest
           format: cyclonedx-json
           output-file: sbom-image.cdx.json
+          upload-artifact: false
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -257,6 +259,7 @@ jobs:
           image: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
           format: cyclonedx-json
           output-file: sbom-image-ghcr.cdx.json
+          upload-artifact: false
       - name: Upload SBOM (GHCR image)
         uses: actions/upload-artifact@v4
         with:
