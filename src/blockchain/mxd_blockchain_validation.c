@@ -2,6 +2,7 @@
 
 #include "../../include/mxd_blockchain.h"
 #include "../../include/mxd_crypto.h"
+#include "../../include/mxd_p2p.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -118,10 +119,23 @@ int mxd_block_has_quorum(const mxd_block_t *block) {
     if (!block || !block->validation_chain) {
         return 0;
     }
-    
-    const uint32_t rapid_table_size = 6;
-    const uint32_t quorum_threshold = rapid_table_size / 2;
-    
+
+    uint32_t quorum_threshold = 0;
+
+    mxd_peer_t peers[MXD_MAX_PEERS];
+    size_t peer_count = MXD_MAX_PEERS;
+    if (mxd_get_rapid_table_peers(peers, &peer_count) == 0 && peer_count > 0) {
+        quorum_threshold = (uint32_t)(peer_count / 2);
+    } else {
+        uint32_t rapid_table_size = 6;
+        if (block->validation_capacity > 0) {
+            rapid_table_size = block->validation_capacity;
+        }
+        quorum_threshold = (uint32_t)(rapid_table_size / 2);
+    }
+
+    if (quorum_threshold < 1) quorum_threshold = 1;
+
     return (block->validation_count >= quorum_threshold) ? 1 : 0;
 }
 

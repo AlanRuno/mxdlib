@@ -77,6 +77,8 @@ static void test_validation_chain_creation(void) {
     TEST_ASSERT(create_test_block_with_validation(&block, TEST_BLOCK_HEIGHT) == 0, 
                 "Block initialization with validation chain");
     
+    block.validation_capacity = 6;
+    
     TEST_ASSERT(add_validator_signatures(&block, MIN_VALIDATORS) == 0, 
                 "Adding validator signatures");
     
