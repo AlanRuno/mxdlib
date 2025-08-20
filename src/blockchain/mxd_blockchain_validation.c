@@ -163,17 +163,30 @@ double mxd_calculate_latency_score(const mxd_block_t *block) {
     if (!block || !block->validation_chain || block->validation_count == 0) {
         return 0.0;
     }
-    
+
+    mxd_peer_t peers[MXD_MAX_PEERS];
+    size_t peer_count = MXD_MAX_PEERS;
+    int have_peers = (mxd_get_rapid_table_peers(peers, &peer_count) == 0 && peer_count > 0) ? 1 : 0;
+
     double score = 0.0;
-    
+
     for (uint32_t i = 0; i < block->validation_count; i++) {
-        uint32_t latency_ms = 20 + (block->validation_chain[i].validator_id[0] % 100);
-        
+        const uint8_t *validator_id = block->validation_chain[i].validator_id;
+        uint32_t latency_ms = 3000;
+
+        if (have_peers) {
+            for (size_t j = 0; j < peer_count; j++) {
+                if (memcmp(peers[j].public_key, validator_id, 20) == 0) {
+                    latency_ms = peers[j].latency > 0 ? peers[j].latency : 3000;
+                    break;
+                }
+            }
+        }
+
         if (latency_ms == 0) latency_ms = 1;
-        
-        score += 1.0 / latency_ms;
+        score += 1.0 / (double)latency_ms;
     }
-    
+
     return score;
 }
 
