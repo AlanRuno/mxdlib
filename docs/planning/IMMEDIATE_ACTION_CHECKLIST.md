@@ -1,3 +1,12 @@
+Status Annotations
+- Quorum and relay thresholds: Implemented via RSC helpers; P2P relay uses min-signature helper. [Implemented] [CI-tested]
+- Fork resolution by latency: Implemented; scorer exists and used in fork resolution. [Implemented] [CI-tested]
+- Timestamp drift ±60s: Enforced during validation-chain verification. [Implemented]
+- Config fallback preservation: Layered defaults, preserve user settings on bootstrap failure. [Implemented]
+- Crypto includes cleanup: PQC OQS include guarded at top-level. [Implemented]
+- SBOM + signing: CI produces SBOMs; tag-gated publish+sign job enabled. [Implemented in CI]
+
+
 # MXD Library - Immediate Action Checklist
 
 ## 🚨 CRITICAL SECURITY FIXES (IMMEDIATE - Week 1)

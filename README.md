@@ -1,3 +1,6 @@
+Doc vs Implementation Matrix
+- See docs/IMPLEMENTATION_MATRIX.md for a systematic comparison between documented design and actual implementation across consensus, P2P propagation, cryptography, configuration, and CI security features.
+
 # 🌟 MXD Universal Dynamic Library
 
 A cross-platform dynamic library implementing cryptographic, blockchain, and networking functionalities with ISO compliance and post-quantum security. This library serves as the foundation for the Mexican Denarius (MXD) cryptocurrency, designed to revolutionize digital financial transactions with a focus on efficiency, security, and scalability.
