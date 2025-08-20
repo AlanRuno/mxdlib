@@ -78,7 +78,9 @@ void mxd_cleanup_secrets(void) {
 
 const mxd_secrets_t* mxd_get_secrets(void) {
     if (!secrets_initialized) {
-        return NULL;
+        if (mxd_init_secrets(NULL) != 0) {
+            return NULL;
+        }
     }
     return &secrets;
 }
