@@ -16,6 +16,9 @@ find_package(MXD REQUIRED)
 target_link_libraries(your_project PRIVATE mxd_shared)
 ```
 
+Note:
+- mxd_dilithium_* APIs are stable.
+- In current releases they are backed by Ed25519; when built with -DMXD_PQC_DILITHIUM=ON they will use Crystals Dilithium.
 ## Basic Usage Examples
 
 ### Cryptographic Operations

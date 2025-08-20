@@ -17,7 +17,7 @@ MXD (Mexican Denarius) represents a groundbreaking advancement in digital financ
 ### 💫 Technical Innovation
 - **Consensus Mechanism**: Utilizes network communication speed metrics for efficient block validation
 - **Transaction Model**: UTXO-based system with voluntary tip structure
-- **Security**: Post-quantum cryptographic implementations with Dilithium5
+- **Security**: Post-quantum cryptographic roadmap (Dilithium) — current builds use Ed25519; Dilithium integration is in progress behind MXD_PQC_DILITHIUM
 - **Network Efficiency**: Optimized P2P communication with DHT-based node discovery
 
 ## 🚀 Features
@@ -25,7 +25,7 @@ MXD (Mexican Denarius) represents a groundbreaking advancement in digital financ
 ### 🔐 Core Cryptographic Features
 - SHA-512 & RIPEMD-160 hashing (ISO/IEC 10118-3)
 - Argon2 key derivation (ISO/IEC 11889)
-- Dilithium5 post-quantum signatures (ISO/IEC 18033-3) with matrix calculations
+- Digital signatures: Ed25519 (current); Crystals Dilithium planned via MXD_PQC_DILITHIUM (ISO/IEC 18033-3)
 - Elliptic curve cryptography (secp256k1) for robust transaction security
 - Base58Check address encoding
 
@@ -38,6 +38,14 @@ MXD (Mexican Denarius) represents a groundbreaking advancement in digital financ
 - Memory pool for transaction staging
 - P2P networking with DHT-based discovery and tamper-proof routing
 - Eco-friendly design with minimal energy consumption
+### Validation Chain Protocol rules
+- A block is valid only if it has signatures from at least 50% of Rapid Table validators
+- Each signature is over: block_hash || previous_validator_id || timestamp
+- Timestamp drift allowance: ±60 seconds
+- One signature per validator per block height
+- Relay only if you just signed the block, or the block has ≥3 valid, ordered signatures
+- Fork resolution preference: more valid signatures, then cumulative latency Σ(1/latency_i), then stake weight
+
 
 ### 📜 Smart Contracts & Extensions
 - WebAssembly (WASM) runtime using wasm3
@@ -92,6 +100,10 @@ The node can be started with or without a configuration file:
 ./mxd_node
 ```
 The default configuration file (`default_config.json`) is automatically loaded from the same directory as the executable if no configuration file is specified.
+
+Note on signatures:
+- Current builds use Ed25519 via libsodium.
+- Dilithium integration is actively being implemented and will be enabled with CMake option -DMXD_PQC_DILITHIUM=ON.
 
 ### Prerequisites
 
