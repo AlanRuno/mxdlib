@@ -29,32 +29,36 @@ int mxd_init_block_with_validation(mxd_block_t *block, const uint8_t prev_hash[6
     return 0;
 }
 
-int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[20], 
-                              uint64_t timestamp, const uint8_t signature[128]) {
+int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[20],
+                              uint64_t timestamp, const uint8_t *signature, uint16_t signature_length) {
     if (!block || !validator_id || !signature) {
         return -1;
     }
-    
+    if (signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
+        return -1;
+    }
+
     if (block->validation_count >= block->validation_capacity) {
         uint32_t new_capacity = block->validation_capacity * 2;
-        mxd_validator_signature_t *new_chain = realloc(block->validation_chain, 
+        mxd_validator_signature_t *new_chain = realloc(block->validation_chain,
                                                      new_capacity * sizeof(mxd_validator_signature_t));
         if (!new_chain) {
             return -1;
         }
-        
+
         block->validation_chain = new_chain;
         block->validation_capacity = new_capacity;
     }
-    
+
     mxd_validator_signature_t *sig = &block->validation_chain[block->validation_count];
     memcpy(sig->validator_id, validator_id, 20);
     sig->timestamp = timestamp;
-    memcpy(sig->signature, signature, 128);
+    sig->signature_length = signature_length;
+    memcpy(sig->signature, signature, signature_length);
     sig->chain_position = block->validation_count;
-    
+
     block->validation_count++;
-    
+
     return 0;
 }
 

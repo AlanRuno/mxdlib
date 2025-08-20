@@ -71,9 +71,10 @@ int mxd_process_incoming_validation_chain(const uint8_t block_hash[64],
     }
     
     for (uint32_t i = 0; i < signature_count; i++) {
-        if (mxd_verify_and_add_validation_signature(&block, 
+        if (mxd_verify_and_add_validation_signature(&block,
                                                   signatures[i].validator_id,
                                                   signatures[i].signature,
+                                                  signatures[i].signature_length,
                                                   signatures[i].timestamp) != 0) {
             MXD_LOG_WARN("sync", "Failed to verify signature %u of %u", i + 1, signature_count);
         }
@@ -93,9 +94,10 @@ int mxd_process_incoming_validation_chain(const uint8_t block_hash[64],
 
 int mxd_verify_and_add_validation_signature(mxd_block_t *block, 
                                            const uint8_t validator_id[20],
-                                           const uint8_t signature[128],
+                                           const uint8_t *signature,
+                                           uint16_t signature_length,
                                            uint64_t timestamp) {
-    if (!block || !validator_id || !signature) return -1;
+    if (!block || !validator_id || !signature || signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) return -1;
     
     uint64_t current_time = time(NULL);
     uint64_t drift = (timestamp > current_time) ? 
@@ -107,7 +109,7 @@ int mxd_verify_and_add_validation_signature(mxd_block_t *block,
         return -1;
     }
     
-    if (mxd_signature_exists(block->height, validator_id, signature) != 0) {
+    if (mxd_signature_exists(block->height, validator_id, signature, signature_length) != 0) {
         MXD_LOG_WARN("sync", "Signature already exists for this block height");
         return -1;
     }
@@ -117,12 +119,12 @@ int mxd_verify_and_add_validation_signature(mxd_block_t *block,
         return -1;
     }
     
-    if (mxd_add_validator_signature(block, validator_id, timestamp, signature) != 0) {
+    if (mxd_add_validator_signature(block, validator_id, timestamp, signature, signature_length) != 0) {
         MXD_LOG_ERROR("sync", "Failed to add validator signature to block");
         return -1;
     }
     
-    if (mxd_store_signature(block->height, validator_id, signature) != 0) {
+    if (mxd_store_signature(block->height, validator_id, signature, signature_length) != 0) {
         MXD_LOG_ERROR("sync", "Failed to store signature for replay protection");
         return -1;
     }

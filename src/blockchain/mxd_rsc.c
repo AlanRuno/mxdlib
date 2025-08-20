@@ -394,9 +394,9 @@ int mxd_init_validation_context(mxd_validation_context_t *context, const mxd_blo
 }
 
 int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t validator_id[20], 
-                                        uint64_t timestamp, const uint8_t signature[128], 
-                                        uint32_t chain_position) {
-    if (!block || !validator_id || !signature) {
+                                        uint64_t timestamp, const uint8_t *signature,
+                                        uint16_t signature_length, uint32_t chain_position) {
+    if (!block || !validator_id || !signature || signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
         return -1;
     }
     
@@ -406,19 +406,16 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
     }
     
     if (labs((int64_t)timestamp - (int64_t)current_time) > MXD_MAX_TIMESTAMP_DRIFT) {
-        return -1; // Timestamp drift too large
+        return -1;
     }
     
-    // Check if validator has already signed this block
     for (uint32_t i = 0; i < block->validation_count; i++) {
         if (memcmp(block->validation_chain[i].validator_id, validator_id, 20) == 0) {
-            return -1; // Validator already signed
+            return -1;
         }
     }
     
-    // Check if we need to allocate or resize validation chain
     if (!block->validation_chain) {
-        // Initial allocation
         block->validation_capacity = 10;
         block->validation_chain = malloc(block->validation_capacity * sizeof(mxd_validator_signature_t));
         if (!block->validation_chain) {
@@ -438,12 +435,13 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
     mxd_validator_signature_t *sig = &block->validation_chain[block->validation_count];
     memcpy(sig->validator_id, validator_id, 20);
     sig->timestamp = timestamp;
-    memcpy(sig->signature, signature, 128);
+    sig->signature_length = signature_length;
+    memcpy(sig->signature, signature, sig->signature_length);
     sig->chain_position = chain_position;
     
     block->validation_count++;
     
-    mxd_store_signature(block->height, validator_id, signature);
+    mxd_store_signature(block->height, validator_id, signature, signature_length);
     
     return 0;
 }

@@ -105,7 +105,7 @@ int mxd_relay_block_by_validation_count(const void *block_data, size_t block_len
 // Send validation signature to next validator in chain
 int mxd_send_validation_signature(const char *address, uint16_t port,
                                  const uint8_t *block_hash, const uint8_t *signature,
-                                 uint32_t chain_position);
+                                 uint16_t signature_length, uint32_t chain_position);
 
 // Request validation chain for block
 int mxd_request_validation_chain(const char *address, uint16_t port,

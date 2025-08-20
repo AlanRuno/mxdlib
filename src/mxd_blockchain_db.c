@@ -181,8 +181,10 @@ int mxd_store_block(const mxd_block_t *block) {
     }
     
     for (uint32_t i = 0; i < block->validation_count; i++) {
-        mxd_store_signature(block->height, block->validation_chain[i].validator_id, 
-                           block->validation_chain[i].signature);
+        mxd_store_signature(block->height,
+                            block->validation_chain[i].validator_id,
+                            block->validation_chain[i].signature,
+                            block->validation_chain[i].signature_length);
     }
     
     if (block->height > current_height) {
@@ -289,8 +291,8 @@ int mxd_get_blockchain_height(uint32_t *height) {
     return 0;
 }
 
-int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const uint8_t signature[128]) {
-    if (!validator_id || !signature || !mxd_get_rocksdb_db()) {
+int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const uint8_t *signature, uint16_t signature_length) {
+    if (!validator_id || !signature || !mxd_get_rocksdb_db() || signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
         return -1;
     }
     
@@ -299,7 +301,7 @@ int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const u
     create_signature_key(height, validator_id, sig_key, &sig_key_len);
     
     char *err = NULL;
-    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)sig_key, sig_key_len, (char *)signature, 128, &err);
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)sig_key, sig_key_len, (char *)signature, signature_length, &err);
     if (err) {
         MXD_LOG_ERROR("db", "Failed to store signature: %s", err);
         free(err);
@@ -322,8 +324,8 @@ int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const u
     return 0;
 }
 
-int mxd_signature_exists(uint32_t height, const uint8_t validator_id[20], const uint8_t signature[128]) {
-    if (!validator_id || !signature || !mxd_get_rocksdb_db()) {
+int mxd_signature_exists(uint32_t height, const uint8_t validator_id[20], const uint8_t *signature, uint16_t signature_length) {
+    if (!validator_id || !signature || !mxd_get_rocksdb_db() || signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
         return -1;
     }
     
@@ -345,7 +347,7 @@ int mxd_signature_exists(uint32_t height, const uint8_t validator_id[20], const 
         return 0; // Signature does not exist
     }
     
-    int result = (value_len == 128 && memcmp(value, signature, 128) == 0) ? 1 : 0;
+    int result = (value_len == signature_length && memcmp(value, signature, value_len) == 0) ? 1 : 0;
     
     free(value);
     return result;
@@ -463,8 +465,9 @@ int mxd_get_signatures_by_height(uint32_t height, mxd_validator_signature_t **si
         
         size_t value_len;
         const char *value = rocksdb_iter_value(iter, &value_len);
-        if (value && value_len == 128) {
-            memcpy((*signatures)[index].signature, value, 128);
+        if (value && value_len > 0 && value_len <= MXD_SIGNATURE_MAX) {
+            (*signatures)[index].signature_length = (uint16_t)value_len;
+            memcpy((*signatures)[index].signature, value, (*signatures)[index].signature_length);
             (*signatures)[index].chain_position = index;
             
             (*signatures)[index].timestamp = 0;
@@ -558,8 +561,9 @@ int mxd_get_signatures_by_validator(const uint8_t validator_id[20], mxd_validato
         if (err) {
             MXD_LOG_ERROR("db", "Failed to retrieve signature: %s", err);
             free(err);
-        } else if (value && value_len == 128) {
-            memcpy((*signatures)[index].signature, value, 128);
+        } else if (value && value_len > 0 && value_len <= MXD_SIGNATURE_MAX) {
+            (*signatures)[index].signature_length = (uint16_t)value_len;
+            memcpy((*signatures)[index].signature, value, (*signatures)[index].signature_length);
             (*signatures)[index].chain_position = 0; // Unknown position
             (*signatures)[index].timestamp = 0; // Unknown timestamp
             
