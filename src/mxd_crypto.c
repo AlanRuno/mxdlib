@@ -5,6 +5,9 @@
 #include <openssl/ripemd.h>
 #include <sodium.h>
 #include <sodium/crypto_sign.h>
+#ifdef MXD_PQC_DILITHIUM
+#include <oqs/oqs.h>
+#endif
 #include <string.h>
 
 // Initialize OpenSSL and libsodium
@@ -203,13 +206,9 @@ int mxd_argon2(const char *input, const uint8_t *salt, uint8_t *output,
   // Using Argon2id variant as recommended for highest security
   if (crypto_pwhash(output, output_length, input, strlen(input), salt,
                     crypto_pwhash_OPSLIMIT_SENSITIVE,
-#ifdef MXD_PQC_DILITHIUM
-#include <oqs/oqs.h>
-#endif
-
                     crypto_pwhash_MEMLIMIT_SENSITIVE,
                     crypto_pwhash_ALG_ARGON2ID13) != 0) {
-    return -1; // Memory allocation or other error
+    return -1;
   }
   return 0;
 }
