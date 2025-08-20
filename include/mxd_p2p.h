@@ -7,6 +7,9 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
+#include "mxd_blockchain.h"
+
+int mxd_should_relay_block(const mxd_block_t *block, int just_signed);
 
 // Maximum number of peers in the connection pool
 #define MXD_MAX_PEERS 256  // Aligned with mxd_dht.h
@@ -105,7 +108,7 @@ int mxd_relay_block_by_validation_count(const void *block_data, size_t block_len
 // Send validation signature to next validator in chain
 int mxd_send_validation_signature(const char *address, uint16_t port,
                                  const uint8_t *block_hash, const uint8_t *signature,
-                                 uint32_t chain_position);
+                                 uint16_t signature_length, uint32_t chain_position);
 
 // Request validation chain for block
 int mxd_request_validation_chain(const char *address, uint16_t port,

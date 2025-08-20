@@ -394,9 +394,9 @@ int mxd_init_validation_context(mxd_validation_context_t *context, const mxd_blo
 }
 
 int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t validator_id[20], 
-                                        uint64_t timestamp, const uint8_t signature[128], 
-                                        uint32_t chain_position) {
-    if (!block || !validator_id || !signature) {
+                                        uint64_t timestamp, const uint8_t *signature,
+                                        uint16_t signature_length, uint32_t chain_position) {
+    if (!block || !validator_id || !signature || signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
         return -1;
     }
     
@@ -406,19 +406,16 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
     }
     
     if (labs((int64_t)timestamp - (int64_t)current_time) > MXD_MAX_TIMESTAMP_DRIFT) {
-        return -1; // Timestamp drift too large
+        return -1;
     }
     
-    // Check if validator has already signed this block
     for (uint32_t i = 0; i < block->validation_count; i++) {
         if (memcmp(block->validation_chain[i].validator_id, validator_id, 20) == 0) {
-            return -1; // Validator already signed
+            return -1;
         }
     }
     
-    // Check if we need to allocate or resize validation chain
     if (!block->validation_chain) {
-        // Initial allocation
         block->validation_capacity = 10;
         block->validation_chain = malloc(block->validation_capacity * sizeof(mxd_validator_signature_t));
         if (!block->validation_chain) {
@@ -438,12 +435,13 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
     mxd_validator_signature_t *sig = &block->validation_chain[block->validation_count];
     memcpy(sig->validator_id, validator_id, 20);
     sig->timestamp = timestamp;
-    memcpy(sig->signature, signature, 128);
+    sig->signature_length = signature_length;
+    memcpy(sig->signature, signature, sig->signature_length);
     sig->chain_position = chain_position;
     
     block->validation_count++;
     
-    mxd_store_signature(block->height, validator_id, signature);
+    mxd_store_signature(block->height, validator_id, signature, signature_length);
     
     return 0;
 }
@@ -772,4 +770,38 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     context->status = MXD_VALIDATION_IN_PROGRESS;
     
     return 0;
+}
+static struct {
+    uint8_t id[20];
+    uint8_t pub[4096];
+    size_t len;
+} mxd_pubkey_registry[64];
+
+static size_t mxd_pubkey_registry_count;
+
+int mxd_test_register_validator_pubkey(const uint8_t validator_id[20], const uint8_t *pub, size_t pub_len) {
+    if (!validator_id || !pub || pub_len == 0 || pub_len > sizeof(mxd_pubkey_registry[0].pub)) return -1;
+    if (mxd_pubkey_registry_count >= 64) return -1;
+    memcpy(mxd_pubkey_registry[mxd_pubkey_registry_count].id, validator_id, 20);
+    memcpy(mxd_pubkey_registry[mxd_pubkey_registry_count].pub, pub, pub_len);
+    mxd_pubkey_registry[mxd_pubkey_registry_count].len = pub_len;
+    mxd_pubkey_registry_count++;
+    return 0;
+}
+
+void mxd_test_clear_validator_pubkeys(void) {
+    mxd_pubkey_registry_count = 0;
+}
+
+int mxd_get_validator_public_key(const uint8_t validator_id[20], uint8_t *out_key, size_t out_capacity, size_t *out_len) {
+    if (!validator_id || !out_key || !out_len) return -1;
+    for (size_t i = 0; i < mxd_pubkey_registry_count; i++) {
+        if (memcmp(mxd_pubkey_registry[i].id, validator_id, 20) == 0) {
+            if (out_capacity < mxd_pubkey_registry[i].len) return -1;
+            memcpy(out_key, mxd_pubkey_registry[i].pub, mxd_pubkey_registry[i].len);
+            *out_len = mxd_pubkey_registry[i].len;
+            return 0;
+        }
+    }
+    return -1;
 }

@@ -1,3 +1,5 @@
+#include "../../include/mxd_rsc.h"
+
 #include "../../include/mxd_blockchain.h"
 #include "../../include/mxd_crypto.h"
 #include <stdio.h>
@@ -29,32 +31,36 @@ int mxd_init_block_with_validation(mxd_block_t *block, const uint8_t prev_hash[6
     return 0;
 }
 
-int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[20], 
-                              uint64_t timestamp, const uint8_t signature[128]) {
+int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[20],
+                              uint64_t timestamp, const uint8_t *signature, uint16_t signature_length) {
     if (!block || !validator_id || !signature) {
         return -1;
     }
-    
+    if (signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
+        return -1;
+    }
+
     if (block->validation_count >= block->validation_capacity) {
         uint32_t new_capacity = block->validation_capacity * 2;
-        mxd_validator_signature_t *new_chain = realloc(block->validation_chain, 
+        mxd_validator_signature_t *new_chain = realloc(block->validation_chain,
                                                      new_capacity * sizeof(mxd_validator_signature_t));
         if (!new_chain) {
             return -1;
         }
-        
+
         block->validation_chain = new_chain;
         block->validation_capacity = new_capacity;
     }
-    
+
     mxd_validator_signature_t *sig = &block->validation_chain[block->validation_count];
     memcpy(sig->validator_id, validator_id, 20);
     sig->timestamp = timestamp;
-    memcpy(sig->signature, signature, 128);
+    sig->signature_length = signature_length;
+    memcpy(sig->signature, signature, signature_length);
     sig->chain_position = block->validation_count;
-    
+
     block->validation_count++;
-    
+
     return 0;
 }
 
@@ -81,8 +87,29 @@ int mxd_verify_validation_chain(const mxd_block_t *block) {
                 return -1;
             }
         }
-    }
 
+        uint8_t msg[64 + 20 + 8];
+        memcpy(msg, block->block_hash, 64);
+        if (i == 0) {
+            memset(msg + 64, 0, 20);
+        } else {
+            memcpy(msg + 64, block->validation_chain[i - 1].validator_id, 20);
+        }
+        uint64_t ts = sig_i->timestamp;
+        for (int b = 0; b < 8; b++) {
+            msg[64 + 20 + b] = (uint8_t)((ts >> (8 * b)) & 0xFF);
+        }
+
+        uint8_t pubbuf[4096];
+        size_t publen = 0;
+        if (mxd_get_validator_public_key(sig_i->validator_id, pubbuf, sizeof(pubbuf), &publen) != 0) {
+            return -1;
+        }
+
+        if (mxd_dilithium_verify(sig_i->signature, (size_t)sig_i->signature_length, msg, sizeof(msg), pubbuf) != 0) {
+            return -1;
+        }
+    }
 
     return 0;
 }

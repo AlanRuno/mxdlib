@@ -1,5 +1,4 @@
 #include "mxd_logging.h"
-
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -7,7 +6,13 @@
 #include "mxd_crypto.h"
 #include "mxd_p2p.h"
 #include "mxd_rsc.h"
-#include "mxd_logging.h"
+
+int mxd_should_relay_block(const mxd_block_t *block, int just_signed) {
+    if (!block) return 0;
+    if (just_signed) return 1;
+    if (mxd_verify_validation_chain(block) != 0) return 0;
+    return mxd_block_has_min_signatures(block);
+}
 
 #define MXD_MIN_RELAY_SIGNATURES 3
 
@@ -66,25 +71,36 @@ int mxd_relay_block_by_validation_count(const void *block_data, size_t block_len
 
 int mxd_send_validation_signature(const char *address, uint16_t port,
                                  const uint8_t *block_hash, const uint8_t *signature,
-                                 uint32_t chain_position) {
+                                 uint16_t signature_length, uint32_t chain_position) {
     if (!address || !block_hash || !signature) {
+        return -1;
+    }
+    if (signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
         return -1;
     }
     
     struct {
         uint8_t block_hash[64];
-        uint8_t signature[128];
+        uint16_t signature_length;
+        uint8_t signature[MXD_SIGNATURE_MAX];
         uint32_t chain_position;
         uint64_t timestamp;
     } validation_msg;
     
     memcpy(validation_msg.block_hash, block_hash, 64);
-    memcpy(validation_msg.signature, signature, 128);
+    validation_msg.signature_length = signature_length;
+    memcpy(validation_msg.signature, signature, signature_length);
     validation_msg.chain_position = chain_position;
     validation_msg.timestamp = time(NULL);
+
+    size_t msg_len = sizeof(validation_msg.block_hash)
+                   + sizeof(validation_msg.signature_length)
+                   + signature_length
+                   + sizeof(validation_msg.chain_position)
+                   + sizeof(validation_msg.timestamp);
     
     return mxd_send_message(address, port, MXD_MSG_VALIDATION_SIGNATURE, 
-                           &validation_msg, sizeof(validation_msg));
+                           &validation_msg, msg_len);
 }
 
 int mxd_request_validation_chain(const char *address, uint16_t port,

@@ -1,3 +1,6 @@
+#include "mxd_crypto.h"
+
+#include "mxd_rsc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,7 +61,7 @@ static int add_validator_signatures(mxd_block_t *block, int count) {
             signature[j] = j + i;
         }
         
-        if (mxd_add_validator_signature(block, validator_id, time(NULL), signature) != 0) {
+        if (mxd_add_validator_signature(block, validator_id, time(NULL), signature, 128) != 0) {
             printf("Failed to add validator signature %d\n", i);
             return -1;
         }
@@ -226,14 +229,16 @@ static void test_validation_chain_expiry(void) {
     for (uint32_t i = 0; i < block.validation_count; i++) {
         TEST_ASSERT(mxd_store_signature(block.height, 
                                       block.validation_chain[i].validator_id, 
-                                      block.validation_chain[i].signature) == 0, 
+                                      block.validation_chain[i].signature,
+                                      block.validation_chain[i].signature_length) == 0, 
                     "Signature storage for replay protection");
     }
     
     for (uint32_t i = 0; i < block.validation_count; i++) {
         TEST_ASSERT(mxd_signature_exists(block.height, 
                                        block.validation_chain[i].validator_id, 
-                                       block.validation_chain[i].signature) == 1, 
+                                       block.validation_chain[i].signature,
+                                       block.validation_chain[i].signature_length) == 1, 
                     "Signature exists check");
     }
     
@@ -243,7 +248,8 @@ static void test_validation_chain_expiry(void) {
     for (uint32_t i = 0; i < block.validation_count; i++) {
         TEST_ASSERT(mxd_signature_exists(block.height, 
                                        block.validation_chain[i].validator_id, 
-                                       block.validation_chain[i].signature) == 0, 
+                                       block.validation_chain[i].signature,
+                                       block.validation_chain[i].signature_length) == 0, 
                     "Signature should be pruned");
     }
     
@@ -291,6 +297,9 @@ static void test_validation_chain_sync(void) {
     mxd_stop_p2p();
     mxd_close_blockchain_db();
     
+
+
+
     TEST_END("Validation Chain Sync");
 }
 
@@ -306,6 +315,9 @@ static void test_validation_chain_network(void) {
     
     printf("Validation Chain Network Tests completed successfully\n");
 }
+
+
+
 
 int main(int argc, char** argv) {
     TEST_START("Validation Chain Network Tests");
@@ -324,6 +336,9 @@ int main(int argc, char** argv) {
         TEST_VALUE("Status", "%s", "No tests run - use --network for network tests");
     }
     
+
+
+
     TEST_END("Validation Chain Network Tests");
     return 0;
 }
