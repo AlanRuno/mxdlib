@@ -2,6 +2,7 @@
 #include "../../include/mxd_ntp.h"
 #include "../../include/mxd_blockchain_db.h"
 #include "../../include/mxd_logging.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
