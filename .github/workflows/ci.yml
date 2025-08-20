@@ -57,13 +57,13 @@ jobs:
           echo "CXX=clang++" >> $GITHUB_ENV
           echo 'CFLAGS=-Wno-deprecated-declarations' >> $GITHUB_ENV
 
-      - name: "Guard: fail on printf/fprintf usage in src/ (excluding logging implementation)"
+      - name: "Guard: fail on printf/fprintf/sprintf/vsprintf usage in src/ (excluding logging implementation)"
         run: |
           set +e
-          MATCHES=$(grep -RInE "printf\\(|fprintf\\(" src/ | grep -v "src/mxd_logging.c" || true)
+          MATCHES=$(grep -RInE '\b(printf|fprintf|sprintf|vsprintf)\s*\(' src/ | grep -v 'src/mxd_logging.c' || true)
           if [ -n "$MATCHES" ]; then
             echo "$MATCHES"
-            echo "Found printf/fprintf usage in src/. Replace with MXD_LOG_*"
+            echo "Found unsafe printf-family usage in src/. Replace with MXD_LOG_* or use snprintf/vsnprintf as appropriate"
             exit 1
           fi
 
