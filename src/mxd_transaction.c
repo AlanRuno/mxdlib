@@ -1,8 +1,8 @@
+#include "../include/mxd_logging.h"
 #include "../include/mxd_transaction.h"
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_rocksdb_globals.h"
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -13,7 +13,7 @@ static int validation_initialized = 0;
 int mxd_init_transaction_validation(void) {
     if (!mxd_get_rocksdb_db()) {
         if (mxd_init_utxo_db("transaction_validation_utxo.db") != 0) {
-            printf("Failed to initialize UTXO database for transaction validation\n");
+            MXD_LOG_ERROR("transaction", "Failed to initialize UTXO database for transaction validation");
             return -1;
         }
     }
@@ -73,7 +73,7 @@ int mxd_add_tx_input(mxd_transaction_t *tx, const uint8_t prev_tx_hash[64],
 
   // Verify UTXO exists and get amount
   if (mxd_verify_tx_input_utxo(input, &input->amount) != 0) {
-    printf("Warning: UTXO not found or insufficient funds for input %u\n", tx->input_count);
+    MXD_LOG_WARN("transaction", "UTXO not found or insufficient funds for input %u", tx->input_count);
     // Don't fail here, will be caught during full validation
   }
 
@@ -104,7 +104,7 @@ int mxd_add_tx_output(mxd_transaction_t *tx, const uint8_t recipient_key[256],
   
   // Calculate public key hash for indexing
   if (mxd_calculate_pubkey_hash(recipient_key, output->pubkey_hash) != 0) {
-    printf("Failed to calculate public key hash for output %u\n", tx->output_count);
+    MXD_LOG_WARN("transaction", "Failed to calculate public key hash for output %u", tx->output_count);
     // Don't fail here, will be caught during full validation
   }
 
@@ -212,12 +212,12 @@ int mxd_verify_tx_input(const mxd_transaction_t *tx, uint32_t input_index) {
 
 // Validate entire transaction
 int mxd_validate_transaction(const mxd_transaction_t *tx) {
-  printf("DEBUG: Transaction validation - initialized: %d\n", validation_initialized);
+  MXD_LOG_DEBUG("transaction", "Transaction validation - initialized: %d", validation_initialized);
   if (!validation_initialized || !tx || tx->version != 1 || 
       (tx->input_count == 0 && !tx->is_coinbase) ||
       tx->input_count > MXD_MAX_TX_INPUTS || tx->output_count == 0 ||
       tx->output_count > MXD_MAX_TX_OUTPUTS || tx->voluntary_tip < 0) {
-    printf("DEBUG: Transaction validation failed - early checks\n");
+    MXD_LOG_DEBUG("transaction", "Transaction validation failed - early checks");
     return -1;
   }
 
@@ -235,7 +235,7 @@ int mxd_validate_transaction(const mxd_transaction_t *tx) {
     
     // Verify transaction inputs against UTXO database
     if (mxd_validate_transaction_inputs(tx) != 0) {
-      printf("Transaction validation failed: UTXO verification failed\n");
+      MXD_LOG_ERROR("transaction", "Transaction validation failed: UTXO verification failed");
       return -1;
     }
   }
@@ -257,7 +257,7 @@ int mxd_validate_transaction(const mxd_transaction_t *tx) {
     }
     
     if (total_output + tx->voluntary_tip > total_input) {
-      printf("Transaction validation failed: outputs (%f) + tip (%f) exceed inputs (%f)\n",
+      MXD_LOG_ERROR("transaction", "Transaction validation failed: outputs (%f) + tip (%f) exceed inputs (%f)",
              total_output, tx->voluntary_tip, total_input);
       return -1;
     }
@@ -298,13 +298,13 @@ int mxd_validate_transaction_inputs(const mxd_transaction_t *tx) {
   for (uint32_t i = 0; i < tx->input_count; i++) {
     double amount = 0.0;
     if (mxd_verify_tx_input_utxo(&tx->inputs[i], &amount) != 0) {
-      printf("UTXO verification failed for input %u\n", i);
+      MXD_LOG_ERROR("transaction", "UTXO verification failed for input %u", i);
       return -1;
     }
     
     // Verify amount matches cached amount
     if (amount != tx->inputs[i].amount) {
-      printf("UTXO amount mismatch for input %u: cached=%f, actual=%f\n", 
+      MXD_LOG_ERROR("transaction", "UTXO amount mismatch for input %u: cached=%f, actual=%f", 
              i, tx->inputs[i].amount, amount);
       return -1;
     }
@@ -321,11 +321,10 @@ int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, double *amount) {
   
   mxd_utxo_t utxo;
   if (mxd_get_utxo(input->prev_tx_hash, input->output_index, &utxo) != 0) {
-    printf("UTXO not found: tx_hash=%02x%02x..., output_index=%u\n", 
-           input->prev_tx_hash[0], input->prev_tx_hash[1], input->output_index);
+    MXD_LOG_WARN("transaction", "UTXO not found for given input (index=%u)", input->output_index);
     
     if (input->amount > 0.0) {
-      printf("Using input amount %.2f for testing\n", input->amount);
+      MXD_LOG_INFO("transaction", "Using provided input amount for testing");
       *amount = input->amount;
       return 0;
     }
@@ -335,13 +334,13 @@ int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, double *amount) {
   
   // Verify UTXO is not spent
   if (utxo.is_spent) {
-    printf("UTXO is already spent\n");
+    MXD_LOG_ERROR("transaction", "UTXO is already spent");
     return -1;
   }
   
   // Verify public key matches
   if (memcmp(utxo.owner_key, input->public_key, 256) != 0) {
-    printf("UTXO owner key mismatch\n");
+    MXD_LOG_ERROR("transaction", "UTXO owner key mismatch");
     return -1;
   }
   
@@ -383,12 +382,12 @@ int mxd_apply_transaction_to_utxo(const mxd_transaction_t *tx) {
   
   // Create UTXOs from transaction outputs
   if (mxd_create_utxos_from_tx(tx, tx_hash) != 0) {
-    printf("Failed to create UTXOs from transaction outputs\n");
+    MXD_LOG_ERROR("transaction", "Failed to create UTXOs from transaction outputs");
     return -1;
   }
   
   if (!tx->is_coinbase && mxd_mark_tx_inputs_spent(tx) != 0) {
-    printf("Failed to mark transaction inputs as spent\n");
+    MXD_LOG_ERROR("transaction", "Failed to mark transaction inputs as spent");
     return -1;
   }
   
@@ -415,7 +414,7 @@ int mxd_create_utxos_from_tx(const mxd_transaction_t *tx, const uint8_t tx_hash[
     utxo.is_spent = 0;
     
     if (mxd_add_utxo(&utxo) != 0) {
-      printf("Failed to add UTXO for output %u\n", i);
+      MXD_LOG_ERROR("transaction", "Failed to add UTXO for output %u", i);
       return -1;
     }
   }
@@ -431,7 +430,7 @@ int mxd_mark_tx_inputs_spent(const mxd_transaction_t *tx) {
   
   for (uint32_t i = 0; i < tx->input_count; i++) {
     if (mxd_mark_utxo_spent(tx->inputs[i].prev_tx_hash, tx->inputs[i].output_index) != 0) {
-      printf("Failed to mark UTXO as spent for input %u\n", i);
+      MXD_LOG_ERROR("transaction", "Failed to mark UTXO as spent for input %u", i);
       return -1;
     }
   }

@@ -49,7 +49,7 @@ static int calculate_file_checksum(const char *filepath, char *checksum) {
         }
         
         for (int i = 0; i < 32; i++) {
-            sprintf(checksum + (i * 2), "%02x", hash[i]);
+            snprintf(checksum + (i * 2), 3, "%02x", hash[i]);
         }
         checksum[64] = '\0';
         

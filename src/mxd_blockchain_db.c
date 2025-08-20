@@ -1,7 +1,8 @@
+#include "mxd_logging.h"
+
 #include "../include/mxd_blockchain_db.h"
 #include "../include/mxd_rocksdb_globals.h"
 #include <rocksdb/c.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -112,7 +113,7 @@ int mxd_init_blockchain_db(const char *db_path) {
     char *err = NULL;
     mxd_set_rocksdb_db(rocksdb_open(options, db_path, &err));
     if (err) {
-        printf("Failed to open blockchain database: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to open blockchain database: %s", err);
         free(err);
         return -1;
     }
@@ -165,7 +166,7 @@ int mxd_store_block(const mxd_block_t *block) {
     char *err = NULL;
     rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)height_key, height_key_len, (char *)data, data_len, &err);
     if (err) {
-        printf("Failed to store block by height: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to store block by height: %s", err);
         free(err);
         free(data);
         return -1;
@@ -173,7 +174,7 @@ int mxd_store_block(const mxd_block_t *block) {
     
     rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)hash_key, hash_key_len, (char *)data, data_len, &err);
     if (err) {
-        printf("Failed to store block by hash: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to store block by hash: %s", err);
         free(err);
         free(data);
         return -1;
@@ -191,7 +192,7 @@ int mxd_store_block(const mxd_block_t *block) {
         rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)height_meta_key, sizeof(height_meta_key) - 1, 
                    (char *)&current_height, sizeof(current_height), &err);
         if (err) {
-            printf("Failed to store current height: %s\n", err);
+            MXD_LOG_ERROR("db", "Failed to store current height: %s", err);
             free(err);
         }
     }
@@ -214,7 +215,7 @@ int mxd_retrieve_block_by_height(uint32_t height, mxd_block_t *block) {
     size_t value_len = 0;
     value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, key_len, &value_len, &err);
     if (err) {
-        printf("Failed to retrieve block by height: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to retrieve block by height: %s", err);
         free(err);
         return -1;
     }
@@ -243,7 +244,7 @@ int mxd_retrieve_block_by_hash(const uint8_t hash[64], mxd_block_t *block) {
     size_t value_len = 0;
     value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, key_len, &value_len, &err);
     if (err) {
-        printf("Failed to retrieve block by hash: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to retrieve block by hash: %s", err);
         free(err);
         return -1;
     }
@@ -269,7 +270,7 @@ int mxd_get_blockchain_height(uint32_t *height) {
     size_t value_len = 0;
     value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, sizeof(key) - 1, &value_len, &err);
     if (err) {
-        printf("Failed to retrieve current height: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to retrieve current height: %s", err);
         free(err);
         *height = 0;
         return 0;
@@ -300,7 +301,7 @@ int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const u
     char *err = NULL;
     rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)sig_key, sig_key_len, (char *)signature, 128, &err);
     if (err) {
-        printf("Failed to store signature: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to store signature: %s", err);
         free(err);
         return -1;
     }
@@ -313,7 +314,7 @@ int mxd_store_signature(uint32_t height, const uint8_t validator_id[20], const u
     
     rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)validator_key, validator_key_len, "", 0, &err);
     if (err) {
-        printf("Failed to store validator signature index: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to store validator signature index: %s", err);
         free(err);
         return -1;
     }
@@ -335,7 +336,7 @@ int mxd_signature_exists(uint32_t height, const uint8_t validator_id[20], const 
     size_t value_len = 0;
     value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)key, key_len, &value_len, &err);
     if (err) {
-        printf("Failed to check signature: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to check signature: %s", err);
         free(err);
         return -1;
     }
@@ -383,13 +384,13 @@ int mxd_prune_expired_signatures(uint32_t current_height) {
                 char *err = NULL;
                 rocksdb_delete(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)validator_key, validator_key_len, &err);
                 if (err) {
-                    printf("Failed to remove validator signature index: %s\n", err);
+                    MXD_LOG_ERROR("db", "Failed to remove validator signature index: %s", err);
                     free(err);
                 }
                 
                 rocksdb_delete(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), key, key_len, &err);
                 if (err) {
-                    printf("Failed to remove signature: %s\n", err);
+                    MXD_LOG_ERROR("db", "Failed to remove signature: %s", err);
                     free(err);
                 } else {
                     pruned++;
@@ -555,7 +556,7 @@ int mxd_get_signatures_by_validator(const uint8_t validator_id[20], mxd_validato
         size_t value_len = 0;
         value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), (char *)sig_key, sig_key_len, &value_len, &err);
         if (err) {
-            printf("Failed to retrieve signature: %s\n", err);
+            MXD_LOG_ERROR("db", "Failed to retrieve signature: %s", err);
             free(err);
         } else if (value && value_len == 128) {
             memcpy((*signatures)[index].signature, value, 128);
@@ -602,7 +603,7 @@ int mxd_flush_blockchain_db(void) {
     rocksdb_flushoptions_destroy(flushoptions);
     
     if (err) {
-        printf("Failed to flush blockchain database: %s\n", err);
+        MXD_LOG_ERROR("db", "Failed to flush blockchain database: %s", err);
         free(err);
         return -1;
     }
@@ -617,6 +618,6 @@ int mxd_compact_blockchain_db(void) {
     
     rocksdb_compact_range(mxd_get_rocksdb_db(), NULL, 0, NULL, 0);
     
-    printf("Blockchain database compaction completed\n");
+    MXD_LOG_INFO("db", "Blockchain database compaction completed");
     return 0;
 }

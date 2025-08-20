@@ -1,7 +1,10 @@
+#include "mxd_logging.h"
+
 #include "../include/mxd_blockchain_sync.h"
 #include "../include/mxd_p2p.h"
 #include "../include/mxd_blockchain_db.h"
 #include "../include/mxd_rsc.h"
+#include "../include/mxd_logging.h"
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
@@ -25,12 +28,12 @@ int mxd_sync_validation_chain(const uint8_t block_hash[64], uint32_t height) {
     if (!block_hash) return -1;
     
     if (mxd_request_validation_chain_from_peers(block_hash) != 0) {
-        printf("Failed to request validation chain for block at height %u\n", height);
+        MXD_LOG_ERROR("sync", "Failed to request validation chain for block at height %u", height);
         return -1;
     }
     
     // For testing purposes, simulate successful sync
-    printf("Synchronizing validation chain for block at height %u\n", height);
+    MXD_LOG_INFO("sync", "Synchronizing validation chain for block at height %u", height);
     return 0;
 }
 
@@ -40,7 +43,7 @@ int mxd_request_validation_chain_from_peers(const uint8_t block_hash[64]) {
     mxd_peer_t peers[MXD_MAX_PEERS];
     size_t peer_count = MXD_MAX_PEERS;
     if (mxd_get_peers(peers, &peer_count) != 0 || peer_count == 0) {
-        printf("No peers available to request validation chain\n");
+        MXD_LOG_WARN("sync", "No peers available to request validation chain");
         return -1;
     }
     
@@ -63,7 +66,7 @@ int mxd_process_incoming_validation_chain(const uint8_t block_hash[64],
     
     mxd_block_t block;
     if (mxd_retrieve_block_by_hash(block_hash, &block) != 0) {
-        printf("Failed to retrieve block for validation chain processing\n");
+        MXD_LOG_ERROR("sync", "Failed to retrieve block for validation chain processing");
         return -1;
     }
     
@@ -72,17 +75,17 @@ int mxd_process_incoming_validation_chain(const uint8_t block_hash[64],
                                                   signatures[i].validator_id,
                                                   signatures[i].signature,
                                                   signatures[i].timestamp) != 0) {
-            printf("Failed to verify signature %u of %u\n", i + 1, signature_count);
+            MXD_LOG_WARN("sync", "Failed to verify signature %u of %u", i + 1, signature_count);
         }
     }
     
     if (mxd_store_block(&block) != 0) {
-        printf("Failed to store block with updated validation chain\n");
+        MXD_LOG_ERROR("sync", "Failed to store block with updated validation chain");
         return -1;
     }
     
     if (mxd_check_block_relay_status(block_hash) == 1) {
-        printf("Block has enough signatures for relay\n");
+        MXD_LOG_INFO("sync", "Block has enough signatures for relay");
     }
     
     return 0;
@@ -100,27 +103,27 @@ int mxd_verify_and_add_validation_signature(mxd_block_t *block,
                      (current_time - timestamp);
     
     if (drift > MXD_MAX_TIMESTAMP_DRIFT) {
-        printf("Signature timestamp drift too large: %lu seconds\n", (unsigned long)drift);
+        MXD_LOG_WARN("sync", "Signature timestamp drift too large: %lu seconds", (unsigned long)drift);
         return -1;
     }
     
     if (mxd_signature_exists(block->height, validator_id, signature) != 0) {
-        printf("Signature already exists for this block height\n");
+        MXD_LOG_WARN("sync", "Signature already exists for this block height");
         return -1;
     }
     
     if (mxd_is_validator_blacklisted(validator_id) != 0) {
-        printf("Validator is blacklisted\n");
+        MXD_LOG_WARN("sync", "Validator is blacklisted");
         return -1;
     }
     
     if (mxd_add_validator_signature(block, validator_id, timestamp, signature) != 0) {
-        printf("Failed to add validator signature to block\n");
+        MXD_LOG_ERROR("sync", "Failed to add validator signature to block");
         return -1;
     }
     
     if (mxd_store_signature(block->height, validator_id, signature) != 0) {
-        printf("Failed to store signature for replay protection\n");
+        MXD_LOG_ERROR("sync", "Failed to store signature for replay protection");
         return -1;
     }
     
@@ -132,7 +135,7 @@ int mxd_check_block_relay_status(const uint8_t block_hash[64]) {
     
     mxd_block_t block;
     if (mxd_retrieve_block_by_hash(block_hash, &block) != 0) {
-        printf("Failed to retrieve block for relay status check\n");
+        MXD_LOG_ERROR("sync", "Failed to retrieve block for relay status check");
         return -1;
     }
     
@@ -147,7 +150,7 @@ int mxd_sync_rapid_table(mxd_rapid_table_t *table) {
     if (!table) return -1;
     
     // For testing purposes, simulate successful sync
-    printf("Synchronizing Rapid Table with network\n");
+    MXD_LOG_INFO("sync", "Synchronizing Rapid Table with network");
     return 0;
 }
 
@@ -158,20 +161,20 @@ int mxd_handle_validation_chain_conflict(const uint8_t block_hash1[64],
     mxd_block_t block1, block2;
     if (mxd_retrieve_block_by_hash(block_hash1, &block1) != 0 ||
         mxd_retrieve_block_by_hash(block_hash2, &block2) != 0) {
-        printf("Failed to retrieve blocks for conflict resolution\n");
+        MXD_LOG_ERROR("sync", "Failed to retrieve blocks for conflict resolution");
         return -1;
     }
     
     int result = mxd_resolve_fork(&block1, &block2);
     
     if (result > 0) {
-        printf("Block 1 wins conflict resolution\n");
+        MXD_LOG_INFO("sync", "Block 1 wins conflict resolution");
         return 1;
     } else if (result < 0) {
-        printf("Block 2 wins conflict resolution\n");
+        MXD_LOG_INFO("sync", "Block 2 wins conflict resolution");
         return 2;
     } else {
-        printf("Conflict resolution inconclusive\n");
+        MXD_LOG_INFO("sync", "Conflict resolution inconclusive");
         return 0;
     }
 }
