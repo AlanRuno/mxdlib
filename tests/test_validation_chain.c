@@ -1,3 +1,6 @@
+#include "mxd_crypto.h"
+
+#include "mxd_rsc.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -294,6 +297,9 @@ static void test_validation_chain_sync(void) {
     mxd_stop_p2p();
     mxd_close_blockchain_db();
     
+
+
+
     TEST_END("Validation Chain Sync");
 }
 
@@ -309,6 +315,9 @@ static void test_validation_chain_network(void) {
     
     printf("Validation Chain Network Tests completed successfully\n");
 }
+
+
+
 
 int main(int argc, char** argv) {
     TEST_START("Validation Chain Network Tests");
@@ -327,6 +336,9 @@ int main(int argc, char** argv) {
         TEST_VALUE("Status", "%s", "No tests run - use --network for network tests");
     }
     
+
+
+
     TEST_END("Validation Chain Network Tests");
     return 0;
 }

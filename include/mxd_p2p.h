@@ -7,6 +7,9 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
+#include "mxd_blockchain.h"
+
+int mxd_should_relay_block(const mxd_block_t *block, int just_signed);
 
 // Maximum number of peers in the connection pool
 #define MXD_MAX_PEERS 256  // Aligned with mxd_dht.h
