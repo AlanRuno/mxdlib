@@ -130,7 +130,7 @@ Implementation Alignment Summary
 
 | Metric | Current | Target | Improvement |
 |--------|---------|--------|-------------|
-| Transaction Rate | 10 TPS | 100 TPS | 10x increase |
+| Transaction Rate | 10 TPS (current) | 100 TPS (enterprise target) | 10x increase |
 | Network Latency | 3s max | 1s max | 3x improvement |
 | Node Response Time | 5000ms | 1000ms | 5x improvement |
 | Availability | Not specified | 99.9% | Enterprise SLA |

@@ -8,7 +8,7 @@ Implements core cryptographic primitives following ISO standards:
 - SHA-512 hashing (ISO/IEC 10118-3)
 - RIPEMD-160 hashing (ISO/IEC 10118-3)
 - Argon2 key derivation (ISO/IEC 11889)
-- Dilithium5 post-quantum signatures (ISO/IEC 18033-3)
+- Dilithium5 post-quantum signatures (ISO/IEC 18033-3) - Available with MXD_PQC_DILITHIUM=ON
 
 ## 📝 Address Management (`mxd_address`)
 Handles creation and validation of MXD addresses:
