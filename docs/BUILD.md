@@ -71,7 +71,7 @@ brew install \
 # Install core dependencies
 brew install \
     openssl \          # Cryptography
-    libsodium \        # Post-quantum crypto
+    libsodium \        # Ed25519 and post-quantum crypto
     gmp \              # Arbitrary precision math
     libuv              # Async I/O for WASM
 
