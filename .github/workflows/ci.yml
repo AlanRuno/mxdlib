@@ -4,6 +4,8 @@ name: MXD Library CI/CD
 on:
   push:
     branches: [ main, develop ]
+    tags:
+      - '*'
   pull_request:
     branches: [ main ]
 
