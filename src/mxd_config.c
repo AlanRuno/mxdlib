@@ -153,8 +153,7 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
            
     // Fetch bootstrap nodes from network
     if (mxd_fetch_bootstrap_nodes(config) != 0) {
-        MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes, using default configuration");
-        mxd_set_default_config(config);
+        MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes, keeping existing bootstrap configuration");
         return mxd_validate_config(config);
     }
     
@@ -213,10 +212,12 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
         }
     }
     
-    // If no valid nodes found, keep fallback nodes
+    // If no valid nodes found, set fallback bootstrap nodes only
     if (config->bootstrap_count == 0) {
-        MXD_LOG_WARN("config", "No valid bootstrap nodes found, using fallback nodes");
-        mxd_set_default_config(config);
+        MXD_LOG_WARN("config", "No valid bootstrap nodes found, setting fallback bootstrap nodes");
+        config->bootstrap_count = 2;
+        strncpy(config->bootstrap_nodes[0], "127.0.0.1:8001", sizeof(config->bootstrap_nodes[0]) - 1);
+        strncpy(config->bootstrap_nodes[1], "127.0.0.1:8002", sizeof(config->bootstrap_nodes[1]) - 1);
     } else {
         MXD_LOG_INFO("config", "Loaded %d bootstrap nodes from network", config->bootstrap_count);
     }
