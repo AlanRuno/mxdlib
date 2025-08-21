@@ -1,3 +1,11 @@
+Implementation Alignment Summary
+- Consensus thresholds unified; relay threshold helper in RSC integrated with P2P relay. [Aligned]
+- Latency-based fork resolution implemented; centralization into RSC for fork decision is planned to reduce duplication. [Aligned, further optimization planned]
+- Configuration layered fallbacks with default_config.json near executable. [Aligned]
+- CI enhancements: SBOMs and tag-gated container signing integrated; security scan included. [Aligned]
+- Documentation updated with Doc vs Implementation Matrix for ongoing audits. [Aligned]
+
+
 # MXD Library - Production Readiness Blueprint Summary
 
 ## 📋 Deliverables Completed

@@ -1,3 +1,11 @@
+Supply Chain Security Additions
+- SBOMs: CI generates CycloneDX SBOMs for both source and the Docker image and uploads them as artifacts.
+- Container signing: Tag-gated GHCR publish job signs images with cosign (keyless). Signing is non-blocking to accommodate permission differences.
+- Scanning: Trivy vulnerability scan runs in CI with SARIF upload retained; non-blocking on PRs.
+- Secret handling: No secrets committed; GITHUB_TOKEN used for GHCR with least privileges in tag jobs.
+- Logging policy: Ensure no sensitive keys or raw secrets are logged; validation tests print only synthetic or masked data.
+
+
 # MXD Library Security Guidelines
 
 ## Overview
