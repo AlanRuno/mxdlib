@@ -11,7 +11,7 @@ int mxd_should_relay_block(const mxd_block_t *block, int just_signed) {
     if (!block) return 0;
     if (just_signed) return 1;
     if (mxd_verify_validation_chain(block) != 0) return 0;
-    return mxd_block_has_min_signatures(block);
+    return mxd_block_has_min_relay_signatures(block);
 }
 
 #define MXD_MIN_RELAY_SIGNATURES 3
