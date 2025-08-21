@@ -160,8 +160,8 @@ int mxd_resolve_fork(const mxd_block_t *block1, const mxd_block_t *block2) {
         return -1; // block2 wins
     }
     
-    double score1 = mxd_calculate_latency_score(block1);
-    double score2 = mxd_calculate_latency_score(block2);
+    double score1 = mxd_calculate_validation_latency_score(block1, NULL);
+    double score2 = mxd_calculate_validation_latency_score(block2, NULL);
     
     if (score1 > score2) {
         return 1;  // block1 wins
@@ -174,22 +174,9 @@ int mxd_resolve_fork(const mxd_block_t *block1, const mxd_block_t *block2) {
 }
 
 double mxd_calculate_latency_score(const mxd_block_t *block) {
-    if (!block || !block->validation_chain || block->validation_count == 0) {
-        return 0.0;
-    }
-    
-    double score = 0.0;
-    
-    for (uint32_t i = 0; i < block->validation_count; i++) {
-        uint32_t latency_ms = 20 + (block->validation_chain[i].validator_id[0] % 100);
-        
-        if (latency_ms == 0) latency_ms = 1;
-        
-        score += 1.0 / latency_ms;
-    }
-    
-    return score;
+    return mxd_calculate_validation_latency_score(block, NULL);
 }
+
 
 void mxd_free_validation_chain(mxd_block_t *block) {
     if (block && block->validation_chain) {
