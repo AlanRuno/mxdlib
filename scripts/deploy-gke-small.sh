@@ -31,22 +31,48 @@ gcloud services enable compute.googleapis.com
 
 if ! gcloud container clusters describe $CLUSTER_NAME --region=$REGION >/dev/null 2>&1; then
     echo "Creating small GKE cluster (quota-optimized)..."
-    gcloud container clusters create $CLUSTER_NAME \
-        --region=$REGION \
-        --num-nodes=2 \
-        --min-nodes=1 \
-        --max-nodes=4 \
-        --enable-autoscaling \
-        --machine-type=e2-standard-2 \
-        --disk-size=50GB \
-        --disk-type=pd-standard \
-        --enable-autorepair \
-        --enable-autoupgrade \
-        --enable-network-policy \
-        --enable-ip-alias \
-        --enable-stackdriver-kubernetes \
-        --addons=HorizontalPodAutoscaling,HttpLoadBalancing,NetworkPolicy \
-        --node-labels=environment=$ENVIRONMENT
+    
+    MAX_RETRIES=3
+    RETRY_COUNT=0
+    
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        echo "Attempt $((RETRY_COUNT + 1)) of $MAX_RETRIES to create cluster..."
+        
+        if gcloud container clusters create $CLUSTER_NAME \
+            --region=$REGION \
+            --num-nodes=2 \
+            --min-nodes=1 \
+            --max-nodes=4 \
+            --enable-autoscaling \
+            --machine-type=e2-standard-2 \
+            --disk-size=50GB \
+            --disk-type=pd-standard \
+            --enable-autorepair \
+            --enable-autoupgrade \
+            --enable-network-policy \
+            --enable-ip-alias \
+            --logging=SYSTEM,WORKLOAD,API_SERVER \
+            --monitoring=SYSTEM \
+            --addons=HorizontalPodAutoscaling,HttpLoadBalancing,NetworkPolicy \
+            --node-labels=environment=$ENVIRONMENT; then
+            echo "Cluster created successfully!"
+            break
+        else
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "Cluster creation failed. Waiting 30 seconds before retry..."
+                sleep 30
+            else
+                echo "ERROR: Failed to create cluster after $MAX_RETRIES attempts"
+                echo "This may be due to:"
+                echo "  - Metadata server connectivity issues"
+                echo "  - Quota limitations"
+                echo "  - Network connectivity problems"
+                echo "Please check your GCP project quotas and network connectivity"
+                exit 1
+            fi
+        fi
+    done
 else
     echo "GKE cluster $CLUSTER_NAME already exists"
 fi
