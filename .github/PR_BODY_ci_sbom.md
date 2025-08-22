@@ -27,8 +27,4 @@ Verification
   - security-scan: pass
   - SBOM artifacts: sbom-source.cdx.json and sbom-image.cdx.json
 
-Link to Devin run
-https://app.devin.ai/sessions/e7d533c5e18c47b08e5a1cbdcfbf4faa
 
-Requested by
-Runo
