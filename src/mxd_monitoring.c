@@ -4,6 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+#include <errno.h>
 
 static mxd_system_metrics_t current_metrics = {0};
 static mxd_health_status_t current_health = {0};
@@ -11,6 +17,9 @@ static int monitoring_initialized = 0;
 static uint16_t metrics_port = 0;
 static char prometheus_buffer[4096];
 static char health_buffer[1024];
+static int server_socket = -1;
+static pthread_t server_thread;
+static volatile int server_running = 0;
 
 int mxd_init_monitoring(uint16_t http_port) {
     if (monitoring_initialized) {
@@ -153,8 +162,121 @@ const char* mxd_get_health_json(void) {
     return health_buffer;
 }
 
+static void handle_http_request(int client_socket) {
+    char buffer[1024];
+    ssize_t bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+    if (bytes_read <= 0) {
+        close(client_socket);
+        return;
+    }
+    
+    buffer[bytes_read] = '\0';
+    
+    char method[16], path[256], version[16];
+    if (sscanf(buffer, "%15s %255s %15s", method, path, version) != 3) {
+        close(client_socket);
+        return;
+    }
+    
+    const char* response_body = NULL;
+    const char* content_type = "text/plain";
+    int status_code = 404;
+    
+    if (strcmp(method, "GET") == 0) {
+        if (strcmp(path, "/health") == 0) {
+            response_body = mxd_get_health_json();
+            content_type = "application/json";
+            status_code = 200;
+        } else if (strcmp(path, "/metrics") == 0) {
+            response_body = mxd_get_prometheus_metrics();
+            content_type = "text/plain";
+            status_code = 200;
+        }
+    }
+    
+    if (!response_body) {
+        response_body = "Not Found";
+        status_code = 404;
+    }
+    
+    char response[4096];
+    int response_len = snprintf(response, sizeof(response),
+        "HTTP/1.1 %d %s\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s",
+        status_code,
+        status_code == 200 ? "OK" : "Not Found",
+        content_type,
+        strlen(response_body),
+        response_body);
+    
+    send(client_socket, response, response_len, 0);
+    close(client_socket);
+}
+
+static void* server_thread_func(void* arg) {
+    while (server_running) {
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        
+        int client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
+        if (client_socket < 0) {
+            if (server_running && errno != EINTR) {
+                MXD_LOG_ERROR("monitoring", "Accept failed: %s", strerror(errno));
+            }
+            continue;
+        }
+        
+        handle_http_request(client_socket);
+    }
+    return NULL;
+}
+
 int mxd_start_metrics_server(void) {
     if (!monitoring_initialized) {
+        return -1;
+    }
+    
+    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_socket < 0) {
+        MXD_LOG_ERROR("monitoring", "Failed to create socket: %s", strerror(errno));
+        return -1;
+    }
+    
+    int opt = 1;
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        MXD_LOG_WARN("monitoring", "Failed to set SO_REUSEADDR: %s", strerror(errno));
+    }
+    
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(metrics_port);
+    
+    if (bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        MXD_LOG_ERROR("monitoring", "Failed to bind to port %d: %s", metrics_port, strerror(errno));
+        close(server_socket);
+        server_socket = -1;
+        return -1;
+    }
+    
+    if (listen(server_socket, 5) < 0) {
+        MXD_LOG_ERROR("monitoring", "Failed to listen on socket: %s", strerror(errno));
+        close(server_socket);
+        server_socket = -1;
+        return -1;
+    }
+    
+    server_running = 1;
+    if (pthread_create(&server_thread, NULL, server_thread_func, NULL) != 0) {
+        MXD_LOG_ERROR("monitoring", "Failed to create server thread: %s", strerror(errno));
+        close(server_socket);
+        server_socket = -1;
+        server_running = 0;
         return -1;
     }
     
@@ -164,9 +286,18 @@ int mxd_start_metrics_server(void) {
 }
 
 int mxd_stop_metrics_server(void) {
-    if (!monitoring_initialized) {
+    if (!monitoring_initialized || !server_running) {
         return -1;
     }
+    
+    server_running = 0;
+    
+    if (server_socket >= 0) {
+        close(server_socket);
+        server_socket = -1;
+    }
+    
+    pthread_join(server_thread, NULL);
     
     MXD_LOG_INFO("monitoring", "Metrics server stopped");
     return 0;

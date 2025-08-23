@@ -59,6 +59,7 @@ static void mxd_set_default_config(mxd_config_t* config) {
     
     // Basic settings
     config->port = 8000;
+    config->metrics_port = 8080;
     config->initial_stake = 100.0;
     config->metrics_interval = 1000;
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
@@ -120,6 +121,8 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
                 strncpy(config->network_type, trimmed_value, sizeof(config->network_type) - 1);
             } else if (strcmp(key, "metrics_interval") == 0) {
                 config->metrics_interval = (uint32_t)atoi(trimmed_value);
+            } else if (strcmp(key, "metrics_port") == 0) {
+                config->metrics_port = (uint16_t)atoi(trimmed_value);
             } else if (strcmp(key, "bootstrap_nodes") == 0) {
                 // Parse bootstrap nodes array
                 char* node = strtok(trimmed_value, "[], ");
@@ -148,8 +151,17 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
         return mxd_validate_config(config);
     }
     
-    MXD_LOG_INFO("config", "Loaded config: node_id=%s, port=%d, data_dir=%s, node_name=%s",
-           config->node_id, config->port, config->data_dir, config->node_name);
+    const char* env_metrics_port = getenv("MXD_METRICS_PORT");
+    if (env_metrics_port) {
+        int port = atoi(env_metrics_port);
+        if (port >= 1024 && port <= 65535) {
+            config->metrics_port = (uint16_t)port;
+            MXD_LOG_INFO("config", "Metrics port overridden from environment: %d", port);
+        }
+    }
+    
+    MXD_LOG_INFO("config", "Loaded config: node_id=%s, port=%d, metrics_port=%d, data_dir=%s, node_name=%s",
+           config->node_id, config->port, config->metrics_port, config->data_dir, config->node_name);
            
     // Fetch bootstrap nodes from network
     if (mxd_fetch_bootstrap_nodes(config) != 0) {
