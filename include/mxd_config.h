@@ -6,6 +6,7 @@
 typedef struct {
     char node_id[64];
     uint16_t port;
+    uint16_t metrics_port;     // Metrics/health endpoint port
     char data_dir[256];
     char network_type[32];     // mainnet, testnet
     char node_name[64];        // Node display name

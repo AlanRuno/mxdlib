@@ -13,6 +13,7 @@
 #include "../include/mxd_p2p.h"
 #include "../include/blockchain/mxd_rsc.h"
 #include "../include/mxd_logging.h"
+#include "../include/mxd_monitoring.h"
 #include "metrics_display.h"
 
 static volatile int keep_running = 1;
@@ -25,6 +26,7 @@ void handle_signal(int signum) {
     MXD_LOG_INFO("node", "Received signal %d, terminating node %s...", 
            signum, current_config.node_id);
     keep_running = 0;
+    mxd_stop_metrics_server();
 }
 
 void* metrics_collector(void* arg) {
@@ -142,6 +144,19 @@ int main(int argc, char** argv) {
         return 1;
     }
     
+    // Initialize monitoring system
+    if (mxd_init_monitoring(current_config.metrics_port) != 0) {
+        MXD_LOG_ERROR("node", "Failed to initialize monitoring");
+        return 1;
+    }
+    
+    // Start metrics server
+    if (mxd_start_metrics_server() != 0) {
+        MXD_LOG_ERROR("node", "Failed to start metrics server");
+        mxd_cleanup_monitoring();
+        return 1;
+    }
+    
     // Display initial peer count
     size_t peer_count = 0;
     mxd_peer_t peers[MXD_MAX_PEERS];
@@ -187,6 +202,8 @@ int main(int argc, char** argv) {
     
     // Cleanup
     pthread_join(collector_thread, NULL);
+    mxd_stop_metrics_server();
+    mxd_cleanup_monitoring();
     mxd_stop_dht();
     MXD_LOG_INFO("node", "Node terminated successfully");
     return 0;

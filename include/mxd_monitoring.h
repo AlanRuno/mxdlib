@@ -7,6 +7,7 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
+#include <pthread.h>
 #include "mxd_metrics.h"
 
 typedef struct {
