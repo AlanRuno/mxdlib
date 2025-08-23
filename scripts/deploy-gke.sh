@@ -80,6 +80,41 @@ fi
 echo "Getting cluster credentials..."
 gcloud container clusters get-credentials $CLUSTER_NAME --region=$REGION
 
+echo "Configuring firewall rules for MXD application..."
+
+echo "Creating firewall rule for MXD P2P communication (port 8000)..."
+gcloud compute firewall-rules create mxd-p2p-$ENVIRONMENT \
+    --description="Allow MXD P2P communication between nodes" \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --action=ALLOW \
+    --rules=tcp:8000 \
+    --source-ranges=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 \
+    --target-tags=gke-$CLUSTER_NAME-node || echo "P2P firewall rule already exists"
+
+echo "Creating firewall rule for MXD health/metrics endpoints (port 8080)..."
+gcloud compute firewall-rules create mxd-health-metrics-$ENVIRONMENT \
+    --description="Allow access to MXD health and metrics endpoints" \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --action=ALLOW \
+    --rules=tcp:8080 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags=gke-$CLUSTER_NAME-node || echo "Health/metrics firewall rule already exists"
+
+echo "Creating firewall rule for LoadBalancer health checks..."
+gcloud compute firewall-rules create mxd-lb-health-checks-$ENVIRONMENT \
+    --description="Allow GCP LoadBalancer health checks" \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --action=ALLOW \
+    --rules=tcp:8080,tcp:8000 \
+    --source-ranges=35.191.0.0/16,130.211.0.0/22 \
+    --target-tags=gke-$CLUSTER_NAME-node || echo "LoadBalancer health check firewall rule already exists"
+
 echo "Creating storage classes..."
 kubectl apply -f - <<EOF
 apiVersion: storage.k8s.io/v1
@@ -109,6 +144,17 @@ sed -i "s/BUCKET_NAME/$PROJECT_ID-mxd-backups/g" /tmp/gke-deployment-$ENVIRONMEN
 
 echo "Applying Kubernetes manifests..."
 kubectl apply -f /tmp/gke-deployment-$ENVIRONMENT.yaml -n mxd-$ENVIRONMENT
+
+echo "Creating firewall rules for monitoring stack..."
+gcloud compute firewall-rules create mxd-monitoring-$ENVIRONMENT \
+    --description="Allow access to Prometheus and Grafana monitoring" \
+    --direction=INGRESS \
+    --priority=1000 \
+    --network=default \
+    --action=ALLOW \
+    --rules=tcp:3000,tcp:9090 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags=gke-$CLUSTER_NAME-node || echo "Monitoring firewall rule already exists"
 
 echo "Setting up monitoring..."
 kubectl apply -f kubernetes/gke-monitoring.yaml
@@ -144,6 +190,20 @@ echo "kubectl logs -f deployment/mxd-enterprise-gke -n mxd-$ENVIRONMENT"
 echo
 echo "To scale deployment:"
 echo "kubectl scale deployment mxd-enterprise-gke --replicas=5 -n mxd-$ENVIRONMENT"
+
+echo
+echo "=== Firewall Rules Summary ==="
+echo "Created firewall rules:"
+echo "  - mxd-p2p-$ENVIRONMENT: P2P communication (port 8000, private networks)"
+echo "  - mxd-health-metrics-$ENVIRONMENT: Health/metrics endpoints (port 8080, public)"
+echo "  - mxd-lb-health-checks-$ENVIRONMENT: LoadBalancer health checks (GCP ranges)"
+echo "  - mxd-monitoring-$ENVIRONMENT: Monitoring stack (ports 3000, 9090, public)"
+echo
+echo "To view firewall rules:"
+echo "gcloud compute firewall-rules list --filter=\"name~mxd-.*-$ENVIRONMENT\""
+echo
+echo "To delete firewall rules (cleanup):"
+echo "gcloud compute firewall-rules delete mxd-p2p-$ENVIRONMENT mxd-health-metrics-$ENVIRONMENT mxd-lb-health-checks-$ENVIRONMENT mxd-monitoring-$ENVIRONMENT --quiet"
 
 echo
 echo "Deployment completed successfully!"
