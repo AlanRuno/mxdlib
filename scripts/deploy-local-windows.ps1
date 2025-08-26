@@ -21,11 +21,10 @@ Write-Host ""
 # Function to check if a command exists
 function Test-Command {
     param($Command)
-    try {
-        Get-Command $Command -ErrorAction Stop
+    $result = Get-Command $Command -ErrorAction SilentlyContinue
+    if ($result) {
         return $true
-    }
-    catch {
+    } else {
         return $false
     }
 }
@@ -49,20 +48,16 @@ if (-not $SkipDockerCheck) {
     }
 
     # Check if Docker is running
-    try {
-        docker version | Out-Null
-    }
-    catch {
+    docker version 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Docker is not running" -ForegroundColor Red
         Write-Host "Please start Docker Desktop and try again" -ForegroundColor Yellow
         exit 1
     }
 
     # Check if Kubernetes is enabled in Docker Desktop
-    try {
-        kubectl version --client | Out-Null
-    }
-    catch {
+    kubectl version --client 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: kubectl is not available" -ForegroundColor Red
         Write-Host "Please enable Kubernetes in Docker Desktop settings:" -ForegroundColor Yellow
         Write-Host "1. Open Docker Desktop" -ForegroundColor Yellow
@@ -85,14 +80,10 @@ Write-Host "✓ kubectl is available" -ForegroundColor Green
 
 # Check Kubernetes cluster status
 Write-Host "Checking Kubernetes cluster status..." -ForegroundColor Blue
-try {
-    $clusterInfo = kubectl cluster-info 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "✓ Kubernetes cluster is running" -ForegroundColor Green
-    } else {
-        throw "Cluster not accessible"
-    }
-} catch {
+$clusterInfo = kubectl cluster-info 2>$null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✓ Kubernetes cluster is running" -ForegroundColor Green
+} else {
     Write-Host "ERROR: Kubernetes cluster is not accessible" -ForegroundColor Red
     Write-Host "Please ensure Kubernetes is enabled in Docker Desktop" -ForegroundColor Yellow
     exit 1
