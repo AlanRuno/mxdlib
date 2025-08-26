@@ -52,6 +52,27 @@ Gracefully stops the local MXD deployment without removing persistent data.
 - Deletes running pods
 - Preserves persistent volumes and configuration
 
+### `update-local-windows.ps1`
+Updates an existing local MXD deployment to the latest runtime version.
+
+**Usage:**
+```powershell
+.\scripts\update-local-windows.ps1 -Environment "local" -ImageTag "latest"
+```
+
+**Parameters:**
+- `-Environment`: Deployment environment name (default: "local")
+- `-ImageTag`: Docker image tag to use (default: "latest")
+- `-SkipDockerCheck`: Skip Docker/Kubernetes prerequisite checks
+- `-Force`: Skip confirmation prompt
+
+**What it does:**
+- Checks for existing deployment in the specified environment
+- Rebuilds the MXD Docker image with latest code
+- Performs rolling update of Kubernetes deployment
+- Waits for rollout completion and verifies endpoints
+- Provides rollback instructions if needed
+
 ### `clean-local-windows.ps1`
 Completely removes all MXD deployment resources and optionally Docker images.
 
@@ -94,12 +115,17 @@ Completely removes all MXD deployment resources and optionally Docker images.
    kubectl logs -f deployment/mxd-enterprise-local -n mxd-local
    ```
 
-5. **Stop when done:**
+5. **Update to latest version:**
+   ```powershell
+   .\scripts\update-local-windows.ps1
+   ```
+
+6. **Stop when done:**
    ```powershell
    .\scripts\stop-local-windows.ps1
    ```
 
-6. **Clean up completely:**
+7. **Clean up completely:**
    ```powershell
    .\scripts\clean-local-windows.ps1
    ```
@@ -130,6 +156,30 @@ docker images | grep mxdlib
 ```powershell
 kubectl describe pod -n mxd-local
 kubectl logs -f deployment/mxd-enterprise-local -n mxd-local
+```
+
+### Update Issues
+```powershell
+# Check rollout status
+kubectl rollout status deployment/mxd-enterprise-local -n mxd-local
+
+# View rollout history
+kubectl rollout history deployment/mxd-enterprise-local -n mxd-local
+
+# Rollback if needed
+kubectl rollout undo deployment/mxd-enterprise-local -n mxd-local
+
+# Force restart if stuck
+kubectl delete pods --all -n mxd-local
+```
+
+### Image Build Issues During Update
+```powershell
+# Clean Docker build cache
+docker system prune -f
+
+# Rebuild with no cache
+docker build --no-cache -t mxdlib:latest .
 ```
 
 ## Resource Usage
