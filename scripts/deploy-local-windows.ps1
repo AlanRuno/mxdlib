@@ -92,8 +92,7 @@ try {
     } else {
         throw "Cluster not accessible"
     }
-}
-catch {
+} catch {
     Write-Host "ERROR: Kubernetes cluster is not accessible" -ForegroundColor Red
     Write-Host "Please ensure Kubernetes is enabled in Docker Desktop" -ForegroundColor Yellow
     exit 1
