@@ -254,12 +254,12 @@ $deploymentYaml += "  namespace: mxd-$Environment"
 $deploymentYaml += "data:"
 $deploymentYaml += "  local.json: |"
 
-# Create simple JSON config without problematic brace syntax
-$deploymentYaml += "    `"node`": `"port`": 8000, `"data_dir`": `"/opt/mxd/data`", `"max_peers`": 20, `"enable_upnp`": false"
-$deploymentYaml += "    `"network`": `"type`": `"testnet`", `"bootstrap_nodes`": [`"node1.mxd.network:8000`"], `"network_magic`": `"0x4D584431`""
-$deploymentYaml += "    `"monitoring`": `"enabled`": true, `"metrics_port`": 8080, `"health_check_interval`": 30, `"prometheus_enabled`": true"
-$deploymentYaml += "    `"logging`": `"level`": `"INFO`", `"structured`": true, `"output`": `"stdout`""
-$deploymentYaml += "    `"performance`": `"worker_threads`": 2, `"io_threads`": 2, `"cache_size_mb`": 256"
+# Create minimal JSON config to avoid parsing issues
+$deploymentYaml += "    port: 8000"
+$deploymentYaml += "    data_dir: /opt/mxd/data"
+$deploymentYaml += "    network_type: testnet"
+$deploymentYaml += "    metrics_port: 8080"
+$deploymentYaml += "    log_level: INFO"
 
 $deploymentManifest = $deploymentYaml -join "`n"
 
