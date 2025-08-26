@@ -75,14 +75,14 @@ if (-not (Test-Command "kubectl")) {
     exit 1
 }
 
-Write-Host "✓ Docker is available" -ForegroundColor Green
-Write-Host "✓ kubectl is available" -ForegroundColor Green
+Write-Host "Docker is available" -ForegroundColor Green
+Write-Host "kubectl is available" -ForegroundColor Green
 
 # Check Kubernetes cluster status
 Write-Host "Checking Kubernetes cluster status..." -ForegroundColor Blue
 $clusterInfo = kubectl cluster-info 2>$null
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✓ Kubernetes cluster is running" -ForegroundColor Green
+    Write-Host "Kubernetes cluster is running" -ForegroundColor Green
 } else {
     Write-Host "ERROR: Kubernetes cluster is not accessible" -ForegroundColor Red
     Write-Host "Please ensure Kubernetes is enabled in Docker Desktop" -ForegroundColor Yellow
@@ -105,15 +105,15 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Failed to build Docker image" -ForegroundColor Red
     exit 1
 }
-Write-Host "✓ Docker image built successfully" -ForegroundColor Green
+Write-Host "Docker image built successfully" -ForegroundColor Green
 
 # Create namespace
 Write-Host "Creating Kubernetes namespace..." -ForegroundColor Blue
 kubectl create namespace "mxd-$Environment" 2>$null
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✓ Namespace mxd-$Environment created" -ForegroundColor Green
+    Write-Host "Namespace mxd-$Environment created" -ForegroundColor Green
 } else {
-    Write-Host "✓ Namespace mxd-$Environment already exists" -ForegroundColor Yellow
+    Write-Host "Namespace mxd-$Environment already exists" -ForegroundColor Yellow
 }
 
 # Create local storage class
@@ -271,7 +271,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-Write-Host "✓ Kubernetes manifests applied successfully" -ForegroundColor Green
+Write-Host "Kubernetes manifests applied successfully" -ForegroundColor Green
 
 # Wait for deployment to be ready
 Write-Host "Waiting for deployment to be ready..." -ForegroundColor Blue
@@ -281,7 +281,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Check pod status with: kubectl get pods -n mxd-$Environment" -ForegroundColor Yellow
     Write-Host "Check pod logs with: kubectl logs -f deployment/mxd-enterprise-local -n mxd-$Environment" -ForegroundColor Yellow
 } else {
-    Write-Host "✓ Deployment is ready" -ForegroundColor Green
+    Write-Host "Deployment is ready" -ForegroundColor Green
 }
 
 # Get service information
