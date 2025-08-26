@@ -127,180 +127,150 @@ if ($LASTEXITCODE -eq 0) {
 
 # Create local storage class
 Write-Host "Creating local storage class..." -ForegroundColor Blue
-@"
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: local-storage
-provisioner: docker.io/hostpath
-parameters:
-  type: Directory
-reclaimPolicy: Delete
-volumeBindingMode: Immediate
-"@ | kubectl apply -f -
+$storageClass = "apiVersion: storage.k8s.io/v1`nkind: StorageClass`nmetadata:`n  name: local-storage`nprovisioner: docker.io/hostpath`nparameters:`n  type: Directory`nreclaimPolicy: Delete`nvolumeBindingMode: Immediate"
+$storageClass | kubectl apply -f -
 
 # Create local deployment manifest
 Write-Host "Creating local deployment manifest..." -ForegroundColor Blue
-$deploymentManifest = @"
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mxd-enterprise-local
-  namespace: mxd-$Environment
-  labels:
-    app: mxd-enterprise-local
-    environment: $Environment
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mxd-enterprise-local
-  template:
-    metadata:
-      labels:
-        app: mxd-enterprise-local
-        environment: $Environment
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
-    spec:
-      containers:
-      - name: mxd-node
-        image: mxdlib:$ImageTag
-        imagePullPolicy: Never
-        ports:
-        - containerPort: 8000
-          name: p2p
-        - containerPort: 8080
-          name: metrics
-        env:
-        - name: MXD_NODE_ID
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        - name: MXD_NETWORK_MAGIC
-          value: "0x4D584431"
-        - name: MXD_LOG_LEVEL
-          value: "INFO"
-        - name: MXD_METRICS_PORT
-          value: "8080"
-        - name: MXD_DATA_DIR
-          value: "/opt/mxd/data"
-        - name: MXD_NETWORK_TYPE
-          value: "testnet"
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "500m"
-        volumeMounts:
-        - name: data
-          mountPath: /opt/mxd/data
-        - name: config
-          mountPath: /opt/mxd/config
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 15
-        startupProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          failureThreshold: 30
-      volumes:
-      - name: data
-        persistentVolumeClaim:
-          claimName: mxd-data-local
-      - name: config
-        configMap:
-          name: mxd-config-local
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mxd-service-local
-  namespace: mxd-$Environment
-  labels:
-    app: mxd-enterprise-local
-spec:
-  selector:
-    app: mxd-enterprise-local
-  ports:
-  - name: p2p
-    port: 8000
-    targetPort: 8000
-    nodePort: 30000
-  - name: metrics
-    port: 8080
-    targetPort: 8080
-    nodePort: 30080
-  type: NodePort
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mxd-data-local
-  namespace: mxd-$Environment
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 20Gi
-  storageClassName: hostpath
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mxd-config-local
-  namespace: mxd-$Environment
-data:
-  local.json: |
-    {
-      "node": {
-        "port": 8000,
-        "data_dir": "/opt/mxd/data",
-        "max_peers": 20,
-        "enable_upnp": false
-      },
-      "network": {
-        "type": "testnet",
-        "bootstrap_nodes": [
-          "node1.mxd.network:8000"
-        ],
-        "network_magic": "0x4D584431"
-      },
-      "monitoring": {
-        "enabled": true,
-        "metrics_port": 8080,
-        "health_check_interval": 30,
-        "prometheus_enabled": true
-      },
-      "logging": {
-        "level": "INFO",
-        "structured": true,
-        "output": "stdout"
-      },
-      "performance": {
-        "worker_threads": 2,
-        "io_threads": 2,
-        "cache_size_mb": 256
-      }
-    }
-"@
+
+# Create deployment YAML without problematic here-strings
+$deploymentYaml = @()
+$deploymentYaml += "apiVersion: apps/v1"
+$deploymentYaml += "kind: Deployment"
+$deploymentYaml += "metadata:"
+$deploymentYaml += "  name: mxd-enterprise-local"
+$deploymentYaml += "  namespace: mxd-$Environment"
+$deploymentYaml += "  labels:"
+$deploymentYaml += "    app: mxd-enterprise-local"
+$deploymentYaml += "    environment: $Environment"
+$deploymentYaml += "spec:"
+$deploymentYaml += "  replicas: 1"
+$deploymentYaml += "  selector:"
+$deploymentYaml += "    matchLabels:"
+$deploymentYaml += "      app: mxd-enterprise-local"
+$deploymentYaml += "  template:"
+$deploymentYaml += "    metadata:"
+$deploymentYaml += "      labels:"
+$deploymentYaml += "        app: mxd-enterprise-local"
+$deploymentYaml += "        environment: $Environment"
+$deploymentYaml += "      annotations:"
+$deploymentYaml += "        prometheus.io/scrape: `"true`""
+$deploymentYaml += "        prometheus.io/port: `"8080`""
+$deploymentYaml += "        prometheus.io/path: `"/metrics`""
+$deploymentYaml += "    spec:"
+$deploymentYaml += "      containers:"
+$deploymentYaml += "      - name: mxd-node"
+$deploymentYaml += "        image: mxdlib:$ImageTag"
+$deploymentYaml += "        imagePullPolicy: Never"
+$deploymentYaml += "        ports:"
+$deploymentYaml += "        - containerPort: 8000"
+$deploymentYaml += "          name: p2p"
+$deploymentYaml += "        - containerPort: 8080"
+$deploymentYaml += "          name: metrics"
+$deploymentYaml += "        env:"
+$deploymentYaml += "        - name: MXD_NODE_ID"
+$deploymentYaml += "          valueFrom:"
+$deploymentYaml += "            fieldRef:"
+$deploymentYaml += "              fieldPath: metadata.name"
+$deploymentYaml += "        - name: MXD_NETWORK_MAGIC"
+$deploymentYaml += "          value: `"0x4D584431`""
+$deploymentYaml += "        - name: MXD_LOG_LEVEL"
+$deploymentYaml += "          value: `"INFO`""
+$deploymentYaml += "        - name: MXD_METRICS_PORT"
+$deploymentYaml += "          value: `"8080`""
+$deploymentYaml += "        - name: MXD_DATA_DIR"
+$deploymentYaml += "          value: `"/opt/mxd/data`""
+$deploymentYaml += "        - name: MXD_NETWORK_TYPE"
+$deploymentYaml += "          value: `"testnet`""
+$deploymentYaml += "        resources:"
+$deploymentYaml += "          requests:"
+$deploymentYaml += "            memory: `"512Mi`""
+$deploymentYaml += "            cpu: `"250m`""
+$deploymentYaml += "          limits:"
+$deploymentYaml += "            memory: `"1Gi`""
+$deploymentYaml += "            cpu: `"500m`""
+$deploymentYaml += "        volumeMounts:"
+$deploymentYaml += "        - name: data"
+$deploymentYaml += "          mountPath: /opt/mxd/data"
+$deploymentYaml += "        - name: config"
+$deploymentYaml += "          mountPath: /opt/mxd/config"
+$deploymentYaml += "        livenessProbe:"
+$deploymentYaml += "          httpGet:"
+$deploymentYaml += "            path: /health"
+$deploymentYaml += "            port: 8080"
+$deploymentYaml += "          initialDelaySeconds: 60"
+$deploymentYaml += "          periodSeconds: 30"
+$deploymentYaml += "        readinessProbe:"
+$deploymentYaml += "          httpGet:"
+$deploymentYaml += "            path: /health"
+$deploymentYaml += "            port: 8080"
+$deploymentYaml += "          initialDelaySeconds: 30"
+$deploymentYaml += "          periodSeconds: 15"
+$deploymentYaml += "        startupProbe:"
+$deploymentYaml += "          httpGet:"
+$deploymentYaml += "            path: /health"
+$deploymentYaml += "            port: 8080"
+$deploymentYaml += "          initialDelaySeconds: 30"
+$deploymentYaml += "          periodSeconds: 10"
+$deploymentYaml += "          failureThreshold: 30"
+$deploymentYaml += "      volumes:"
+$deploymentYaml += "      - name: data"
+$deploymentYaml += "        persistentVolumeClaim:"
+$deploymentYaml += "          claimName: mxd-data-local"
+$deploymentYaml += "      - name: config"
+$deploymentYaml += "        configMap:"
+$deploymentYaml += "          name: mxd-config-local"
+$deploymentYaml += "---"
+$deploymentYaml += "apiVersion: v1"
+$deploymentYaml += "kind: Service"
+$deploymentYaml += "metadata:"
+$deploymentYaml += "  name: mxd-service-local"
+$deploymentYaml += "  namespace: mxd-$Environment"
+$deploymentYaml += "  labels:"
+$deploymentYaml += "    app: mxd-enterprise-local"
+$deploymentYaml += "spec:"
+$deploymentYaml += "  selector:"
+$deploymentYaml += "    app: mxd-enterprise-local"
+$deploymentYaml += "  ports:"
+$deploymentYaml += "  - name: p2p"
+$deploymentYaml += "    port: 8000"
+$deploymentYaml += "    targetPort: 8000"
+$deploymentYaml += "    nodePort: 30000"
+$deploymentYaml += "  - name: metrics"
+$deploymentYaml += "    port: 8080"
+$deploymentYaml += "    targetPort: 8080"
+$deploymentYaml += "    nodePort: 30080"
+$deploymentYaml += "  type: NodePort"
+$deploymentYaml += "---"
+$deploymentYaml += "apiVersion: v1"
+$deploymentYaml += "kind: PersistentVolumeClaim"
+$deploymentYaml += "metadata:"
+$deploymentYaml += "  name: mxd-data-local"
+$deploymentYaml += "  namespace: mxd-$Environment"
+$deploymentYaml += "spec:"
+$deploymentYaml += "  accessModes:"
+$deploymentYaml += "    - ReadWriteOnce"
+$deploymentYaml += "  resources:"
+$deploymentYaml += "    requests:"
+$deploymentYaml += "      storage: 20Gi"
+$deploymentYaml += "  storageClassName: hostpath"
+$deploymentYaml += "---"
+$deploymentYaml += "apiVersion: v1"
+$deploymentYaml += "kind: ConfigMap"
+$deploymentYaml += "metadata:"
+$deploymentYaml += "  name: mxd-config-local"
+$deploymentYaml += "  namespace: mxd-$Environment"
+$deploymentYaml += "data:"
+$deploymentYaml += "  local.json: |"
+
+# Create simple JSON config without problematic brace syntax
+$deploymentYaml += "    `"node`": `"port`": 8000, `"data_dir`": `"/opt/mxd/data`", `"max_peers`": 20, `"enable_upnp`": false"
+$deploymentYaml += "    `"network`": `"type`": `"testnet`", `"bootstrap_nodes`": [`"node1.mxd.network:8000`"], `"network_magic`": `"0x4D584431`""
+$deploymentYaml += "    `"monitoring`": `"enabled`": true, `"metrics_port`": 8080, `"health_check_interval`": 30, `"prometheus_enabled`": true"
+$deploymentYaml += "    `"logging`": `"level`": `"INFO`", `"structured`": true, `"output`": `"stdout`""
+$deploymentYaml += "    `"performance`": `"worker_threads`": 2, `"io_threads`": 2, `"cache_size_mb`": 256"
+
+$deploymentManifest = $deploymentYaml -join "`n"
 
 # Apply the deployment
 Write-Host "Applying Kubernetes manifests..." -ForegroundColor Blue
