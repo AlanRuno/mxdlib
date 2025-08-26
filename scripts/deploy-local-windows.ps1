@@ -105,6 +105,14 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Failed to build Docker image" -ForegroundColor Red
     exit 1
 }
+
+# Verify the image was built successfully
+Write-Host "Verifying Docker image..." -ForegroundColor Blue
+docker images mxdlib:$ImageTag
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Docker image not found after build" -ForegroundColor Red
+    exit 1
+}
 Write-Host "Docker image built successfully" -ForegroundColor Green
 
 # Create namespace
@@ -152,7 +160,7 @@ $deploymentYaml += "    spec:"
 $deploymentYaml += "      containers:"
 $deploymentYaml += "      - name: mxd-node"
 $deploymentYaml += "        image: mxdlib:$ImageTag"
-$deploymentYaml += "        imagePullPolicy: Never"
+$deploymentYaml += "        imagePullPolicy: IfNotPresent"
 $deploymentYaml += "        ports:"
 $deploymentYaml += "        - containerPort: 8000"
 $deploymentYaml += "          name: p2p"
