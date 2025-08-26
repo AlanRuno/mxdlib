@@ -568,7 +568,7 @@ const char* mxd_handle_wallet_send(const char* recipient, const char* amount) {
     
     char tx_hash_str[129];
     for (int i = 0; i < 64; i++) {
-        sprintf(tx_hash_str + (i * 2), "%02x", tx_hash[i]);
+        snprintf(tx_hash_str + (i * 2), 3, "%02x", tx_hash[i]);
     }
     tx_hash_str[128] = '\0';
     
