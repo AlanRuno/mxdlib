@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <time.h>
 #include <pthread.h>
+#include <stdio.h>
 #include "../include/mxd_config.h"
 #include "../include/mxd_metrics.h"
 #include "../include/mxd_dht.h"
@@ -84,6 +85,8 @@ void* metrics_collector(void* arg) {
 }
 
 int main(int argc, char** argv) {
+    MXD_LOG_INFO("node", "MXD Node starting...");
+    
     char default_config_path[PATH_MAX];
     const char* config_path = NULL;
     uint16_t override_port = 0;
@@ -127,10 +130,12 @@ int main(int argc, char** argv) {
     signal(SIGPIPE, SIG_IGN);
     
     // Load configuration
+    MXD_LOG_INFO("node", "Loading configuration from: %s", config_path);
     if (mxd_load_config(config_path, &current_config) != 0) {
         MXD_LOG_ERROR("node", "Failed to load configuration from %s", config_path);
         return 1;
     }
+    MXD_LOG_INFO("node", "Configuration loaded successfully");
     
     // Override port if specified on command line
     if (override_port > 0) {
@@ -139,16 +144,20 @@ int main(int argc, char** argv) {
     }
     
     // Initialize metrics
+    MXD_LOG_INFO("node", "Initializing metrics...");
     if (mxd_init_metrics(&node_metrics) != 0) {
         MXD_LOG_ERROR("node", "Failed to initialize metrics");
         return 1;
     }
+    MXD_LOG_INFO("node", "Metrics initialized successfully");
     
     // Initialize monitoring system
+    MXD_LOG_INFO("node", "Initializing monitoring system on port %d...", current_config.metrics_port);
     if (mxd_init_monitoring(current_config.metrics_port) != 0) {
         MXD_LOG_ERROR("node", "Failed to initialize monitoring");
         return 1;
     }
+    MXD_LOG_INFO("node", "Monitoring system initialized successfully");
     
     // Start metrics server
     if (mxd_start_metrics_server() != 0) {
