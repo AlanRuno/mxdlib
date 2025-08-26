@@ -21,11 +21,10 @@ Write-Host ""
 # Function to check if a command exists
 function Test-Command {
     param($Command)
-    try {
-        Get-Command $Command -ErrorAction Stop
+    $result = Get-Command $Command -ErrorAction SilentlyContinue
+    if ($result) {
         return $true
-    }
-    catch {
+    } else {
         return $false
     }
 }
@@ -49,20 +48,16 @@ if (-not $SkipDockerCheck) {
     }
 
     # Check if Docker is running
-    try {
-        docker version | Out-Null
-    }
-    catch {
+    docker version 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Docker is not running" -ForegroundColor Red
         Write-Host "Please start Docker Desktop and try again" -ForegroundColor Yellow
         exit 1
     }
 
     # Check if Kubernetes is enabled in Docker Desktop
-    try {
-        kubectl version --client | Out-Null
-    }
-    catch {
+    kubectl version --client 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: kubectl is not available" -ForegroundColor Red
         Write-Host "Please enable Kubernetes in Docker Desktop settings:" -ForegroundColor Yellow
         Write-Host "1. Open Docker Desktop" -ForegroundColor Yellow
@@ -80,20 +75,15 @@ if (-not (Test-Command "kubectl")) {
     exit 1
 }
 
-Write-Host "✓ Docker is available" -ForegroundColor Green
-Write-Host "✓ kubectl is available" -ForegroundColor Green
+Write-Host "Docker is available" -ForegroundColor Green
+Write-Host "kubectl is available" -ForegroundColor Green
 
 # Check Kubernetes cluster status
 Write-Host "Checking Kubernetes cluster status..." -ForegroundColor Blue
-try {
-    $clusterInfo = kubectl cluster-info 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "✓ Kubernetes cluster is running" -ForegroundColor Green
-    } else {
-        throw "Cluster not accessible"
-    }
-}
-catch {
+$clusterInfo = kubectl cluster-info 2>$null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "Kubernetes cluster is running" -ForegroundColor Green
+} else {
     Write-Host "ERROR: Kubernetes cluster is not accessible" -ForegroundColor Red
     Write-Host "Please ensure Kubernetes is enabled in Docker Desktop" -ForegroundColor Yellow
     exit 1
@@ -115,193 +105,171 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Failed to build Docker image" -ForegroundColor Red
     exit 1
 }
-Write-Host "✓ Docker image built successfully" -ForegroundColor Green
+
+# Verify the image was built successfully
+Write-Host "Verifying Docker image..." -ForegroundColor Blue
+docker images mxdlib:$ImageTag
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: Docker image not found after build" -ForegroundColor Red
+    exit 1
+}
+Write-Host "Docker image built successfully" -ForegroundColor Green
 
 # Create namespace
 Write-Host "Creating Kubernetes namespace..." -ForegroundColor Blue
 kubectl create namespace "mxd-$Environment" 2>$null
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✓ Namespace mxd-$Environment created" -ForegroundColor Green
+    Write-Host "Namespace mxd-$Environment created" -ForegroundColor Green
 } else {
-    Write-Host "✓ Namespace mxd-$Environment already exists" -ForegroundColor Yellow
+    Write-Host "Namespace mxd-$Environment already exists" -ForegroundColor Yellow
 }
 
 # Create local storage class
 Write-Host "Creating local storage class..." -ForegroundColor Blue
-@"
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: local-storage
-provisioner: docker.io/hostpath
-parameters:
-  type: Directory
-reclaimPolicy: Delete
-volumeBindingMode: Immediate
-"@ | kubectl apply -f -
+$storageClass = "apiVersion: storage.k8s.io/v1`nkind: StorageClass`nmetadata:`n  name: local-storage`nprovisioner: docker.io/hostpath`nparameters:`n  type: Directory`nreclaimPolicy: Delete`nvolumeBindingMode: Immediate"
+$storageClass | kubectl apply -f -
 
 # Create local deployment manifest
 Write-Host "Creating local deployment manifest..." -ForegroundColor Blue
-$deploymentManifest = @"
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mxd-enterprise-local
-  namespace: mxd-$Environment
-  labels:
-    app: mxd-enterprise-local
-    environment: $Environment
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mxd-enterprise-local
-  template:
-    metadata:
-      labels:
-        app: mxd-enterprise-local
-        environment: $Environment
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
-    spec:
-      containers:
-      - name: mxd-node
-        image: mxdlib:$ImageTag
-        imagePullPolicy: Never
-        ports:
-        - containerPort: 8000
-          name: p2p
-        - containerPort: 8080
-          name: metrics
-        env:
-        - name: MXD_NODE_ID
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        - name: MXD_NETWORK_MAGIC
-          value: "0x4D584431"
-        - name: MXD_LOG_LEVEL
-          value: "INFO"
-        - name: MXD_METRICS_PORT
-          value: "8080"
-        - name: MXD_DATA_DIR
-          value: "/opt/mxd/data"
-        - name: MXD_NETWORK_TYPE
-          value: "testnet"
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "500m"
-        volumeMounts:
-        - name: data
-          mountPath: /opt/mxd/data
-        - name: config
-          mountPath: /opt/mxd/config
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 60
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 15
-        startupProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          failureThreshold: 30
-      volumes:
-      - name: data
-        persistentVolumeClaim:
-          claimName: mxd-data-local
-      - name: config
-        configMap:
-          name: mxd-config-local
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mxd-service-local
-  namespace: mxd-$Environment
-  labels:
-    app: mxd-enterprise-local
-spec:
-  selector:
-    app: mxd-enterprise-local
-  ports:
-  - name: p2p
-    port: 8000
-    targetPort: 8000
-    nodePort: 30000
-  - name: metrics
-    port: 8080
-    targetPort: 8080
-    nodePort: 30080
-  type: NodePort
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mxd-data-local
-  namespace: mxd-$Environment
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 20Gi
-  storageClassName: hostpath
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mxd-config-local
-  namespace: mxd-$Environment
-data:
-  local.json: |
-    {
-      "node": {
-        "port": 8000,
-        "data_dir": "/opt/mxd/data",
-        "max_peers": 20,
-        "enable_upnp": false
-      },
-      "network": {
-        "type": "testnet",
-        "bootstrap_nodes": [
-          "node1.mxd.network:8000"
-        ],
-        "network_magic": "0x4D584431"
-      },
-      "monitoring": {
-        "enabled": true,
-        "metrics_port": 8080,
-        "health_check_interval": 30,
-        "prometheus_enabled": true
-      },
-      "logging": {
-        "level": "INFO",
-        "structured": true,
-        "output": "stdout"
-      },
-      "performance": {
-        "worker_threads": 2,
-        "io_threads": 2,
-        "cache_size_mb": 256
-      }
-    }
-"@
+
+# Create deployment YAML without problematic here-strings
+$deploymentYaml = @()
+$deploymentYaml += "apiVersion: apps/v1"
+$deploymentYaml += "kind: Deployment"
+$deploymentYaml += "metadata:"
+$deploymentYaml += "  name: mxd-enterprise-local"
+$deploymentYaml += "  namespace: mxd-$Environment"
+$deploymentYaml += "  labels:"
+$deploymentYaml += "    app: mxd-enterprise-local"
+$deploymentYaml += "    environment: $Environment"
+$deploymentYaml += "spec:"
+$deploymentYaml += "  replicas: 1"
+$deploymentYaml += "  selector:"
+$deploymentYaml += "    matchLabels:"
+$deploymentYaml += "      app: mxd-enterprise-local"
+$deploymentYaml += "  template:"
+$deploymentYaml += "    metadata:"
+$deploymentYaml += "      labels:"
+$deploymentYaml += "        app: mxd-enterprise-local"
+$deploymentYaml += "        environment: $Environment"
+$deploymentYaml += "      annotations:"
+$deploymentYaml += "        prometheus.io/scrape: `"true`""
+$deploymentYaml += "        prometheus.io/port: `"8080`""
+$deploymentYaml += "        prometheus.io/path: `"/metrics`""
+$deploymentYaml += "    spec:"
+$deploymentYaml += "      containers:"
+$deploymentYaml += "      - name: mxd-node"
+$deploymentYaml += "        image: mxdlib:$ImageTag"
+$deploymentYaml += "        imagePullPolicy: IfNotPresent"
+$deploymentYaml += "        ports:"
+$deploymentYaml += "        - containerPort: 8000"
+$deploymentYaml += "          name: p2p"
+$deploymentYaml += "        - containerPort: 8080"
+$deploymentYaml += "          name: metrics"
+$deploymentYaml += "        env:"
+$deploymentYaml += "        - name: MXD_NODE_ID"
+$deploymentYaml += "          valueFrom:"
+$deploymentYaml += "            fieldRef:"
+$deploymentYaml += "              fieldPath: metadata.name"
+$deploymentYaml += "        - name: MXD_NETWORK_MAGIC"
+$deploymentYaml += "          value: `"0x4D584431`""
+$deploymentYaml += "        - name: MXD_LOG_LEVEL"
+$deploymentYaml += "          value: `"INFO`""
+$deploymentYaml += "        - name: MXD_METRICS_PORT"
+$deploymentYaml += "          value: `"8080`""
+$deploymentYaml += "        - name: MXD_DATA_DIR"
+$deploymentYaml += "          value: `"/opt/mxd/data`""
+$deploymentYaml += "        - name: MXD_NETWORK_TYPE"
+$deploymentYaml += "          value: `"testnet`""
+$deploymentYaml += "        resources:"
+$deploymentYaml += "          requests:"
+$deploymentYaml += "            memory: `"512Mi`""
+$deploymentYaml += "            cpu: `"250m`""
+$deploymentYaml += "          limits:"
+$deploymentYaml += "            memory: `"1Gi`""
+$deploymentYaml += "            cpu: `"500m`""
+$deploymentYaml += "        volumeMounts:"
+$deploymentYaml += "        - name: data"
+$deploymentYaml += "          mountPath: /opt/mxd/data"
+$deploymentYaml += "        - name: config"
+$deploymentYaml += "          mountPath: /opt/mxd/config"
+$deploymentYaml += "        livenessProbe:"
+$deploymentYaml += "          httpGet:"
+$deploymentYaml += "            path: /health"
+$deploymentYaml += "            port: 8080"
+$deploymentYaml += "          initialDelaySeconds: 60"
+$deploymentYaml += "          periodSeconds: 30"
+$deploymentYaml += "        readinessProbe:"
+$deploymentYaml += "          httpGet:"
+$deploymentYaml += "            path: /health"
+$deploymentYaml += "            port: 8080"
+$deploymentYaml += "          initialDelaySeconds: 30"
+$deploymentYaml += "          periodSeconds: 15"
+$deploymentYaml += "        startupProbe:"
+$deploymentYaml += "          httpGet:"
+$deploymentYaml += "            path: /health"
+$deploymentYaml += "            port: 8080"
+$deploymentYaml += "          initialDelaySeconds: 30"
+$deploymentYaml += "          periodSeconds: 10"
+$deploymentYaml += "          failureThreshold: 30"
+$deploymentYaml += "      volumes:"
+$deploymentYaml += "      - name: data"
+$deploymentYaml += "        persistentVolumeClaim:"
+$deploymentYaml += "          claimName: mxd-data-local"
+$deploymentYaml += "      - name: config"
+$deploymentYaml += "        configMap:"
+$deploymentYaml += "          name: mxd-config-local"
+$deploymentYaml += "---"
+$deploymentYaml += "apiVersion: v1"
+$deploymentYaml += "kind: Service"
+$deploymentYaml += "metadata:"
+$deploymentYaml += "  name: mxd-service-local"
+$deploymentYaml += "  namespace: mxd-$Environment"
+$deploymentYaml += "  labels:"
+$deploymentYaml += "    app: mxd-enterprise-local"
+$deploymentYaml += "spec:"
+$deploymentYaml += "  selector:"
+$deploymentYaml += "    app: mxd-enterprise-local"
+$deploymentYaml += "  ports:"
+$deploymentYaml += "  - name: p2p"
+$deploymentYaml += "    port: 8000"
+$deploymentYaml += "    targetPort: 8000"
+$deploymentYaml += "    nodePort: 30000"
+$deploymentYaml += "  - name: metrics"
+$deploymentYaml += "    port: 8080"
+$deploymentYaml += "    targetPort: 8080"
+$deploymentYaml += "    nodePort: 30080"
+$deploymentYaml += "  type: NodePort"
+$deploymentYaml += "---"
+$deploymentYaml += "apiVersion: v1"
+$deploymentYaml += "kind: PersistentVolumeClaim"
+$deploymentYaml += "metadata:"
+$deploymentYaml += "  name: mxd-data-local"
+$deploymentYaml += "  namespace: mxd-$Environment"
+$deploymentYaml += "spec:"
+$deploymentYaml += "  accessModes:"
+$deploymentYaml += "    - ReadWriteOnce"
+$deploymentYaml += "  resources:"
+$deploymentYaml += "    requests:"
+$deploymentYaml += "      storage: 20Gi"
+$deploymentYaml += "  storageClassName: hostpath"
+$deploymentYaml += "---"
+$deploymentYaml += "apiVersion: v1"
+$deploymentYaml += "kind: ConfigMap"
+$deploymentYaml += "metadata:"
+$deploymentYaml += "  name: mxd-config-local"
+$deploymentYaml += "  namespace: mxd-$Environment"
+$deploymentYaml += "data:"
+$deploymentYaml += "  local.json: |"
+
+# Create minimal JSON config to avoid parsing issues
+$deploymentYaml += "    port: 8000"
+$deploymentYaml += "    data_dir: /opt/mxd/data"
+$deploymentYaml += "    network_type: testnet"
+$deploymentYaml += "    metrics_port: 8080"
+$deploymentYaml += "    log_level: INFO"
+
+$deploymentManifest = $deploymentYaml -join "`n"
 
 # Apply the deployment
 Write-Host "Applying Kubernetes manifests..." -ForegroundColor Blue
@@ -311,7 +279,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-Write-Host "✓ Kubernetes manifests applied successfully" -ForegroundColor Green
+Write-Host "Kubernetes manifests applied successfully" -ForegroundColor Green
 
 # Wait for deployment to be ready
 Write-Host "Waiting for deployment to be ready..." -ForegroundColor Blue
@@ -321,7 +289,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Check pod status with: kubectl get pods -n mxd-$Environment" -ForegroundColor Yellow
     Write-Host "Check pod logs with: kubectl logs -f deployment/mxd-enterprise-local -n mxd-$Environment" -ForegroundColor Yellow
 } else {
-    Write-Host "✓ Deployment is ready" -ForegroundColor Green
+    Write-Host "Deployment is ready" -ForegroundColor Green
 }
 
 # Get service information
