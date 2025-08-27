@@ -9,12 +9,16 @@ param(
     [string]$ImageTag = "latest",
     
     [Parameter(Mandatory=$false)]
-    [switch]$SkipDockerCheck = $false
+    [switch]$SkipDockerCheck = $false,
+    
+    [Parameter(Mandatory=$false)]
+    [switch]$SkipPortForward = $false
 )
 
 Write-Host "=== MXD Library Local Kubernetes Deployment (Windows) ===" -ForegroundColor Green
 Write-Host "Environment: $Environment" -ForegroundColor Cyan
 Write-Host "Image Tag: $ImageTag" -ForegroundColor Cyan
+Write-Host "Port Forward: $(if ($SkipPortForward) { 'Disabled' } else { 'Enabled' })" -ForegroundColor Cyan
 Write-Host "NOTE: This script requires Docker Desktop with Kubernetes enabled" -ForegroundColor Yellow
 Write-Host ""
 
@@ -34,6 +38,82 @@ function Wait-UserInput {
     param($Message)
     Write-Host $Message -ForegroundColor Yellow
     Read-Host "Press Enter to continue or Ctrl+C to cancel"
+}
+
+# Function to start port forwarding and open browser
+function Start-PortForwardAndBrowser {
+    param(
+        [string]$Namespace,
+        [int]$LocalPort = 8080,
+        [int]$RemotePort = 8080,
+        [string]$DeploymentName = "mxd-enterprise-local"
+    )
+    
+    Write-Host "Setting up port forwarding..." -ForegroundColor Blue
+    
+    # Check if local port is available
+    $portInUse = Get-NetTCPConnection -LocalPort $LocalPort -ErrorAction SilentlyContinue
+    if ($portInUse) {
+        Write-Host "WARNING: Port $LocalPort is already in use" -ForegroundColor Yellow
+        Write-Host "You can manually access the service via NodePort: http://localhost:30080/wallet" -ForegroundColor White
+        return $false
+    }
+    
+    # Start port forwarding in background
+    Write-Host "Starting kubectl port-forward in background..." -ForegroundColor Blue
+    $portForwardJob = Start-Job -ScriptBlock {
+        param($ns, $deployment, $localPort, $remotePort)
+        kubectl port-forward "deployment/$deployment" "$localPort`:$remotePort" -n $ns
+    } -ArgumentList $Namespace, $DeploymentName, $LocalPort, $RemotePort
+    
+    # Wait a moment for port forward to establish
+    Start-Sleep -Seconds 5
+    
+    # Test connectivity
+    $maxAttempts = 6
+    $attempt = 0
+    $connected = $false
+    
+    while ($attempt -lt $maxAttempts -and -not $connected) {
+        $attempt++
+        Write-Host "Testing connection (attempt $attempt/$maxAttempts)..." -ForegroundColor Gray
+        
+        try {
+            $response = Invoke-WebRequest -Uri "http://localhost:$LocalPort/health" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+            if ($response.StatusCode -eq 200) {
+                $connected = $true
+                Write-Host "✓ Port forward established successfully" -ForegroundColor Green
+            }
+        } catch {
+            Start-Sleep -Seconds 3
+        }
+    }
+    
+    if ($connected) {
+        Write-Host "Opening wallet interface in browser..." -ForegroundColor Cyan
+        Start-Process "http://localhost:$LocalPort/wallet"
+        
+        Write-Host ""
+        Write-Host "=== Port Forward Active ===" -ForegroundColor Green
+        Write-Host "Wallet Interface: http://localhost:$LocalPort/wallet" -ForegroundColor White
+        Write-Host "Health Endpoint: http://localhost:$LocalPort/health" -ForegroundColor White
+        Write-Host "Metrics Endpoint: http://localhost:$LocalPort/metrics" -ForegroundColor White
+        Write-Host ""
+        Write-Host "To stop port forwarding:" -ForegroundColor Yellow
+        Write-Host "Get-Job | Where-Object {`$_.Name -like '*port*'} | Stop-Job" -ForegroundColor White
+        Write-Host "Get-Job | Where-Object {`$_.Name -like '*port*'} | Remove-Job" -ForegroundColor White
+        
+        return $true
+    } else {
+        Write-Host "WARNING: Could not establish port forward connection" -ForegroundColor Yellow
+        Write-Host "You can manually access the service via NodePort: http://localhost:30080/wallet" -ForegroundColor White
+        
+        # Clean up failed job
+        Stop-Job $portForwardJob -ErrorAction SilentlyContinue
+        Remove-Job $portForwardJob -ErrorAction SilentlyContinue
+        
+        return $false
+    }
 }
 
 # Check prerequisites
@@ -302,15 +382,41 @@ kubectl get pods -n "mxd-$Environment"
 
 Write-Host ""
 Write-Host "=== Local Deployment Complete ===" -ForegroundColor Green
+
+# Set up port forwarding if not skipped
+if (-not $SkipPortForward) {
+    $portForwardSuccess = Start-PortForwardAndBrowser -Namespace "mxd-$Environment" -LocalPort 8080 -RemotePort 8080 -DeploymentName "mxd-enterprise-local"
+    
+    if (-not $portForwardSuccess) {
+        Write-Host ""
+        Write-Host "Port forwarding failed, using NodePort access:" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "Port forwarding skipped. Access via NodePort:" -ForegroundColor Yellow
+}
+
+Write-Host ""
 Write-Host "Access your MXD node:" -ForegroundColor Cyan
-Write-Host "Health endpoint: http://localhost:30080/health" -ForegroundColor White
-Write-Host "Metrics endpoint: http://localhost:30080/metrics" -ForegroundColor White
-Write-Host "P2P port: localhost:30000" -ForegroundColor White
+if (-not $SkipPortForward) {
+    Write-Host "Preferred (Port Forward):" -ForegroundColor Green
+    Write-Host "  Wallet Interface: http://localhost:8080/wallet" -ForegroundColor White
+    Write-Host "  Health endpoint: http://localhost:8080/health" -ForegroundColor White
+    Write-Host "  Metrics endpoint: http://localhost:8080/metrics" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Alternative (NodePort):" -ForegroundColor Yellow
+}
+Write-Host "  Health endpoint: http://localhost:30080/health" -ForegroundColor White
+Write-Host "  Metrics endpoint: http://localhost:30080/metrics" -ForegroundColor White
+Write-Host "  Wallet endpoint: http://localhost:30080/wallet" -ForegroundColor White
+Write-Host "  P2P port: localhost:30000" -ForegroundColor White
 Write-Host ""
 Write-Host "Useful commands:" -ForegroundColor Cyan
 Write-Host "Check pod status: kubectl get pods -n mxd-$Environment" -ForegroundColor White
 Write-Host "View logs: kubectl logs -f deployment/mxd-enterprise-local -n mxd-$Environment" -ForegroundColor White
 Write-Host "Scale deployment: kubectl scale deployment mxd-enterprise-local --replicas=2 -n mxd-$Environment" -ForegroundColor White
 Write-Host "Delete deployment: kubectl delete namespace mxd-$Environment" -ForegroundColor White
+if (-not $SkipPortForward) {
+    Write-Host "Stop port forwarding: Get-Job | Where-Object {`$_.Name -like '*port*'} | Stop-Job; Get-Job | Remove-Job" -ForegroundColor White
+}
 Write-Host ""
 Write-Host "Local deployment completed successfully!" -ForegroundColor Green
