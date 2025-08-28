@@ -1,4 +1,4 @@
-# MXD Library Local Kubernetes Update Script for Windows
+﻿# MXD Library Local Kubernetes Update Script for Windows
 # This script updates an existing local MXD deployment to the latest runtime version
 
 param(
