@@ -46,6 +46,7 @@ function Start-PortForwardAndBrowser {
     )
     
     Write-Host "Setting up port forwarding..." -ForegroundColor Blue
+    Write-Host "Debug: kubectl port-forward deployment/$DeploymentName $LocalPort`:$RemotePort -n $Namespace" -ForegroundColor Gray
     
     # Check if local port is available
     $portInUse = Get-NetTCPConnection -LocalPort $LocalPort -ErrorAction SilentlyContinue
