@@ -236,7 +236,7 @@ kubectl get services -n "mxd-$Environment"
 # Test health endpoint
 Write-Host ""
 Write-Host "Testing health endpoint..." -ForegroundColor Blue
-Start-Sleep -Seconds 10  # Give the service time to start
+Start-Sleep -Seconds 10
 try {
     $healthResponse = Invoke-WebRequest -Uri "http://localhost:30080/health" -TimeoutSec 10 -ErrorAction Stop
     if ($healthResponse.StatusCode -eq 200) {
