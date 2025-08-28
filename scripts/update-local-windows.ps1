@@ -80,7 +80,8 @@ function Start-PortForwardAndBrowser {
                 $connected = $true
                 Write-Host "✓ Port forward established successfully" -ForegroundColor Green
             }
-        } catch {
+        }
+        catch {
             Start-Sleep -Seconds 3
         }
     }
@@ -100,7 +101,8 @@ function Start-PortForwardAndBrowser {
         Write-Host "Get-Job | Where-Object {`$_.Name -like '*port*'} | Remove-Job" -ForegroundColor White
         
         return $true
-    } else {
+    }
+    else {
         Write-Host "WARNING: Could not establish port forward connection" -ForegroundColor Yellow
         Write-Host "You can manually access the service via NodePort: http://localhost:30080/wallet" -ForegroundColor White
         
@@ -241,10 +243,12 @@ try {
     $healthResponse = Invoke-WebRequest -Uri "http://localhost:30080/health" -TimeoutSec 10 -ErrorAction Stop
     if ($healthResponse.StatusCode -eq 200) {
         Write-Host "✓ Health endpoint is responding" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "WARNING: Health endpoint returned status $($healthResponse.StatusCode)" -ForegroundColor Yellow
     }
-} catch {
+}
+catch {
     Write-Host "WARNING: Could not reach health endpoint - service may still be starting" -ForegroundColor Yellow
     Write-Host "Try accessing http://localhost:30080/health in a few minutes" -ForegroundColor White
 }
@@ -255,10 +259,12 @@ try {
     $walletResponse = Invoke-WebRequest -Uri "http://localhost:30080/wallet" -TimeoutSec 10 -ErrorAction Stop
     if ($walletResponse.StatusCode -eq 200) {
         Write-Host "✓ Wallet endpoint is responding" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "WARNING: Wallet endpoint returned status $($walletResponse.StatusCode)" -ForegroundColor Yellow
     }
-} catch {
+}
+catch {
     Write-Host "WARNING: Could not reach wallet endpoint - service may still be starting" -ForegroundColor Yellow
     Write-Host "Try accessing http://localhost:30080/wallet in a few minutes" -ForegroundColor White
 }
