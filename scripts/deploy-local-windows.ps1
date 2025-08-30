@@ -44,7 +44,7 @@ function Wait-UserInput {
 function Start-PortForwardAndBrowser {
     param(
         [string]$Namespace,
-        [int]$LocalPort = 8080,
+        [int]$LocalPort = 8081,
         [int]$RemotePort = 8080,
         [string]$DeploymentName = "mxd-enterprise-local"
     )
