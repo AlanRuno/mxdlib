@@ -387,7 +387,7 @@ Write-Host "=== Local Deployment Complete ===" -ForegroundColor Green
 
 # Set up port forwarding if not skipped
 if (-not $SkipPortForward) {
-    $portForwardSuccess = Start-PortForwardAndBrowser -Namespace "mxd-$Environment" -LocalPort 8080 -RemotePort 8080 -DeploymentName "mxd-enterprise-local"
+    $portForwardSuccess = Start-PortForwardAndBrowser -Namespace "mxd-$Environment" -LocalPort 8081 -RemotePort 8080 -DeploymentName "mxd-enterprise-local"
     
     if (-not $portForwardSuccess) {
         Write-Host ""
@@ -401,9 +401,9 @@ Write-Host ""
 Write-Host "Access your MXD node:" -ForegroundColor Cyan
 if (-not $SkipPortForward) {
     Write-Host "Preferred (Port Forward):" -ForegroundColor Green
-    Write-Host "  Wallet Interface: http://localhost:8080/wallet" -ForegroundColor White
-    Write-Host "  Health endpoint: http://localhost:8080/health" -ForegroundColor White
-    Write-Host "  Metrics endpoint: http://localhost:8080/metrics" -ForegroundColor White
+    Write-Host "  Wallet Interface: http://localhost:8081/wallet" -ForegroundColor White
+    Write-Host "  Health endpoint: http://localhost:8081/health" -ForegroundColor White
+    Write-Host "  Metrics endpoint: http://localhost:8081/metrics" -ForegroundColor White
     Write-Host ""
     Write-Host "Alternative (NodePort):" -ForegroundColor Yellow
 }
