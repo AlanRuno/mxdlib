@@ -341,19 +341,17 @@ $deploymentYaml += "  name: mxd-config-local"
 $deploymentYaml += "  namespace: mxd-$Environment"
 $deploymentYaml += "data:"
 
-# Create JSON config using here-string to avoid parsing issues
-$jsonConfig = @"
-  local.json: |
-    {
-      "port": 8000,
-      "data_dir": "/opt/mxd/data",
-      "network_type": "testnet",
-      "metrics_port": 8080,
-      "log_level": "INFO"
-    }
-"@
+# Create JSON config using simple string concatenation to avoid parsing issues
+$jsonConfigContent = "  local.json: |"
+$jsonConfigContent += "`n    {"
+$jsonConfigContent += "`n      ""port"": 8000,"
+$jsonConfigContent += "`n      ""data_dir"": ""/opt/mxd/data"","
+$jsonConfigContent += "`n      ""network_type"": ""testnet"","
+$jsonConfigContent += "`n      ""metrics_port"": 8080,"
+$jsonConfigContent += "`n      ""log_level"": ""INFO"""
+$jsonConfigContent += "`n    }"
 
-$deploymentYaml += $jsonConfig
+$deploymentYaml += $jsonConfigContent
 
 $deploymentManifest = $deploymentYaml -join "`n"
 
