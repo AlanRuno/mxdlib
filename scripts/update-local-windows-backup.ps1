@@ -1,4 +1,4 @@
-﻿# MXD Library Local Kubernetes Update Script for Windows
+# MXD Library Local Kubernetes Update Script for Windows
 # This script updates an existing local MXD deployment to the latest runtime version
 
 param(
@@ -46,7 +46,6 @@ function Start-PortForwardAndBrowser {
     )
     
     Write-Host "Setting up port forwarding..." -ForegroundColor Blue
-    Write-Host "Debug: kubectl port-forward deployment/$DeploymentName $LocalPort`:$RemotePort -n $Namespace" -ForegroundColor Gray
     
     # Check if local port is available
     $portInUse = Get-NetTCPConnection -LocalPort $LocalPort -ErrorAction SilentlyContinue
@@ -63,64 +62,28 @@ function Start-PortForwardAndBrowser {
         kubectl port-forward "deployment/$deployment" "$localPort`:$remotePort" -n $ns
     } -ArgumentList $Namespace, $DeploymentName, $LocalPort, $RemotePort
     
-    # Wait longer for port forward to establish
-    Start-Sleep -Seconds 10
+    # Wait a moment for port forward to establish
+    Start-Sleep -Seconds 5
     
-    # Check job status and get any error output
-    $jobState = Get-Job -Id $portForwardJob.Id | Select-Object -ExpandProperty State
-    Write-Host "Port forward job state: $jobState" -ForegroundColor Gray
-    
-    if ($jobState -eq "Failed") {
-        $jobError = Receive-Job -Id $portForwardJob.Id 2>&1
-        Write-Host "Port forward job failed with error: $jobError" -ForegroundColor Red
-        Remove-Job $portForwardJob -ErrorAction SilentlyContinue
-        return $false
-    }
-    
-    # Test connectivity to multiple endpoints
-    $maxAttempts = 8
+    # Test connectivity
+    $maxAttempts = 6
     $attempt = 0
-    $healthConnected = $false
-    $metricsConnected = $false
+    $connected = $false
     
-    while ($attempt -lt $maxAttempts -and (-not $healthConnected -or -not $metricsConnected)) {
+    while ($attempt -lt $maxAttempts -and -not $connected) {
         $attempt++
-        Write-Host "Testing endpoints (attempt $attempt/$maxAttempts)..." -ForegroundColor Gray
+        Write-Host "Testing connection (attempt $attempt/$maxAttempts)..." -ForegroundColor Gray
         
-        # Test health endpoint
-        if (-not $healthConnected) {
-            try {
-                $healthResponse = Invoke-WebRequest -Uri "http://localhost:$LocalPort/health" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-                if ($healthResponse.StatusCode -eq 200) {
-                    $healthConnected = $true
-                    Write-Host "✓ Health endpoint responding" -ForegroundColor Green
-                }
+        try {
+            $response = Invoke-WebRequest -Uri "http://localhost:$LocalPort/health" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+            if ($response.StatusCode -eq 200) {
+                $connected = $true
+                Write-Host "✓ Port forward established successfully" -ForegroundColor Green
             }
-            catch {
-                Write-Host "  Health endpoint not ready..." -ForegroundColor Gray
-            }
-        }
-        
-        # Test metrics endpoint
-        if (-not $metricsConnected) {
-            try {
-                $metricsResponse = Invoke-WebRequest -Uri "http://localhost:$LocalPort/metrics" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-                if ($metricsResponse.StatusCode -eq 200) {
-                    $metricsConnected = $true
-                    Write-Host "✓ Metrics endpoint responding" -ForegroundColor Green
-                }
-            }
-            catch {
-                Write-Host "  Metrics endpoint not ready..." -ForegroundColor Gray
-            }
-        }
-        
-        if (-not $healthConnected -or -not $metricsConnected) {
-            Start-Sleep -Seconds 4
+        } catch {
+            Start-Sleep -Seconds 3
         }
     }
-    
-    $connected = $healthConnected -and $metricsConnected
     
     if ($connected) {
         Write-Host "Opening wallet interface in browser..." -ForegroundColor Cyan
@@ -128,29 +91,18 @@ function Start-PortForwardAndBrowser {
         
         Write-Host ""
         Write-Host "=== Port Forward Active ===" -ForegroundColor Green
-        Write-Host "✓ Health endpoint verified: http://localhost:$LocalPort/health" -ForegroundColor White
-        Write-Host "✓ Metrics endpoint verified: http://localhost:$LocalPort/metrics" -ForegroundColor White
-        Write-Host "  Wallet Interface: http://localhost:$LocalPort/wallet" -ForegroundColor White
+        Write-Host "Wallet Interface: http://localhost:$LocalPort/wallet" -ForegroundColor White
+        Write-Host "Health Endpoint: http://localhost:$LocalPort/health" -ForegroundColor White
+        Write-Host "Metrics Endpoint: http://localhost:$LocalPort/metrics" -ForegroundColor White
         Write-Host ""
         Write-Host "To stop port forwarding:" -ForegroundColor Yellow
         Write-Host "Get-Job | Where-Object {`$_.Name -like '*port*'} | Stop-Job" -ForegroundColor White
         Write-Host "Get-Job | Where-Object {`$_.Name -like '*port*'} | Remove-Job" -ForegroundColor White
         
         return $true
-    }
-    else {
-        Write-Host "WARNING: Port forward connectivity test failed" -ForegroundColor Yellow
-        Write-Host "Health endpoint connected: $healthConnected" -ForegroundColor Gray
-        Write-Host "Metrics endpoint connected: $metricsConnected" -ForegroundColor Gray
-        
-        # Get job output for debugging
-        $jobOutput = Receive-Job -Id $portForwardJob.Id 2>&1
-        if ($jobOutput) {
-            Write-Host "kubectl port-forward output: $jobOutput" -ForegroundColor Gray
-        }
-        
+    } else {
+        Write-Host "WARNING: Could not establish port forward connection" -ForegroundColor Yellow
         Write-Host "You can manually access the service via NodePort: http://localhost:30080/wallet" -ForegroundColor White
-        Write-Host "Or try manual port forwarding: kubectl port-forward deployment/$DeploymentName $LocalPort`:$RemotePort -n $Namespace" -ForegroundColor White
         
         # Clean up failed job
         Stop-Job $portForwardJob -ErrorAction SilentlyContinue
@@ -284,17 +236,15 @@ kubectl get services -n "mxd-$Environment"
 # Test health endpoint
 Write-Host ""
 Write-Host "Testing health endpoint..." -ForegroundColor Blue
-Start-Sleep -Seconds 10
+Start-Sleep -Seconds 10  # Give the service time to start
 try {
     $healthResponse = Invoke-WebRequest -Uri "http://localhost:30080/health" -TimeoutSec 10 -ErrorAction Stop
     if ($healthResponse.StatusCode -eq 200) {
         Write-Host "✓ Health endpoint is responding" -ForegroundColor Green
-    }
-    else {
+    } else {
         Write-Host "WARNING: Health endpoint returned status $($healthResponse.StatusCode)" -ForegroundColor Yellow
     }
-}
-catch {
+} catch {
     Write-Host "WARNING: Could not reach health endpoint - service may still be starting" -ForegroundColor Yellow
     Write-Host "Try accessing http://localhost:30080/health in a few minutes" -ForegroundColor White
 }
@@ -305,12 +255,10 @@ try {
     $walletResponse = Invoke-WebRequest -Uri "http://localhost:30080/wallet" -TimeoutSec 10 -ErrorAction Stop
     if ($walletResponse.StatusCode -eq 200) {
         Write-Host "✓ Wallet endpoint is responding" -ForegroundColor Green
-    }
-    else {
+    } else {
         Write-Host "WARNING: Wallet endpoint returned status $($walletResponse.StatusCode)" -ForegroundColor Yellow
     }
-}
-catch {
+} catch {
     Write-Host "WARNING: Could not reach wallet endpoint - service may still be starting" -ForegroundColor Yellow
     Write-Host "Try accessing http://localhost:30080/wallet in a few minutes" -ForegroundColor White
 }
