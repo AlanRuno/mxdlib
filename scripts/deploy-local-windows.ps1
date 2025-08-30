@@ -233,9 +233,9 @@ $deploymentYaml += "      labels:"
 $deploymentYaml += "        app: mxd-enterprise-local"
 $deploymentYaml += "        environment: $Environment"
 $deploymentYaml += "      annotations:"
-$deploymentYaml += "        prometheus.io/scrape: `"true`""
-$deploymentYaml += "        prometheus.io/port: `"8080`""
-$deploymentYaml += "        prometheus.io/path: `"/metrics`""
+$deploymentYaml += "        prometheus.io/scrape: ""true"""
+$deploymentYaml += "        prometheus.io/port: ""8080"""
+$deploymentYaml += "        prometheus.io/path: ""/metrics"""
 $deploymentYaml += "    spec:"
 $deploymentYaml += "      containers:"
 $deploymentYaml += "      - name: mxd-node"
@@ -252,22 +252,22 @@ $deploymentYaml += "          valueFrom:"
 $deploymentYaml += "            fieldRef:"
 $deploymentYaml += "              fieldPath: metadata.name"
 $deploymentYaml += "        - name: MXD_NETWORK_MAGIC"
-$deploymentYaml += "          value: `"0x4D584431`""
+$deploymentYaml += "          value: ""0x4D584431"""
 $deploymentYaml += "        - name: MXD_LOG_LEVEL"
-$deploymentYaml += "          value: `"INFO`""
+$deploymentYaml += "          value: ""INFO"""
 $deploymentYaml += "        - name: MXD_METRICS_PORT"
-$deploymentYaml += "          value: `"8080`""
+$deploymentYaml += "          value: ""8080"""
 $deploymentYaml += "        - name: MXD_DATA_DIR"
-$deploymentYaml += "          value: `"/opt/mxd/data`""
+$deploymentYaml += "          value: ""/opt/mxd/data"""
 $deploymentYaml += "        - name: MXD_NETWORK_TYPE"
-$deploymentYaml += "          value: `"testnet`""
+$deploymentYaml += "          value: ""testnet"""
 $deploymentYaml += "        resources:"
 $deploymentYaml += "          requests:"
-$deploymentYaml += "            memory: `"512Mi`""
-$deploymentYaml += "            cpu: `"250m`""
+$deploymentYaml += "            memory: ""512Mi"""
+$deploymentYaml += "            cpu: ""250m"""
 $deploymentYaml += "          limits:"
-$deploymentYaml += "            memory: `"1Gi`""
-$deploymentYaml += "            cpu: `"500m`""
+$deploymentYaml += "            memory: ""1Gi"""
+$deploymentYaml += "            cpu: ""500m"""
 $deploymentYaml += "        volumeMounts:"
 $deploymentYaml += "        - name: data"
 $deploymentYaml += "          mountPath: /opt/mxd/data"
@@ -341,19 +341,17 @@ $deploymentYaml += "  name: mxd-config-local"
 $deploymentYaml += "  namespace: mxd-$Environment"
 $deploymentYaml += "data:"
 
-# Create JSON config using here-string to avoid parsing issues
-$jsonConfig = @"
-  local.json: |
-    {
-      "port": 8000,
-      "data_dir": "/opt/mxd/data",
-      "network_type": "testnet",
-      "metrics_port": 8080,
-      "log_level": "INFO"
-    }
-"@
+# Create JSON config using simple string concatenation to avoid parsing issues
+$jsonConfigContent = "  local.json: |"
+$jsonConfigContent += "`n    {"
+$jsonConfigContent += "`n      ""port"": 8000,"
+$jsonConfigContent += "`n      ""data_dir"": ""/opt/mxd/data"","
+$jsonConfigContent += "`n      ""network_type"": ""testnet"","
+$jsonConfigContent += "`n      ""metrics_port"": 8080,"
+$jsonConfigContent += "`n      ""log_level"": ""INFO"""
+$jsonConfigContent += "`n    }"
 
-$deploymentYaml += $jsonConfig
+$deploymentYaml += $jsonConfigContent
 
 $deploymentManifest = $deploymentYaml -join "`n"
 
