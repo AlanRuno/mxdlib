@@ -343,11 +343,13 @@ $deploymentYaml += "data:"
 $deploymentYaml += "  local.json: |"
 
 # Create minimal JSON config to avoid parsing issues
-$deploymentYaml += "    port: 8000"
-$deploymentYaml += "    data_dir: /opt/mxd/data"
-$deploymentYaml += "    network_type: testnet"
-$deploymentYaml += "    metrics_port: 8080"
-$deploymentYaml += "    log_level: INFO"
+$deploymentYaml += "    {"
+$deploymentYaml += "      `"port`": 8000,"
+$deploymentYaml += "      `"data_dir`": `"/opt/mxd/data`","
+$deploymentYaml += "      `"network_type`": `"testnet`","
+$deploymentYaml += "      `"metrics_port`": 8080,"
+$deploymentYaml += "      `"log_level`": `"INFO`""
+$deploymentYaml += "    }"
 
 $deploymentManifest = $deploymentYaml -join "`n"
 
