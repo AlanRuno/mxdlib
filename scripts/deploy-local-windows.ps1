@@ -111,32 +111,6 @@ function Start-PortForwardAndBrowser {
         return $false
     }
 }
-    
-    if ($connected) {
-        Write-Host "Opening wallet interface in browser..." -ForegroundColor Cyan
-        Start-Process "http://localhost:$LocalPort/wallet"
-        
-        Write-Host ""
-        Write-Host "=== Port Forward Active ===" -ForegroundColor Green
-        Write-Host "Wallet Interface: http://localhost:$LocalPort/wallet" -ForegroundColor White
-        Write-Host "Health Endpoint: http://localhost:$LocalPort/health" -ForegroundColor White
-        Write-Host "Metrics Endpoint: http://localhost:$LocalPort/metrics" -ForegroundColor White
-        Write-Host ""
-        Write-Host "To stop port forwarding:" -ForegroundColor Yellow
-        Write-Host "Get-Job | Where-Object {\`$_.Name -like '*port*'} | Stop-Job; Get-Job | Remove-Job" -ForegroundColor White
-        
-        return $true
-    } else {
-        Write-Host "Failed to establish port forward after $maxAttempts attempts" -ForegroundColor Red
-        Write-Host "Cleaning up failed port forward job..." -ForegroundColor Yellow
-        
-        # Clean up failed job
-        Stop-Job $portForwardJob -ErrorAction SilentlyContinue
-        Remove-Job $portForwardJob -ErrorAction SilentlyContinue
-        
-        return $false
-    }
-}
 
 # Check prerequisites
 Write-Host "Checking prerequisites..." -ForegroundColor Blue
