@@ -62,9 +62,9 @@ function Start-PortForwardAndBrowser {
     # Start port forwarding in background
     Write-Host "Starting kubectl port-forward in background..." -ForegroundColor Blue
     $portForwardJob = Start-Job -ScriptBlock {
-        param($ns, $deployment, $localPort, $remotePort)
-        kubectl port-forward "deployment/$deployment" "$localPort`:$remotePort" -n $ns
-    } -ArgumentList $Namespace, $DeploymentName, $LocalPort, $RemotePort
+        param($ns, $localPort, $remotePort, $deploymentName)
+        kubectl port-forward "deployment/$deploymentName" "${localPort}:${remotePort}" -n $ns
+    } -ArgumentList $Namespace, $LocalPort, $RemotePort, $DeploymentName -Name "port-forward-$LocalPort"
     
     # Wait a moment for port forward to establish
     Start-Sleep -Seconds 5
@@ -100,13 +100,12 @@ function Start-PortForwardAndBrowser {
         Write-Host "Metrics Endpoint: http://localhost:$LocalPort/metrics" -ForegroundColor White
         Write-Host ""
         Write-Host "To stop port forwarding:" -ForegroundColor Yellow
-        Write-Host "Get-Job | Where-Object {`$_.Name -like '*port*'} | Stop-Job" -ForegroundColor White
-        Write-Host "Get-Job | Where-Object {`$_.Name -like '*port*'} | Remove-Job" -ForegroundColor White
+        Write-Host "Get-Job | Where-Object {\`$_.Name -like '*port*'} | Stop-Job; Get-Job | Remove-Job" -ForegroundColor White
         
         return $true
     } else {
-        Write-Host "WARNING: Could not establish port forward connection" -ForegroundColor Yellow
-        Write-Host "You can manually access the service via NodePort: http://localhost:30080/wallet" -ForegroundColor White
+        Write-Host "Failed to establish port forward after $maxAttempts attempts" -ForegroundColor Red
+        Write-Host "Cleaning up failed port forward job..." -ForegroundColor Yellow
         
         # Clean up failed job
         Stop-Job $portForwardJob -ErrorAction SilentlyContinue
@@ -206,7 +205,17 @@ if ($LASTEXITCODE -eq 0) {
 
 # Create local storage class
 Write-Host "Creating local storage class..." -ForegroundColor Blue
-$storageClass = "apiVersion: storage.k8s.io/v1`nkind: StorageClass`nmetadata:`n  name: local-storage`nprovisioner: docker.io/hostpath`nparameters:`n  type: Directory`nreclaimPolicy: Delete`nvolumeBindingMode: Immediate"
+$storageClass = @"
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-storage
+provisioner: docker.io/hostpath
+parameters:
+  type: Directory
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+"@
 $storageClass | kubectl apply -f -
 
 # Create local deployment manifest
@@ -422,7 +431,7 @@ Write-Host "View logs: kubectl logs -f deployment/mxd-enterprise-local -n mxd-$E
 Write-Host "Scale deployment: kubectl scale deployment mxd-enterprise-local --replicas=2 -n mxd-$Environment" -ForegroundColor White
 Write-Host "Delete deployment: kubectl delete namespace mxd-$Environment" -ForegroundColor White
 if (-not $SkipPortForward) {
-    Write-Host "Stop port forwarding: Get-Job | Where-Object {`$_.Name -like '*port*'} | Stop-Job; Get-Job | Remove-Job" -ForegroundColor White
+    Write-Host "Stop port forwarding: Get-Job | Where-Object {\`$_.Name -like '*port*'} | Stop-Job; Get-Job | Remove-Job" -ForegroundColor White
 }
 Write-Host ""
 Write-Host "Local deployment completed successfully!" -ForegroundColor Green
