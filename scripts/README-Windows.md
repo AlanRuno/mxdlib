@@ -1,6 +1,6 @@
 # Windows Local Kubernetes Deployment Scripts
 
-This directory contains PowerShell scripts for deploying the MXD blockchain application locally on Windows using Docker Desktop with Kubernetes.
+This directory contains both PowerShell (.ps1) and CMD batch (.cmd) scripts for deploying the MXD blockchain application locally on Windows using Docker Desktop with Kubernetes.
 
 ## Prerequisites
 
@@ -13,24 +13,33 @@ This directory contains PowerShell scripts for deploying the MXD blockchain appl
      - Check "Enable Kubernetes"
      - Click "Apply & Restart"
 
-2. **PowerShell 5.1 or later**
-   - Included with Windows 10/11
-   - Or install PowerShell 7+ from: https://github.com/PowerShell/PowerShell
+2. **Script Runtime (choose one):**
+   - **CMD/Batch**: Built into Windows (recommended for compatibility)
+   - **PowerShell 5.1 or later**: Included with Windows 10/11 or install PowerShell 7+ from: https://github.com/PowerShell/PowerShell
 
 ## Scripts Overview
 
-### `deploy-local-windows.ps1`
+Both PowerShell (.ps1) and CMD batch (.cmd) versions are available with identical functionality. Choose based on your preference and system compatibility.
+
+### Deploy Scripts
+**PowerShell:** `deploy-local-windows.ps1` | **CMD:** `deploy-local-windows.cmd`
+
 Deploys the MXD application locally on Kubernetes using Docker Desktop.
 
 **Usage:**
 ```powershell
+# PowerShell
 .\scripts\deploy-local-windows.ps1 -Environment "local" -ImageTag "latest"
+
+# CMD
+scripts\deploy-local-windows.cmd -Environment local -ImageTag latest
 ```
 
 **Parameters:**
 - `-Environment`: Deployment environment name (default: "local")
 - `-ImageTag`: Docker image tag to use (default: "latest")
 - `-SkipDockerCheck`: Skip Docker/Kubernetes prerequisite checks
+- `-Force`: Skip confirmation prompts
 
 **What it does:**
 - Checks Docker Desktop and Kubernetes prerequisites
@@ -39,12 +48,18 @@ Deploys the MXD application locally on Kubernetes using Docker Desktop.
 - Deploys the MXD node with health endpoints
 - Configures NodePort services for local access
 
-### `stop-local-windows.ps1`
+### Stop Scripts
+**PowerShell:** `stop-local-windows.ps1` | **CMD:** `stop-local-windows.cmd`
+
 Gracefully stops the local MXD deployment without removing persistent data.
 
 **Usage:**
 ```powershell
+# PowerShell
 .\scripts\stop-local-windows.ps1 -Environment "local"
+
+# CMD
+scripts\stop-local-windows.cmd -Environment local
 ```
 
 **What it does:**
@@ -52,12 +67,18 @@ Gracefully stops the local MXD deployment without removing persistent data.
 - Deletes running pods
 - Preserves persistent volumes and configuration
 
-### `update-local-windows.ps1`
+### Update Scripts
+**PowerShell:** `update-local-windows.ps1` | **CMD:** `update-local-windows.cmd`
+
 Updates an existing local MXD deployment to the latest runtime version.
 
 **Usage:**
 ```powershell
+# PowerShell
 .\scripts\update-local-windows.ps1 -Environment "local" -ImageTag "latest"
+
+# CMD
+scripts\update-local-windows.cmd -Environment local -ImageTag latest
 ```
 
 **Parameters:**
@@ -73,17 +94,24 @@ Updates an existing local MXD deployment to the latest runtime version.
 - Waits for rollout completion and verifies endpoints
 - Provides rollback instructions if needed
 
-### `clean-local-windows.ps1`
+### Clean Scripts
+**PowerShell:** `clean-local-windows.ps1` | **CMD:** `clean-local-windows.cmd`
+
 Completely removes all MXD deployment resources and optionally Docker images.
 
 **Usage:**
 ```powershell
+# PowerShell
 .\scripts\clean-local-windows.ps1 -Environment "local" -Force
+
+# CMD
+scripts\clean-local-windows.cmd -Environment local -Force
 ```
 
 **Parameters:**
 - `-Environment`: Environment to clean (default: "local")
 - `-Force`: Skip confirmation prompt
+- `-RemoveImages`: Also remove Docker images (CMD version only)
 
 **What it does:**
 - Deletes entire Kubernetes namespace
@@ -101,7 +129,11 @@ Completely removes all MXD deployment resources and optionally Docker images.
 
 2. **Deploy locally:**
    ```powershell
+   # PowerShell
    .\scripts\deploy-local-windows.ps1
+   
+   # CMD
+   scripts\deploy-local-windows.cmd
    ```
 
 3. **Access the application:**
@@ -117,17 +149,29 @@ Completely removes all MXD deployment resources and optionally Docker images.
 
 5. **Update to latest version:**
    ```powershell
+   # PowerShell
    .\scripts\update-local-windows.ps1
+   
+   # CMD
+   scripts\update-local-windows.cmd
    ```
 
 6. **Stop when done:**
    ```powershell
+   # PowerShell
    .\scripts\stop-local-windows.ps1
+   
+   # CMD
+   scripts\stop-local-windows.cmd
    ```
 
 7. **Clean up completely:**
    ```powershell
+   # PowerShell
    .\scripts\clean-local-windows.ps1
+   
+   # CMD
+   scripts\clean-local-windows.cmd
    ```
 
 ## Troubleshooting
@@ -201,13 +245,22 @@ The local deployment uses:
 
 ### Multiple Environments
 ```powershell
+# PowerShell
 .\scripts\deploy-local-windows.ps1 -Environment "dev"
 .\scripts\deploy-local-windows.ps1 -Environment "test"
+
+# CMD
+scripts\deploy-local-windows.cmd -Environment dev
+scripts\deploy-local-windows.cmd -Environment test
 ```
 
 ### Custom Image Tags
 ```powershell
+# PowerShell
 .\scripts\deploy-local-windows.ps1 -ImageTag "v1.0.0"
+
+# CMD
+scripts\deploy-local-windows.cmd -ImageTag v1.0.0
 ```
 
 ### Scaling
