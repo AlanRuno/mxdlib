@@ -342,7 +342,7 @@ $deploymentYaml += "  namespace: mxd-$Environment"
 $deploymentYaml += "data:"
 
 # Create JSON config using simple string concatenation to avoid parsing issues
-$jsonConfigContent = "  local.json: |"
+$jsonConfigContent = "  default_config.json: |"
 $jsonConfigContent += "`n    {"
 $jsonConfigContent += "`n      ""port"": 8000,"
 $jsonConfigContent += "`n      ""data_dir"": ""/opt/mxd/data"","

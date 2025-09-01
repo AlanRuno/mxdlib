@@ -2,6 +2,7 @@
     "node_id": "default_node",
     "network_type": "mainnet",
     "port": 8000,
+    "metrics_port": 8080,
     "data_dir": "./data",
     "node_name": "MXD Default Node",
     "initial_stake": 100.0,
