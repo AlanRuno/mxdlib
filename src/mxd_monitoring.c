@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <cjson/cJSON.h>
+#include "../include/mxd_wallet_export.h"
 
 static mxd_system_metrics_t current_metrics = {0};
 static mxd_health_status_t current_health = {0};
@@ -51,6 +52,11 @@ int mxd_init_monitoring(uint16_t http_port) {
         return -1;
     }
     
+    if (mxd_init_wallet_export() != 0) {
+        MXD_LOG_ERROR("monitoring", "Failed to initialize wallet export system");
+        return -1;
+    }
+    
     monitoring_initialized = 1;
     MXD_LOG_INFO("monitoring", "Monitoring system initialized on port %d", http_port);
     return 0;
@@ -59,6 +65,7 @@ int mxd_init_monitoring(uint16_t http_port) {
 void mxd_cleanup_monitoring(void) {
     if (monitoring_initialized) {
         mxd_cleanup_wallet();
+        mxd_cleanup_wallet_export();
         monitoring_initialized = 0;
         MXD_LOG_INFO("monitoring", "Monitoring system cleaned up");
     }
@@ -579,6 +586,74 @@ const char* mxd_handle_wallet_send(const char* recipient, const char* amount) {
     return wallet_response_buffer;
 }
 
+const char* mxd_handle_wallet_export_private_key(const char* request_body) {
+    if (!request_body) {
+        return "{\"success\":false,\"error\":\"Invalid request body\"}";
+    }
+    
+    cJSON* json = cJSON_Parse(request_body);
+    if (!json) {
+        return "{\"success\":false,\"error\":\"Invalid JSON\"}";
+    }
+    
+    cJSON* address = cJSON_GetObjectItem(json, "address");
+    cJSON* password = cJSON_GetObjectItem(json, "password");
+    
+    if (!address || !password || !cJSON_IsString(address) || !cJSON_IsString(password)) {
+        cJSON_Delete(json);
+        return "{\"success\":false,\"error\":\"Missing address or password\"}";
+    }
+    
+    const char* result = mxd_export_private_key(address->valuestring, password->valuestring);
+    cJSON_Delete(json);
+    return result;
+}
+
+const char* mxd_handle_wallet_import_private_key(const char* request_body) {
+    if (!request_body) {
+        return "{\"success\":false,\"error\":\"Invalid request body\"}";
+    }
+    
+    cJSON* json = cJSON_Parse(request_body);
+    if (!json) {
+        return "{\"success\":false,\"error\":\"Invalid JSON\"}";
+    }
+    
+    cJSON* address = cJSON_GetObjectItem(json, "address");
+    cJSON* encrypted_data = cJSON_GetObjectItem(json, "encrypted_data");
+    cJSON* password = cJSON_GetObjectItem(json, "password");
+    
+    if (!address || !encrypted_data || !password || 
+        !cJSON_IsString(address) || !cJSON_IsString(encrypted_data) || !cJSON_IsString(password)) {
+        cJSON_Delete(json);
+        return "{\"success\":false,\"error\":\"Missing required fields\"}";
+    }
+    
+    char* encrypted_json = cJSON_Print(encrypted_data);
+    int result = mxd_import_private_key(address->valuestring, encrypted_json, password->valuestring);
+    
+    free(encrypted_json);
+    cJSON_Delete(json);
+    
+    if (result == 0) {
+        return "{\"success\":true,\"message\":\"Private key imported successfully\"}";
+    } else {
+        return "{\"success\":false,\"error\":\"Failed to import private key\"}";
+    }
+}
+
+mxd_wallet_t* mxd_get_wallet_instance(void) {
+    return &wallet;
+}
+
+pthread_mutex_t* mxd_get_wallet_mutex(void) {
+    return &wallet_mutex;
+}
+
+int* mxd_get_wallet_initialized(void) {
+    return &wallet_initialized;
+}
+
 static void handle_http_request(int client_socket) {
     char buffer[2048];
     ssize_t bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
@@ -650,6 +725,32 @@ static void handle_http_request(int client_socket) {
                     }
                     cJSON_Delete(json);
                 }
+            }
+            if (!response_body) {
+                response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
+                content_type = "application/json";
+                status_code = 400;
+            }
+        } else if (strcmp(path, "/wallet/export/private-key") == 0) {
+            char* body_start = strstr(buffer, "\r\n\r\n");
+            if (body_start) {
+                body_start += 4;
+                response_body = mxd_handle_wallet_export_private_key(body_start);
+                content_type = "application/json";
+                status_code = 200;
+            }
+            if (!response_body) {
+                response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
+                content_type = "application/json";
+                status_code = 400;
+            }
+        } else if (strcmp(path, "/wallet/import/private-key") == 0) {
+            char* body_start = strstr(buffer, "\r\n\r\n");
+            if (body_start) {
+                body_start += 4;
+                response_body = mxd_handle_wallet_import_private_key(body_start);
+                content_type = "application/json";
+                status_code = 200;
             }
             if (!response_body) {
                 response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";

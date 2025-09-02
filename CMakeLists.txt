@@ -115,7 +115,8 @@ add_library(mxd SHARED
     src/mxd_secrets.c
     src/mxd_monitoring.c
     src/mxd_backup.c
-    src/mxd_load_testing.c)
+    src/mxd_load_testing.c
+    src/mxd_wallet_export.c)
 
 
 # Link libraries

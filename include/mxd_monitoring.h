@@ -64,6 +64,13 @@ const char* mxd_handle_wallet_generate(void);
 const char* mxd_handle_wallet_balance(const char* address);
 const char* mxd_handle_wallet_send(const char* recipient, const char* amount);
 
+const char* mxd_handle_wallet_export_private_key(const char* request_body);
+const char* mxd_handle_wallet_import_private_key(const char* request_body);
+
+mxd_wallet_t* mxd_get_wallet_instance(void);
+pthread_mutex_t* mxd_get_wallet_mutex(void);
+int* mxd_get_wallet_initialized(void);
+
 #ifdef __cplusplus
 }
 #endif
