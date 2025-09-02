@@ -23,11 +23,6 @@ int mxd_init_wallet_export(void) {
         return 0;
     }
     
-    if (RAND_status() != 1) {
-        MXD_LOG_ERROR("wallet_export", "OpenSSL random number generator not properly seeded");
-        return -1;
-    }
-    
     wallet_export_initialized = 1;
     MXD_LOG_INFO("wallet_export", "Wallet export system initialized");
     return 0;
@@ -82,9 +77,9 @@ static int derive_key_from_password(const char* password, const uint8_t* salt,
         return -1;
     }
     
-    EVP_KDF* kdf = EVP_KDF_fetch(NULL, "ARGON2ID", NULL);
+    EVP_KDF* kdf = EVP_KDF_fetch(NULL, "PBKDF2", NULL);
     if (!kdf) {
-        MXD_LOG_ERROR("wallet_export", "Failed to fetch Argon2ID KDF");
+        MXD_LOG_ERROR("wallet_export", "Failed to fetch PBKDF2 KDF");
         return -1;
     }
     
@@ -98,9 +93,8 @@ static int derive_key_from_password(const char* password, const uint8_t* salt,
     OSSL_PARAM params[] = {
         OSSL_PARAM_construct_octet_string("pass", (void*)password, strlen(password)),
         OSSL_PARAM_construct_octet_string("salt", (void*)salt, MXD_EXPORT_SALT_SIZE),
-        OSSL_PARAM_construct_uint32("memory", (uint32_t[]){65536}),
-        OSSL_PARAM_construct_uint32("iter", (uint32_t[]){3}),
-        OSSL_PARAM_construct_uint32("lanes", (uint32_t[]){1}),
+        OSSL_PARAM_construct_uint32("iter", (uint32_t[]){100000}),
+        OSSL_PARAM_construct_utf8_string("digest", "SHA256", 0),
         OSSL_PARAM_END
     };
     
@@ -108,7 +102,7 @@ static int derive_key_from_password(const char* password, const uint8_t* salt,
     if (EVP_KDF_derive(kdf_ctx, derived_key, key_len, params) == 1) {
         result = 0;
     } else {
-        MXD_LOG_ERROR("wallet_export", "Argon2ID key derivation failed");
+        MXD_LOG_ERROR("wallet_export", "PBKDF2 key derivation failed");
     }
     
     EVP_KDF_CTX_free(kdf_ctx);
@@ -211,10 +205,8 @@ int mxd_secure_encrypt_data(const uint8_t* plaintext, size_t plaintext_len,
     
     strncpy(export_data->version, MXD_EXPORT_VERSION, sizeof(export_data->version) - 1);
     strncpy(export_data->algorithm, "AES-256-GCM", sizeof(export_data->algorithm) - 1);
-    strncpy(export_data->kdf, "Argon2id", sizeof(export_data->kdf) - 1);
-    export_data->kdf_memory = 65536;
-    export_data->kdf_iterations = 3;
-    export_data->kdf_parallelism = 1;
+    strncpy(export_data->kdf, "PBKDF2", sizeof(export_data->kdf) - 1);
+    export_data->kdf_iterations = 100000;
     
     return 0;
 }
@@ -230,7 +222,7 @@ int mxd_secure_decrypt_data(const mxd_export_data_t* export_data, const char* pa
         return -1;
     }
     
-    if (strcmp(export_data->kdf, "Argon2id") != 0) {
+    if (strcmp(export_data->kdf, "PBKDF2") != 0) {
         MXD_LOG_ERROR("wallet_export", "Unsupported KDF: %s", export_data->kdf);
         return -1;
     }
@@ -379,6 +371,7 @@ int mxd_export_data_to_json(const mxd_export_data_t* export_data, char* json_buf
     cJSON_AddNumberToObject(kdf_params, "memory", export_data->kdf_memory);
     cJSON_AddNumberToObject(kdf_params, "iterations", export_data->kdf_iterations);
     cJSON_AddNumberToObject(kdf_params, "parallelism", export_data->kdf_parallelism);
+    cJSON_AddStringToObject(kdf_params, "digest", "SHA256");
     cJSON_AddItemToObject(json, "kdf_params", kdf_params);
     
     char* json_string = cJSON_Print(json);
@@ -590,10 +583,12 @@ int mxd_import_private_key(const char* address, const char* encrypted_private_ke
     }
 
     mxd_export_data_t export_data = {0};
+    MXD_LOG_INFO("wallet_export", "Attempting to parse JSON for import");
     if (mxd_export_data_from_json(encrypted_private_key, &export_data) != 0) {
         MXD_LOG_ERROR("wallet_export", "Failed to parse encrypted private key data");
         return -1;
     }
+    MXD_LOG_INFO("wallet_export", "JSON parsing successful, attempting decryption");
     
     uint8_t decrypted_key[128];
     size_t decrypted_len;
@@ -602,9 +597,10 @@ int mxd_import_private_key(const char* address, const char* encrypted_private_ke
             free(export_data.encrypted_data);
         }
         mxd_secure_zero_memory(decrypted_key, sizeof(decrypted_key));
-        MXD_LOG_ERROR("wallet_export", "Failed to decrypt private key");
+        MXD_LOG_ERROR("wallet_export", "Failed to decrypt private key - wrong password or corrupted data");
         return -1;
     }
+    MXD_LOG_INFO("wallet_export", "Decryption successful, decrypted length: %zu", decrypted_len);
     
     if (decrypted_len != 128) {
         if (export_data.encrypted_data) {

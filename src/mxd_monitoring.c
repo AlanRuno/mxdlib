@@ -294,6 +294,36 @@ const char* mxd_get_wallet_html(void) {
         "                <div id=\"sendStatus\"></div>\n"
         "            </div>\n"
         "            <div class=\"card\">\n"
+        "                <h2>Export Private Key</h2>\n"
+        "                <div class=\"form-group\">\n"
+        "                    <label for=\"exportAddress\">Address:</label>\n"
+        "                    <input type=\"text\" id=\"exportAddress\" placeholder=\"Enter address to export\">\n"
+        "                </div>\n"
+        "                <div class=\"form-group\">\n"
+        "                    <label for=\"exportPassword\">Encryption Password:</label>\n"
+        "                    <input type=\"password\" id=\"exportPassword\" placeholder=\"Enter password for encryption\">\n"
+        "                </div>\n"
+        "                <button class=\"btn\" onclick=\"exportPrivateKey()\">Export Private Key</button>\n"
+        "                <div id=\"exportStatus\"></div>\n"
+        "            </div>\n"
+        "            <div class=\"card\">\n"
+        "                <h2>Import Private Key</h2>\n"
+        "                <div class=\"form-group\">\n"
+        "                    <label for=\"importAddress\">Address:</label>\n"
+        "                    <input type=\"text\" id=\"importAddress\" placeholder=\"Enter address for import\">\n"
+        "                </div>\n"
+        "                <div class=\"form-group\">\n"
+        "                    <label for=\"importData\">Encrypted Private Key Data:</label>\n"
+        "                    <textarea id=\"importData\" rows=\"4\" placeholder=\"Paste encrypted JSON data here\"></textarea>\n"
+        "                </div>\n"
+        "                <div class=\"form-group\">\n"
+        "                    <label for=\"importPassword\">Decryption Password:</label>\n"
+        "                    <input type=\"password\" id=\"importPassword\" placeholder=\"Enter password for decryption\">\n"
+        "                </div>\n"
+        "                <button class=\"btn\" onclick=\"importPrivateKey()\">Import Private Key</button>\n"
+        "                <div id=\"importStatus\"></div>\n"
+        "            </div>\n"
+        "            <div class=\"card\">\n"
         "                <h2>My Addresses</h2>\n"
         "                <div id=\"addressList\">\n"
         "                    <p style=\"color: #666; text-align: center; padding: 20px;\">No addresses generated yet</p>\n"
@@ -398,6 +428,76 @@ const char* mxd_get_wallet_html(void) {
         "                }\n"
         "            }\n"
         "            listElement.innerHTML = html;\n"
+        "        }\n"
+        "        async function exportPrivateKey() {\n"
+        "            const address = document.getElementById('exportAddress').value;\n"
+        "            const password = document.getElementById('exportPassword').value;\n"
+        "            if (!address || !password) {\n"
+        "                showStatus('exportStatus', 'Please enter both address and password', 'error');\n"
+        "                return;\n"
+        "            }\n"
+        "            showStatus('exportStatus', 'Exporting private key...', 'info');\n"
+        "            try {\n"
+        "                const response = await fetch('/wallet/export/private-key', {\n"
+        "                    method: 'POST',\n"
+        "                    headers: { 'Content-Type': 'application/json' },\n"
+        "                    body: JSON.stringify({ address: address, password: password })\n"
+        "                });\n"
+        "                const data = await response.json();\n"
+        "                if (data.success) {\n"
+        "                    const exportData = JSON.stringify(data.encrypted_private_key, null, 2);\n"
+        "                    showStatus('exportStatus', 'Private key exported successfully! Copy the data below:<br><textarea readonly style=\"width:100%;height:100px;margin-top:10px;\">' + exportData + '</textarea>', 'success');\n"
+        "                    document.getElementById('exportAddress').value = '';\n"
+        "                    document.getElementById('exportPassword').value = '';\n"
+        "                } else {\n"
+        "                    showStatus('exportStatus', 'Export failed: ' + data.error, 'error');\n"
+        "                }\n"
+        "            } catch (error) {\n"
+        "                showStatus('exportStatus', 'Network error: ' + error.message, 'error');\n"
+        "            }\n"
+        "        }\n"
+        "        async function importPrivateKey() {\n"
+        "            const address = document.getElementById('importAddress').value;\n"
+        "            const importData = document.getElementById('importData').value;\n"
+        "            const password = document.getElementById('importPassword').value;\n"
+        "            if (!address || !importData || !password) {\n"
+        "                showStatus('importStatus', 'Please fill in all fields', 'error');\n"
+        "                return;\n"
+        "            }\n"
+        "            showStatus('importStatus', 'Importing private key...', 'info');\n"
+        "            try {\n"
+        "                let encryptedData;\n"
+        "                try {\n"
+        "                    encryptedData = JSON.parse(importData);\n"
+        "                } catch (parseError) {\n"
+        "                    showStatus('importStatus', 'Invalid JSON format in encrypted data', 'error');\n"
+        "                    return;\n"
+        "                }\n"
+        "                const response = await fetch('/wallet/import/private-key', {\n"
+        "                    method: 'POST',\n"
+        "                    headers: { 'Content-Type': 'application/json' },\n"
+        "                    body: JSON.stringify({ \n"
+        "                        address: address, \n"
+        "                        encrypted_data: encryptedData, \n"
+        "                        password: password \n"
+        "                    })\n"
+        "                });\n"
+        "                const data = await response.json();\n"
+        "                if (data.success) {\n"
+        "                    showStatus('importStatus', 'Private key imported successfully!', 'success');\n"
+        "                    if (!addresses.includes(address)) {\n"
+        "                        addresses.push(address);\n"
+        "                        updateAddressList();\n"
+        "                    }\n"
+        "                    document.getElementById('importAddress').value = '';\n"
+        "                    document.getElementById('importData').value = '';\n"
+        "                    document.getElementById('importPassword').value = '';\n"
+        "                } else {\n"
+        "                    showStatus('importStatus', 'Import failed: ' + data.error, 'error');\n"
+        "                }\n"
+        "            } catch (error) {\n"
+        "                showStatus('importStatus', 'Network error: ' + error.message, 'error');\n"
+        "            }\n"
         "        }\n"
         "        window.onload = function() {\n"
         "            updateAddressList();\n"
@@ -611,11 +711,14 @@ const char* mxd_handle_wallet_export_private_key(const char* request_body) {
 
 const char* mxd_handle_wallet_import_private_key(const char* request_body) {
     if (!request_body) {
+        MXD_LOG_ERROR("monitoring", "Import: No request body");
         return "{\"success\":false,\"error\":\"Invalid request body\"}";
     }
     
+    MXD_LOG_INFO("monitoring", "Import: Parsing JSON request");
     cJSON* json = cJSON_Parse(request_body);
     if (!json) {
+        MXD_LOG_ERROR("monitoring", "Import: Failed to parse JSON");
         return "{\"success\":false,\"error\":\"Invalid JSON\"}";
     }
     
@@ -623,12 +726,21 @@ const char* mxd_handle_wallet_import_private_key(const char* request_body) {
     cJSON* encrypted_data = cJSON_GetObjectItem(json, "encrypted_data");
     cJSON* password = cJSON_GetObjectItem(json, "password");
     
+    MXD_LOG_INFO("monitoring", "Import: address=%p, encrypted_data=%p, password=%p", 
+                 (void*)address, (void*)encrypted_data, (void*)password);
+    
+    if (address) MXD_LOG_INFO("monitoring", "Import: address is string: %d", cJSON_IsString(address));
+    if (encrypted_data) MXD_LOG_INFO("monitoring", "Import: encrypted_data is object: %d", cJSON_IsObject(encrypted_data));
+    if (password) MXD_LOG_INFO("monitoring", "Import: password is string: %d", cJSON_IsString(password));
+    
     if (!address || !encrypted_data || !password || 
-        !cJSON_IsString(address) || !cJSON_IsString(encrypted_data) || !cJSON_IsString(password)) {
+        !cJSON_IsString(address) || !cJSON_IsObject(encrypted_data) || !cJSON_IsString(password)) {
+        MXD_LOG_ERROR("monitoring", "Import: Validation failed");
         cJSON_Delete(json);
         return "{\"success\":false,\"error\":\"Missing required fields\"}";
     }
     
+    MXD_LOG_INFO("monitoring", "Import: Validation passed, calling import function");
     char* encrypted_json = cJSON_Print(encrypted_data);
     int result = mxd_import_private_key(address->valuestring, encrypted_json, password->valuestring);
     
@@ -636,8 +748,10 @@ const char* mxd_handle_wallet_import_private_key(const char* request_body) {
     cJSON_Delete(json);
     
     if (result == 0) {
+        MXD_LOG_INFO("monitoring", "Import: Success");
         return "{\"success\":true,\"message\":\"Private key imported successfully\"}";
     } else {
+        MXD_LOG_ERROR("monitoring", "Import: Failed with result %d", result);
         return "{\"success\":false,\"error\":\"Failed to import private key\"}";
     }
 }
