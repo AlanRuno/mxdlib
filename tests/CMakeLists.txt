@@ -308,3 +308,20 @@ target_link_libraries(mxd_validation_chain_test
 
 add_test(NAME validation_chain_tests COMMAND mxd_validation_chain_test)
 set_tests_properties(validation_chain_tests PROPERTIES TIMEOUT 120)
+
+# Bridge tests
+add_executable(mxd_bridge_tests
+    test_bridge.c
+)
+
+target_link_libraries(mxd_bridge_tests
+    mxd
+    ${OPENSSL_LIBRARIES}
+    ${CJSON_LIBRARIES}
+    ${CURL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME bridge_tests COMMAND mxd_bridge_tests)
+set_tests_properties(bridge_tests PROPERTIES TIMEOUT 120)
