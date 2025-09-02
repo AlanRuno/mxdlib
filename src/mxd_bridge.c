@@ -332,7 +332,7 @@ int mxd_store_processed_transfer(const uint8_t transfer_id[32]) {
         return -1;
     }
     
-    char key[75] = "bridge_processed_";
+    char key[82] = "bridge_processed_";
     for (int i = 0; i < 32; i++) {
         snprintf(&key[17 + i * 2], 3, "%02x", transfer_id[i]);
     }
@@ -354,7 +354,7 @@ int mxd_is_transfer_processed(const uint8_t transfer_id[32]) {
         return 0;
     }
     
-    char key[75] = "bridge_processed_";
+    char key[82] = "bridge_processed_";
     for (int i = 0; i < 32; i++) {
         snprintf(&key[17 + i * 2], 3, "%02x", transfer_id[i]);
     }
