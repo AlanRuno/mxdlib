@@ -12,7 +12,9 @@
 #include "../include/mxd_metrics.h"
 #include "../include/mxd_dht.h"
 #include "../include/mxd_p2p.h"
-#include "../include/blockchain/mxd_rsc.h"
+#include "../include/mxd_rsc.h"
+#include "../include/mxd_blockchain_db.h"
+#include "../include/mxd_blockchain.h"
 #include "../include/mxd_logging.h"
 #include "../include/mxd_monitoring.h"
 #include "metrics_display.h"
@@ -21,6 +23,7 @@ static volatile int keep_running = 1;
 static mxd_config_t current_config;
 static mxd_node_metrics_t node_metrics;
 static mxd_node_stake_t node_stake;
+static mxd_rapid_table_t rapid_table;
 static pthread_mutex_t metrics_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void handle_signal(int signum) {
@@ -85,6 +88,15 @@ void* metrics_collector(void* arg) {
 }
 
 int main(int argc, char** argv) {
+    // Initialize logging with console output enabled
+    mxd_log_config_t log_config = {
+        .level = MXD_LOG_INFO,
+        .output_file = NULL,
+        .enable_console = 1,
+        .enable_json = 0
+    };
+    mxd_init_logging(&log_config);
+    
     MXD_LOG_INFO("node", "MXD Node starting...");
     
     char default_config_path[PATH_MAX];
@@ -102,8 +114,10 @@ int main(int argc, char** argv) {
                 return 1;
             }
             override_port = (uint16_t)port;
+        } else if (argv[i][0] != '-' && !config_path) {
+            config_path = argv[i];
         } else {
-            MXD_LOG_ERROR("node", "Usage: %s [--config <file>] [--port <number>]", argv[0]);
+            MXD_LOG_ERROR("node", "Usage: %s [config_file] [--config <file>] [--port <number>]", argv[0]);
             return 1;
         }
     }
@@ -150,6 +164,13 @@ int main(int argc, char** argv) {
         return 1;
     }
     MXD_LOG_INFO("node", "Metrics initialized successfully");
+    
+    MXD_LOG_INFO("node", "Initializing rapid table...");
+    if (mxd_init_rapid_table(&rapid_table, 100) != 0) {
+        MXD_LOG_ERROR("node", "Failed to initialize rapid table");
+        return 1;
+    }
+    MXD_LOG_INFO("node", "Rapid table initialized successfully");
     
     // Initialize monitoring system
     MXD_LOG_INFO("node", "Initializing monitoring system on port %d...", current_config.metrics_port);
@@ -199,12 +220,36 @@ int main(int argc, char** argv) {
     while (keep_running) {
         pthread_mutex_lock(&metrics_mutex);
         
-        // Update stake info from metrics
-        node_stake.metrics = node_metrics;  // Copy all metrics
+        node_stake.metrics = node_metrics;
         node_stake.active = mxd_validate_performance(&node_metrics);
         node_stake.rank = (int)(node_metrics.performance_score * 100);
         
-        display_node_metrics(&node_metrics, &node_stake);
+        uint32_t blockchain_height = 0;
+        mxd_get_blockchain_height(&blockchain_height);
+        
+        uint8_t latest_block_hash[64] = {0};
+        mxd_block_t latest_block;
+        if (blockchain_height > 0 && mxd_retrieve_block_by_height(blockchain_height, &latest_block) == 0) {
+            memcpy(latest_block_hash, latest_block.block_hash, 64);
+            mxd_free_validation_chain(&latest_block);
+        }
+        
+        if (rapid_table.count == 0 || rapid_table.count < 10) {
+            int found = 0;
+            for (size_t i = 0; i < rapid_table.count; i++) {
+                if (rapid_table.nodes[i] && strcmp(rapid_table.nodes[i]->node_id, node_stake.node_id) == 0) {
+                    found = 1;
+                    *rapid_table.nodes[i] = node_stake;
+                    break;
+                }
+            }
+            if (!found) {
+                mxd_add_to_rapid_table(&rapid_table, &node_stake);
+            }
+        }
+        
+        display_node_metrics(&node_metrics, &node_stake, &current_config, &rapid_table,
+                           blockchain_height, blockchain_height > 0 ? latest_block_hash : NULL);
         pthread_mutex_unlock(&metrics_mutex);
         sleep(1);
     }
@@ -214,6 +259,8 @@ int main(int argc, char** argv) {
     mxd_stop_metrics_server();
     mxd_cleanup_monitoring();
     mxd_stop_dht();
+    mxd_free_rapid_table(&rapid_table);
     MXD_LOG_INFO("node", "Node terminated successfully");
+    mxd_cleanup_logging();
     return 0;
 }

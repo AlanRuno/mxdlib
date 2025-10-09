@@ -9,30 +9,11 @@ extern "C" {
 #include <stdint.h>
 #include "mxd_blockchain.h"
 #include "mxd_blockchain_db.h"
+#include "common/mxd_metrics_types.h"
 
 int mxd_get_validator_public_key(const uint8_t validator_id[20], uint8_t *out_key, size_t out_capacity, size_t *out_len);
 int mxd_test_register_validator_pubkey(const uint8_t validator_id[20], const uint8_t *pub, size_t pub_len);
 void mxd_test_clear_validator_pubkeys(void);
-
-typedef struct {
-    uint64_t avg_response_time;
-    uint64_t min_response_time;
-    uint64_t max_response_time;
-    uint32_t response_count;
-    double tip_share;
-    uint64_t last_update;
-} mxd_node_metrics_t;
-
-typedef struct {
-    char node_id[64];
-    double stake_amount;
-    uint8_t public_key[256];
-    mxd_node_metrics_t metrics;
-    uint32_t rank;
-    uint8_t active;
-    uint8_t in_rapid_table;
-    uint32_t rapid_table_position;
-} mxd_node_stake_t;
 
 typedef struct {
     mxd_node_stake_t **nodes;
