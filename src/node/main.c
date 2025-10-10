@@ -102,6 +102,7 @@ int main(int argc, char** argv) {
     char default_config_path[PATH_MAX];
     const char* config_path = NULL;
     uint16_t override_port = 0;
+    int is_bootstrap = 0;
     
     // Handle command line arguments
     for (int i = 1; i < argc; i++) {
@@ -114,10 +115,13 @@ int main(int argc, char** argv) {
                 return 1;
             }
             override_port = (uint16_t)port;
+        } else if (strcmp(argv[i], "--bootstrap") == 0) {
+            is_bootstrap = 1;
+            MXD_LOG_INFO("node", "Running in bootstrap mode");
         } else if (argv[i][0] != '-' && !config_path) {
             config_path = argv[i];
         } else {
-            MXD_LOG_ERROR("node", "Usage: %s [config_file] [--config <file>] [--port <number>]", argv[0]);
+            MXD_LOG_ERROR("node", "Usage: %s [config_file] [--config <file>] [--port <number>] [--bootstrap]", argv[0]);
             return 1;
         }
     }
@@ -204,6 +208,21 @@ int main(int argc, char** argv) {
     if (mxd_start_dht(current_config.port) != 0) {
         MXD_LOG_ERROR("node", "Failed to start DHT service");
         return 1;
+    }
+    
+    if (mxd_dht_enable_nat_traversal() == 0) {
+        MXD_LOG_INFO("node", "UPnP NAT traversal enabled");
+    } else {
+        MXD_LOG_INFO("node", "UPnP not available, node may not accept incoming connections through NAT");
+    }
+    
+    if (is_bootstrap) {
+        MXD_LOG_INFO("node", "Attempting to register as bootstrap node...");
+        if (mxd_register_bootstrap_node(&current_config) == 0) {
+            MXD_LOG_INFO("node", "Successfully registered as bootstrap node");
+        } else {
+            MXD_LOG_WARN("node", "Failed to register as bootstrap node (continuing anyway)");
+        }
     }
     
     // Start metrics collector thread

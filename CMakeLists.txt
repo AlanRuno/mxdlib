@@ -38,6 +38,7 @@ option(MXD_PQC_DILITHIUM "Enable Crystals Dilithium signatures via liboqs/PQClea
 pkg_check_modules(CJSON REQUIRED libcjson)
 pkg_check_modules(CURL REQUIRED libcurl)
 pkg_check_modules(LIBUV REQUIRED libuv)
+pkg_check_modules(MINIUPNPC REQUIRED miniupnpc)
 if(MXD_WITH_WASI)
   pkg_check_modules(UVWASI QUIET uvwasi)
 endif()
@@ -56,6 +57,7 @@ include_directories(
     ${WASM3_INCLUDE_DIRS}
     ${CJSON_INCLUDE_DIRS}
     ${CURL_INCLUDE_DIRS}
+    ${MINIUPNPC_INCLUDE_DIRS}
     ${ROCKSDB_INCLUDE_DIR}
 )
 if(MXD_WITH_WASI AND UVWASI_FOUND)
@@ -142,6 +144,7 @@ else()
         ${WASM3_LIBRARIES}
         ${CJSON_LIBRARIES}
         ${CURL_LIBRARIES}
+        ${MINIUPNPC_LIBRARIES}
         ${ROCKSDB_LIBRARY}
         -Wl,--no-whole-archive
         m

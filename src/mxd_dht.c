@@ -1,17 +1,20 @@
 #include "mxd_logging.h"
 
 #include <stdio.h>
-
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/time.h>
 #include <time.h>
+#include <miniupnpc/miniupnpc.h>
+#include <miniupnpc/upnpcommands.h>
 #include "mxd_dht.h"
 #include "mxd_config.h"
 #include "mxd_metrics.h"
 #include "mxd_logging.h"
+#include "mxd_secrets.h"
+#include "utils/mxd_http.h"
 
 static mxd_node_metrics_t node_metrics = {
     .message_success = 0,
@@ -38,6 +41,9 @@ static uint32_t messages_per_second = 0;
 static double reliability = 0.0;
 static mxd_dht_node_t peer_list[MXD_MAX_PEERS];
 static size_t peer_count = 0;
+static struct UPNPUrls upnp_urls;
+static struct IGDdatas upnp_data;
+static char upnp_mapped = 0;
 
 void mxd_generate_node_id(uint8_t* node_id) {
     for (int i = 0; i < MXD_NODE_ID_SIZE; i++) {
@@ -171,6 +177,10 @@ int mxd_stop_dht(void) {
         return 0;
     }
     
+    if (upnp_mapped) {
+        mxd_dht_disable_nat_traversal();
+    }
+    
     MXD_LOG_INFO("dht", "Stopping DHT service on port %d for node %s", dht_port, node_id);
     dht_initialized = 0;
     dht_port = 0;
@@ -189,8 +199,55 @@ int mxd_dht_enable_nat_traversal(void) {
     if (!dht_initialized) {
         return 1;
     }
+    
+    MXD_LOG_INFO("dht", "Attempting UPnP port mapping for port %d", dht_port);
+    
+    int error = 0;
+    struct UPNPDev* devlist = upnpDiscover(2000, NULL, NULL, UPNP_LOCAL_PORT_ANY, 0, 2, &error);
+    
+    if (!devlist) {
+        MXD_LOG_WARN("dht", "UPnP discovery failed (error %d), node will not accept incoming connections through NAT", error);
+        return 1;
+    }
+    
+    char lan_addr[64] = {0};
+    int status = UPNP_GetValidIGD(devlist, &upnp_urls, &upnp_data, lan_addr, sizeof(lan_addr));
+    
+    freeUPNPDevlist(devlist);
+    
+    if (status != 1) {
+        MXD_LOG_WARN("dht", "No valid UPnP IGD found (status %d), node will not accept incoming connections through NAT", status);
+        return 1;
+    }
+    
+    MXD_LOG_INFO("dht", "Found UPnP IGD, local address: %s", lan_addr);
+    
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", dht_port);
+    
+    int ret = UPNP_AddPortMapping(
+        upnp_urls.controlURL,
+        upnp_data.first.servicetype,
+        port_str,
+        port_str,
+        lan_addr,
+        "MXD Node",
+        "TCP",
+        NULL,
+        "86400"
+    );
+    
+    if (ret != UPNPCOMMAND_SUCCESS) {
+        MXD_LOG_WARN("dht", "UPnP port mapping failed (error %d), node will not accept incoming connections through NAT", ret);
+        FreeUPNPUrls(&upnp_urls);
+        return 1;
+    }
+    
+    upnp_mapped = 1;
     nat_enabled = 1;
-    MXD_LOG_INFO("dht", "NAT traversal enabled for node %s", node_id);
+    MXD_LOG_INFO("dht", "UPnP port mapping successful: external:%s -> %s:%s", 
+                 port_str, lan_addr, port_str);
+    
     return 0;
 }
 
@@ -198,37 +255,50 @@ int mxd_dht_disable_nat_traversal(void) {
     if (!dht_initialized) {
         return 1;
     }
+    
+    if (upnp_mapped) {
+        char port_str[16];
+        snprintf(port_str, sizeof(port_str), "%d", dht_port);
+        
+        UPNP_DeletePortMapping(
+            upnp_urls.controlURL,
+            upnp_data.first.servicetype,
+            port_str,
+            "TCP",
+            NULL
+        );
+        
+        FreeUPNPUrls(&upnp_urls);
+        upnp_mapped = 0;
+        MXD_LOG_INFO("dht", "UPnP port mapping removed");
+    }
+    
     nat_enabled = 0;
     MXD_LOG_INFO("dht", "NAT traversal disabled for node %s", node_id);
     return 0;
 }
+
 uint64_t mxd_get_network_latency(void) {
     if (!dht_initialized) {
-        return 3000;  // Return max acceptable latency if not initialized
+        return 3000;
     }
     
     struct timeval now;
     gettimeofday(&now, NULL);
     
-    // Calculate time difference in milliseconds
     uint64_t diff_ms = (now.tv_sec - last_ping_time.tv_sec) * 1000 + 
                       (now.tv_usec - last_ping_time.tv_usec) / 1000;
     
-    // Update last ping time
     last_ping_time = now;
     
-    // Update message count and TPS
     uint64_t current_time = now.tv_sec * 1000 + now.tv_usec / 1000;
     uint64_t time_diff = current_time - last_message_time;
     
-    // Process messages every second
     if (time_diff >= 1000) {
-        // Update message count based on TPS
         uint64_t new_messages = messages_per_second;
         message_count += new_messages;
         last_message_time = current_time;
         
-        // Simulate network activity - allow all nodes to discover peers
         {
             if (peer_count < 5) {
                 static uint64_t last_discovery_time = 0;
@@ -296,9 +366,9 @@ uint64_t mxd_get_network_latency(void) {
         }
     }
     
-    // Return latency capped at 3000ms (performance requirement)
     return connected_peers > 0 ? (diff_ms > 3000 ? 3000 : diff_ms) : 3000;
 }
+
 int mxd_dht_get_peers(mxd_dht_node_t* nodes, size_t* count) {
     if (!dht_initialized || !nodes || !count) {
         MXD_LOG_DEBUG("dht", "mxd_dht_get_peers failed: dht_initialized=%d nodes=%p count=%p", 
@@ -316,4 +386,78 @@ int mxd_dht_get_peers(mxd_dht_node_t* nodes, size_t* count) {
     
     MXD_LOG_DEBUG("dht", "mxd_dht_get_peers returning %zu peers (total in list: %zu)", *count, peer_count);
     return 0;
+}
+
+int mxd_register_bootstrap_node(const mxd_config_t* config) {
+    if (!config) {
+        MXD_LOG_ERROR("dht", "NULL config provided for bootstrap registration");
+        return -1;
+    }
+    
+    const mxd_secrets_t* secrets = mxd_get_secrets();
+    if (!secrets || secrets->bootstrap_api_key[0] == '\0') {
+        MXD_LOG_ERROR("dht", "MXD_BOOTSTRAP_API_KEY not set, cannot register as bootstrap node");
+        return -1;
+    }
+    
+    char external_ip[64] = "unknown";
+    if (upnp_mapped) {
+        UPNP_GetExternalIPAddress(
+            upnp_urls.controlURL,
+            upnp_data.first.servicetype,
+            external_ip
+        );
+    }
+    
+    char payload[2048];
+    snprintf(payload, sizeof(payload),
+        "{"
+        "\"node_id\":\"%s\","
+        "\"hostname\":\"%s\","
+        "\"ip\":\"%s\","
+        "\"port\":%d,"
+        "\"network_type\":\"%s\","
+        "\"version\":\"1.0.0\","
+        "\"features\":[\"dht\",\"p2p\",\"bootstrap\"]"
+        "}",
+        config->node_id,
+        config->node_name,
+        external_ip,
+        config->port,
+        config->network_type
+    );
+    
+    MXD_LOG_INFO("dht", "Registering bootstrap node with API...");
+    
+    const char* api_url = "https://mxd.network/api/bootstrap/register";
+    int max_retries = 3;
+    int retry_delay = 1000;
+    
+    for (int attempt = 1; attempt <= max_retries; attempt++) {
+        mxd_http_response_t* response = mxd_http_post(api_url, payload, secrets->bootstrap_api_key);
+        
+        if (response && response->status_code == 200) {
+            MXD_LOG_INFO("dht", "Successfully registered as bootstrap node");
+            mxd_http_free_response(response);
+            return 0;
+        }
+        
+        if (response) {
+            MXD_LOG_WARN("dht", "Bootstrap registration attempt %d/%d failed with status %d", 
+                        attempt, max_retries, response->status_code);
+            mxd_http_free_response(response);
+        } else {
+            MXD_LOG_WARN("dht", "Bootstrap registration attempt %d/%d failed (network error)", 
+                        attempt, max_retries);
+        }
+        
+        if (attempt < max_retries) {
+            MXD_LOG_INFO("dht", "Retrying in %d ms...", retry_delay);
+            usleep(retry_delay * 1000);
+            retry_delay *= 2;
+        }
+    }
+    
+    MXD_LOG_ERROR("dht", "Failed to register bootstrap node after %d attempts", max_retries);
+    return -1;
 }
