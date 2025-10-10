@@ -36,6 +36,7 @@ int mxd_dht_find_nodes(const mxd_node_id_t* target, mxd_dht_node_t* nodes, size_
 int mxd_dht_enable_nat_traversal(void);
 int mxd_dht_disable_nat_traversal(void);
 uint64_t mxd_get_network_latency(void);  // Get current network latency
+int mxd_dht_get_peers(mxd_dht_node_t* nodes, size_t* count);  // Get discovered peers
 
 // Test functions
 int test_node_id(void);
