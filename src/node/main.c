@@ -45,7 +45,7 @@ void* metrics_collector(void* arg) {
         uint64_t response_time = mxd_get_network_latency();
         
         // Update peer count
-        size_t peer_count = 0;
+        size_t peer_count = MXD_MAX_PEERS;
         mxd_peer_t peers[MXD_MAX_PEERS];
         if (mxd_get_peers(peers, &peer_count) == 0) {
             node_metrics.peer_count = peer_count;
@@ -188,7 +188,7 @@ int main(int argc, char** argv) {
     }
     
     // Display initial peer count
-    size_t peer_count = 0;
+    size_t peer_count = MXD_MAX_PEERS;
     mxd_peer_t peers[MXD_MAX_PEERS];
     if (mxd_get_peers(peers, &peer_count) == 0) {
         MXD_LOG_INFO("node", "Connected peers: %zu", peer_count);

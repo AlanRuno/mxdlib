@@ -163,10 +163,15 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     MXD_LOG_INFO("config", "Loaded config: node_id=%s, port=%d, metrics_port=%d, data_dir=%s, node_name=%s",
            config->node_id, config->port, config->metrics_port, config->data_dir, config->node_name);
            
-    // Fetch bootstrap nodes from network
-    if (mxd_fetch_bootstrap_nodes(config) != 0) {
-        MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes, keeping existing bootstrap configuration");
-        return mxd_validate_config(config);
+    // Fetch bootstrap nodes from network only for mainnet
+    // For testnet, use the configured bootstrap nodes from config file
+    if (strcmp(config->network_type, "mainnet") == 0) {
+        if (mxd_fetch_bootstrap_nodes(config) != 0) {
+            MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes, keeping existing bootstrap configuration");
+            return mxd_validate_config(config);
+        }
+    } else {
+        MXD_LOG_INFO("config", "Testnet mode: using %d configured bootstrap nodes", config->bootstrap_count);
     }
     
     return 0;

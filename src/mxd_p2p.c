@@ -209,17 +209,34 @@ int mxd_add_peer(const char* address, uint16_t port) {
 
 // Get list of connected peers
 int mxd_get_peers(mxd_peer_t* peers, size_t* peer_count) {
-    if (!p2p_initialized || !peers || !peer_count || *peer_count == 0) {
+    if (!peers || !peer_count) {
+        MXD_LOG_INFO("p2p", "mxd_get_peers failed: invalid parameters");
         return -1;
     }
     
-    // For now, return test peer for development
-    if (*peer_count >= 1) {
-        peers[0].state = MXD_PEER_CONNECTED;
-        peers[0].latency = 1000; // 1 second latency
-        strncpy(peers[0].address, "127.0.0.1", sizeof(peers[0].address) - 1);
-        peers[0].port = 8000;
-        *peer_count = 1;
+    size_t max_peers = *peer_count;
+    *peer_count = 0;
+    
+    if (max_peers == 0) {
+        return 0;
+    }
+    
+    size_t dht_peer_count = max_peers;
+    mxd_dht_node_t dht_nodes[MXD_MAX_PEERS];
+    
+    if (mxd_dht_get_peers(dht_nodes, &dht_peer_count) == 0) {
+        for (size_t i = 0; i < dht_peer_count && i < max_peers; i++) {
+            if (dht_nodes[i].active) {
+                strncpy(peers[i].address, dht_nodes[i].address, sizeof(peers[i].address) - 1);
+                peers[i].address[sizeof(peers[i].address) - 1] = '\0';
+                peers[i].port = dht_nodes[i].port;
+                peers[i].state = MXD_PEER_CONNECTED;
+                peers[i].latency = 1000;
+                peers[i].last_seen = time(NULL);
+                (*peer_count)++;
+            }
+        }
+        MXD_LOG_INFO("p2p", "Retrieved %zu peers from DHT", *peer_count);
     }
     
     return 0;
