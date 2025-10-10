@@ -98,6 +98,7 @@ RUN apt-get update && apt-get install -y \
     librocksdb6.11 \
     libcjson1 \
     libcurl4 \
+    libminiupnpc17 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
