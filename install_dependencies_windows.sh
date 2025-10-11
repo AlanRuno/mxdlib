@@ -134,8 +134,8 @@ add_library(m3 SHARED ${M3_SOURCES})
 find_library(UVWASI_LIB uvwasi REQUIRED)
 find_library(UV_LIB uv REQUIRED)
 
-# Link dependencies
-target_link_libraries(m3 PUBLIC ${UVWASI_LIB} ${UV_LIB} m pthread dl)
+# Link dependencies (Windows-specific - no pthread, dl, or m needed)
+target_link_libraries(m3 PUBLIC ${UVWASI_LIB} ${UV_LIB})
 
 # Set library properties
 set_target_properties(m3 PROPERTIES
