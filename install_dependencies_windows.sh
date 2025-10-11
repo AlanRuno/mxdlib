@@ -22,8 +22,8 @@ check_library_installed() {
 
 check_wasm3_installed() {
     # Check for library files and headers
-    [ -f "${MINGW_PREFIX}/lib/libm3.dll" ] && \
-    [ -f "${MINGW_PREFIX}/include/wasm3.h" ] && \
+    [ -f "${MINGW_PREFIX}/bin/libm3.dll" ] && \
+    [ -f "${MINGW_PREFIX}/include/wasm3/wasm3.h" ] && \
     [ -f "${MINGW_PREFIX}/lib/cmake/wasm3/wasm3Config.cmake" ]
 }
 
@@ -99,7 +99,7 @@ EOF
 install_wasm3() {
     if [ "$FORCE_BUILD" = "true" ]; then
         log "Force rebuilding wasm3..."
-        rm -rf ${MINGW_PREFIX}/lib/libm3.dll* ${MINGW_PREFIX}/include/wasm3*
+        rm -rf ${MINGW_PREFIX}/bin/libm3.dll* ${MINGW_PREFIX}/lib/libm3.dll.a ${MINGW_PREFIX}/include/wasm3*
     elif check_wasm3_installed; then
         log "wasm3 is already installed, skipping (use --force_build to override)"
         return 0
@@ -159,6 +159,7 @@ install(FILES ${HEADER_FILES} DESTINATION include/wasm3)
 
 # Install library
 install(TARGETS m3 EXPORT wasm3Targets
+    RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib)
 
@@ -315,7 +316,7 @@ verify_installation() {
     fi
     
     # Verify wasm3 installation
-    if ! [ -f "${MINGW_PREFIX}/lib/libm3.dll" ]; then
+    if ! [ -f "${MINGW_PREFIX}/bin/libm3.dll" ]; then
         log "Error: wasm3 library not found"
         errors=$((errors + 1))
     fi
