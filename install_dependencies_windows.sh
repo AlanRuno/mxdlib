@@ -208,8 +208,19 @@ set(WASM3_LIBRARY_DIR "@CMAKE_INSTALL_PREFIX@/lib")
 set(WASM3_LIBRARIES m3)
 EOL
 
-    # Create pkg-config file
-    cp /home/ubuntu/repos/mxdlib/wasm3.pc.in source/wasm3.pc.in
+    # Create pkg-config file template
+    cat > source/wasm3.pc.in << 'EOL'
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: wasm3
+Description: High performance WebAssembly interpreter
+Version: 1.0.0
+Libs: -L${libdir} -lm3
+Cflags: -I${includedir}
+EOL
     
     # Build and install
     mkdir -p build && cd build
@@ -224,10 +235,9 @@ EOL
           -DCMAKE_INSTALL_NAME_DIR="${MINGW_PREFIX}/lib" \
           -DCMAKE_WINDOWS_EXPORT_ALL_SYMBOLS=ON \
           -DCMAKE_SHARED_LIBRARY_PREFIX="lib" \
-          -G "MSYS Makefiles" \
           ..
-    make
-    make install
+    ninja
+    ninja install
     cd ../..
     rm -rf wasm3
 }
