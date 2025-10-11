@@ -246,9 +246,9 @@ install_libuv() {
     git clone https://github.com/libuv/libuv
     cd libuv
     mkdir -p build && cd build
-    cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_FLAGS="-fPIC -fvisibility=default" -DCMAKE_INSTALL_RPATH="/usr/local/lib" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON -DLIBUV_BUILD_SHARED=ON -DUVWASI_BUILD_SHARED=ON -G "MSYS Makefiles" ..
-    make
-    sudo make install
+    cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_FLAGS="-fPIC -fvisibility=default" -DCMAKE_INSTALL_RPATH="/usr/local/lib" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON -DLIBUV_BUILD_SHARED=ON -DUVWASI_BUILD_SHARED=ON ..
+    ninja
+    sudo ninja install
     cd ../..
     rm -rf libuv
 }
@@ -267,9 +267,9 @@ install_uvwasi() {
     git clone https://github.com/nodejs/uvwasi
     cd uvwasi
     mkdir -p build && cd build
-    cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_FLAGS="-fPIC -fvisibility=default" -DCMAKE_INSTALL_RPATH="/usr/local/lib" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON -DLIBUV_BUILD_SHARED=ON -DUVWASI_BUILD_SHARED=ON -G "MSYS Makefiles" ..
-    make
-    sudo make install
+    cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_FLAGS="-fPIC -fvisibility=default" -DCMAKE_INSTALL_RPATH="/usr/local/lib" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON -DLIBUV_BUILD_SHARED=ON -DUVWASI_BUILD_SHARED=ON ..
+    ninja
+    sudo ninja install
     cd ../..
     rm -rf uvwasi
 }
