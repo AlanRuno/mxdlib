@@ -13,6 +13,7 @@ check_command() {
 }
 
 MINGW_PREFIX="/mingw64"
+export PATH="${MINGW_PREFIX}/bin:${PATH}"
 
 check_library_installed() {
     local lib=$1
