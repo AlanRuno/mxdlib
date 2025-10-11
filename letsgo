@@ -2,6 +2,11 @@
 
 set -e
 
+# Add MinGW tools to PATH for Windows/MSYS2
+if [ -d "/mingw64" ]; then
+    export PATH="/mingw64/bin:${PATH}"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Check if network type is provided
@@ -39,7 +44,7 @@ echo "Step 3/5: Building project..."
 mkdir build
 cd build
 cmake ..
-make -j$(nproc)
+ninja
 cd ..
 
 echo ""
