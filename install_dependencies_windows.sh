@@ -241,6 +241,8 @@ install_libuv() {
         return 0
     fi
     log "Installing libuv..."
+    # Clean up existing libuv directory if it exists
+    rm -rf libuv
     git clone https://github.com/libuv/libuv
     cd libuv
     mkdir -p build && cd build
@@ -260,6 +262,8 @@ install_uvwasi() {
         return 0
     fi
     log "Installing uvwasi..."
+    # Clean up existing uvwasi directory if it exists
+    rm -rf uvwasi
     git clone https://github.com/nodejs/uvwasi
     cd uvwasi
     mkdir -p build && cd build
