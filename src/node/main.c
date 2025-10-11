@@ -210,10 +210,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    if (mxd_dht_enable_nat_traversal() == 0) {
+    if (current_config.enable_upnp && mxd_dht_enable_nat_traversal() == 0) {
         MXD_LOG_INFO("node", "UPnP NAT traversal enabled");
-    } else {
+    } else if (current_config.enable_upnp) {
         MXD_LOG_INFO("node", "UPnP not available, node may not accept incoming connections through NAT");
+    } else {
+        MXD_LOG_INFO("node", "UPnP disabled in configuration");
     }
     
     if (is_bootstrap) {
