@@ -163,15 +163,14 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     MXD_LOG_INFO("config", "Loaded config: node_id=%s, port=%d, metrics_port=%d, data_dir=%s, node_name=%s",
            config->node_id, config->port, config->metrics_port, config->data_dir, config->node_name);
            
-    // Fetch bootstrap nodes from network only for mainnet
-    // For testnet, use the configured bootstrap nodes from config file
-    if (strcmp(config->network_type, "mainnet") == 0) {
-        if (mxd_fetch_bootstrap_nodes(config) != 0) {
-            MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes, keeping existing bootstrap configuration");
-            return mxd_validate_config(config);
+    if (mxd_fetch_bootstrap_nodes(config) != 0) {
+        MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes from API, using configured bootstrap nodes");
+        if (config->bootstrap_count == 0) {
+            MXD_LOG_WARN("config", "No bootstrap nodes configured or fetched");
         }
     } else {
-        MXD_LOG_INFO("config", "Testnet mode: using %d configured bootstrap nodes", config->bootstrap_count);
+        MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
+                     config->bootstrap_count, config->network_type);
     }
     
     return 0;
@@ -180,9 +179,13 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
 int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
     if (!config) return -1;
     
-    MXD_LOG_INFO("config", "Fetching bootstrap nodes from https://mxd.network/bootstrap");
+    const char* endpoint = strcmp(config->network_type, "testnet") == 0 
+        ? "https://mxd.network/bootstrap/test"
+        : "https://mxd.network/bootstrap/main";
+    
+    MXD_LOG_INFO("config", "Fetching bootstrap nodes from %s", endpoint);
 
-    mxd_http_response_t* response = mxd_http_get("https://mxd.network/bootstrap");
+    mxd_http_response_t* response = mxd_http_get(endpoint);
     if (!response || response->status_code != 200) {
         // Fall back to hardcoded nodes
         MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes, using fallback nodes");
