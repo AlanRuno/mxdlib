@@ -51,4 +51,4 @@ echo ""
 echo "Step 5/5: Starting node..."
 echo ""
 source .env
-./build/lib/mxd_node "$CONFIG_FILE"
+./build/lib/mxd_node "$CONFIG_FILE" "${@:2}"
