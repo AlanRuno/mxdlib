@@ -75,7 +75,8 @@ install_system_deps() {
         mingw-w64-x86_64-pkg-config \
         mingw-w64-x86_64-openssl \
         mingw-w64-x86_64-libsodium \
-        mingw-w64-x86_64-gmp
+        mingw-w64-x86_64-gmp \
+        mingw-w64-x86_64-cjson
     
     if ! verify_system_deps; then
         log "Error: Some system dependencies are still missing"
