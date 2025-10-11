@@ -1,0 +1,54 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Check if network type is provided
+if [ -z "$1" ]; then
+    echo "Usage: $0 [testnet|mainnet]"
+    echo ""
+    echo "Examples:"
+    echo "  $0 testnet   # Build and run node on testnet"
+    echo "  $0 mainnet   # Build and run node on mainnet"
+    exit 1
+fi
+
+NETWORK_TYPE=$1
+
+if [[ "$NETWORK_TYPE" != "testnet" ]] && [[ "$NETWORK_TYPE" != "mainnet" ]]; then
+    echo "Error: network type must be 'testnet' or 'mainnet'"
+    exit 1
+fi
+
+echo "═══════════════════════════════════════════"
+echo "  MXD Node Quick Start"
+echo "═══════════════════════════════════════════"
+echo ""
+
+echo "Step 1/5: Installing dependencies..."
+cd "$SCRIPT_DIR"
+./install_dependencies.sh
+
+echo ""
+echo "Step 2/5: Cleaning build directory..."
+rm -rf build
+
+echo ""
+echo "Step 3/5: Building project..."
+mkdir build
+cd build
+cmake ..
+make -j$(nproc)
+cd ..
+
+echo ""
+echo "Step 4/5: Configuring network ($NETWORK_TYPE)..."
+CONFIG_FILE="build/lib/default_config.json"
+./switch_network.sh "$CONFIG_FILE" "$NETWORK_TYPE"
+
+echo ""
+echo "Step 5/5: Starting node..."
+echo ""
+source .env
+./build/lib/mxd_node "$CONFIG_FILE"
