@@ -2,6 +2,11 @@
 
 set -e
 
+# Add MinGW tools to PATH for Windows/MSYS2
+if [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "win32" ]]; then
+    export PATH="/mingw64/bin:${PATH}"
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Check if network type is provided
