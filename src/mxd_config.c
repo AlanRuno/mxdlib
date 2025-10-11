@@ -71,6 +71,8 @@ static void mxd_set_default_config(mxd_config_t* config) {
     
     // Node data (empty by default)
     strncpy(config->node_data, "", sizeof(config->node_data) - 1);
+    
+    config->enable_upnp = 1;
 }
 
 int mxd_load_config(const char* config_file, mxd_config_t* config) {
@@ -138,6 +140,9 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
                     config->bootstrap_count++;
                     node = strtok(NULL, "[], ");
                 }
+            } else if (strcmp(key, "enable_upnp") == 0) {
+                config->enable_upnp = (strcmp(trimmed_value, "true") == 0 || 
+                                      strcmp(trimmed_value, "1") == 0);
             }
         }
     }

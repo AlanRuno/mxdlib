@@ -15,6 +15,7 @@ typedef struct {
     char bootstrap_nodes[10][256];
     int bootstrap_count;
     char node_data[1024];      // Custom node data
+    int enable_upnp;           // Enable UPnP port mapping (1=enabled, 0=disabled)
 } mxd_config_t;
 
 // Load configuration from file or use built-in defaults.
