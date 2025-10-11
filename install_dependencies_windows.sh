@@ -13,6 +13,7 @@ check_command() {
 }
 
 MINGW_PREFIX="/mingw64"
+export PATH="${MINGW_PREFIX}/bin:${PATH}"
 
 check_library_installed() {
     local lib=$1
@@ -68,6 +69,7 @@ install_system_deps() {
     
     pacman -Syu --noconfirm
     pacman -S --noconfirm \
+        git \
         mingw-w64-x86_64-toolchain \
         mingw-w64-x86_64-cmake \
         mingw-w64-x86_64-pkg-config \
