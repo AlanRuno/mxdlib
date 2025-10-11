@@ -99,7 +99,7 @@ EOF
 install_wasm3() {
     if [ "$FORCE_BUILD" = "true" ]; then
         log "Force rebuilding wasm3..."
-        sudo rm -rf /usr/local/lib/libm3.so* /usr/local/include/wasm3*
+        rm -rf ${MINGW_PREFIX}/lib/libm3.dll* ${MINGW_PREFIX}/include/wasm3*
     elif check_wasm3_installed; then
         log "wasm3 is already installed, skipping (use --force_build to override)"
         return 0
@@ -245,7 +245,7 @@ EOL
 install_libuv() {
     if [ "$FORCE_BUILD" = "true" ]; then
         log "Force rebuilding libuv..."
-        sudo rm -rf /usr/local/lib/libuv.so* /usr/local/include/uv*
+        rm -rf ${MINGW_PREFIX}/lib/libuv.dll* ${MINGW_PREFIX}/include/uv*
     elif check_libuv_installed; then
         log "libuv is already installed, skipping (use --force_build to override)"
         return 0
@@ -266,7 +266,7 @@ install_libuv() {
 install_uvwasi() {
     if [ "$FORCE_BUILD" = "true" ]; then
         log "Force rebuilding uvwasi..."
-        sudo rm -rf /usr/local/lib/libuvwasi.so* /usr/local/include/uvwasi*
+        rm -rf ${MINGW_PREFIX}/lib/libuvwasi.dll* ${MINGW_PREFIX}/include/uvwasi*
     elif check_uvwasi_installed; then
         log "uvwasi is already installed, skipping (use --force_build to override)"
         return 0
@@ -295,25 +295,33 @@ verify_installation() {
         fi
     done
 
-    # Check libraries
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        for lib in libssl.dylib libsodium.dylib libgmp.dylib; do
-            if ! find /usr/local/lib -name "$lib*" >/dev/null 2>&1; then
-                log "Error: $lib not found"
-                errors=$((errors + 1))
-            fi
-        done
-    else
-        for lib in libssl.so libsodium.so libgmp.so; do
-            if ! ldconfig -p | grep "$lib" >/dev/null 2>&1; then
-                log "Error: $lib not found"
-                errors=$((errors + 1))
-            fi
-        done
+    # Check libraries - Windows/MSYS2 specific
+    for lib in libssl libsodium libgmp; do
+        if ! check_library_installed "$lib"; then
+            log "Error: ${lib} not found in ${MINGW_PREFIX}/lib"
+            errors=$((errors + 1))
+        fi
+    done
+    
+    # Verify custom-built dependencies
+    if ! check_library_installed "libuv"; then
+        log "Error: libuv not found in ${MINGW_PREFIX}/lib"
+        errors=$((errors + 1))
+    fi
+    
+    if ! check_library_installed "libuvwasi"; then
+        log "Error: libuvwasi not found in ${MINGW_PREFIX}/lib"
+        errors=$((errors + 1))
+    fi
+    
+    # Verify wasm3 installation
+    if ! [ -f "${MINGW_PREFIX}/lib/libm3.dll" ]; then
+        log "Error: wasm3 library not found"
+        errors=$((errors + 1))
     fi
     
     # Verify wasm3 pkg-config installation
-    if ! pkg-config --exists wasm3; then
+    if ! PKG_CONFIG_PATH="${MINGW_PREFIX}/lib/pkgconfig" pkg-config --exists wasm3; then
         log "Error: wasm3.pc not found by pkg-config"
         errors=$((errors + 1))
     fi
