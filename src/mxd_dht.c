@@ -396,8 +396,15 @@ int mxd_dht_enable_nat_traversal(void) {
     MXD_LOG_INFO("dht", "Found %d UPnP device(s)", device_count);
     
     char lan_addr[64] = {0};
+#if MINIUPNPC_API_VERSION >= 18
+    char wan_addr[64] = {0};
+#endif
     MXD_LOG_INFO("dht", "--- Searching for valid Internet Gateway Device ---");
+#if MINIUPNPC_API_VERSION >= 18
+    int status = UPNP_GetValidIGD(devlist, &upnp_urls, &upnp_data, lan_addr, sizeof(lan_addr), wan_addr, sizeof(wan_addr));
+#else
     int status = UPNP_GetValidIGD(devlist, &upnp_urls, &upnp_data, lan_addr, sizeof(lan_addr));
+#endif
     
     freeUPNPDevlist(devlist);
     
@@ -427,6 +434,9 @@ int mxd_dht_enable_nat_traversal(void) {
     
     MXD_LOG_INFO("dht", "✓ Valid IGD found");
     MXD_LOG_INFO("dht", "Local IP address: %s", lan_addr);
+#if MINIUPNPC_API_VERSION >= 18
+    MXD_LOG_INFO("dht", "WAN address: %s", wan_addr[0] ? wan_addr : "(not available)");
+#endif
     MXD_LOG_INFO("dht", "Control URL: %s", upnp_urls.controlURL);
     MXD_LOG_INFO("dht", "Service type: %s", upnp_data.first.servicetype);
     
