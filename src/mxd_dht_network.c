@@ -1,6 +1,5 @@
 #include "mxd_logging.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -25,17 +24,13 @@ void handle_signal(int signum) {
 }
 
 int run_network_tests(const char* config_file) {
-    // Initialize logging first
     mxd_log_config_t log_config = {
         .level = MXD_LOG_INFO,
         .output_file = NULL,
         .enable_console = 1,
         .enable_json = 0
     };
-    if (mxd_init_logging(&log_config) != 0) {
-        printf("Warning: Failed to initialize logging, continuing anyway\n");
-        fflush(stdout);
-    }
+    mxd_init_logging(&log_config);
     
     MXD_LOG_INFO("dht", "Starting network tests with config: %s", config_file);
     
