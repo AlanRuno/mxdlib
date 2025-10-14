@@ -103,13 +103,13 @@ int mxd_init_node(const void* config) {
             char host[256];
             int port;
             if (sscanf(bootstrap_addr, "%255[^:]:%d", host, &port) == 2) {
-                MXD_LOG_INFO("dht", "Connecting to bootstrap node %s:%d", host, port);
+                MXD_LOG_INFO("dht", "Adding bootstrap node %s:%d to peer list", host, port);
                 
                 mxd_dht_node_t* peer = &peer_list[peer_count];
                 strncpy(peer->address, host, sizeof(peer->address) - 1);
                 peer->address[sizeof(peer->address) - 1] = '\0';
                 peer->port = port;
-                peer->active = 1;
+                peer->active = 0;  // Bootstrap peers start inactive until connection is verified
                 peer_count++;
                 
                 gettimeofday(&last_ping_time, NULL);
@@ -140,20 +140,27 @@ int mxd_start_dht(uint16_t port) {
     MXD_LOG_INFO("dht", "DHT service started on port %d for node %s", port, node_id);
     
     // Initialize metrics based on node type
+    size_t active_peer_count = 0;
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peer_list[i].active) {
+            active_peer_count++;
+        }
+    }
+    
     if (is_bootstrap) {
         // Bootstrap nodes are always active and maintain high performance
-        connected_peers = peer_count;
+        connected_peers = active_peer_count;
         messages_per_second = 15;
         reliability = 1.0;
         message_count = 15;
-        MXD_LOG_INFO("dht", "Bootstrap node initialized with %zu connected peers", peer_count);
+        MXD_LOG_INFO("dht", "Bootstrap node initialized with %zu connected peers", active_peer_count);
     } else {
         // Regular nodes connect to bootstrap and maintain required performance
-        connected_peers = peer_count;
+        connected_peers = active_peer_count;
         messages_per_second = 10;
         reliability = 0.95;
         message_count = 10;
-        MXD_LOG_INFO("dht", "Regular node initialized with %zu connected peers", peer_count);
+        MXD_LOG_INFO("dht", "Regular node initialized with %zu connected peers", active_peer_count);
     }
     
     // Update initial metrics
@@ -573,8 +580,15 @@ uint64_t mxd_get_network_latency(void) {
                             new_peer->port = port_candidate;
                             new_peer->active = 1;
                             peer_count++;
-                            connected_peers = peer_count;
-                            MXD_LOG_INFO("dht", "Discovered peer 127.0.0.1:%d via DHT (total peers: %zu)", port_candidate, peer_count);
+                            
+                            size_t active_count = 0;
+                            for (size_t i = 0; i < peer_count; i++) {
+                                if (peer_list[i].active) active_count++;
+                            }
+                            connected_peers = active_count;
+                            
+                            MXD_LOG_INFO("dht", "Discovered peer 127.0.0.1:%d via DHT (total peers: %zu, active: %zu)", 
+                                        port_candidate, peer_count, active_count);
                             last_discovery_time = current_time;
                             break;
                         }
@@ -582,7 +596,12 @@ uint64_t mxd_get_network_latency(void) {
                 }
             }
             
-            connected_peers = peer_count;
+            // Update connected_peers to count only active peers
+            size_t active_count = 0;
+            for (size_t i = 0; i < peer_count; i++) {
+                if (peer_list[i].active) active_count++;
+            }
+            connected_peers = active_count;
             
             // Update reliability based on performance
             reliability = (reliability * 0.9) + 
@@ -628,12 +647,15 @@ int mxd_dht_get_peers(mxd_dht_node_t* nodes, size_t* count) {
     size_t max_count = *count;
     *count = 0;
     
-    for (size_t i = 0; i < peer_count && i < max_count; i++) {
-        memcpy(&nodes[i], &peer_list[i], sizeof(mxd_dht_node_t));
-        (*count)++;
+    // Only return active peers
+    for (size_t i = 0; i < peer_count && *count < max_count; i++) {
+        if (peer_list[i].active) {
+            memcpy(&nodes[*count], &peer_list[i], sizeof(mxd_dht_node_t));
+            (*count)++;
+        }
     }
     
-    MXD_LOG_DEBUG("dht", "mxd_dht_get_peers returning %zu peers (total in list: %zu)", *count, peer_count);
+    MXD_LOG_DEBUG("dht", "mxd_dht_get_peers returning %zu active peers (total in list: %zu)", *count, peer_count);
     return 0;
 }
 
