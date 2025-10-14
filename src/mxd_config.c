@@ -220,14 +220,22 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
         cJSON* hostname = cJSON_GetObjectItem(node, "hostname");
         cJSON* port = cJSON_GetObjectItem(node, "port");
         
-        if (hostname && cJSON_IsString(hostname) && 
-            port && cJSON_IsNumber(port)) {
+        int port_num = 0;
+        if (port) {
+            if (cJSON_IsNumber(port)) {
+                port_num = port->valueint;
+            } else if (cJSON_IsString(port)) {
+                port_num = atoi(port->valuestring);
+            }
+        }
+        
+        if (hostname && cJSON_IsString(hostname) && port_num > 0) {
             
             snprintf(config->bootstrap_nodes[config->bootstrap_count],
                     sizeof(config->bootstrap_nodes[0]),
                     "%s:%d",
                     hostname->valuestring,
-                    port->valueint);
+                    port_num);
             
             config->bootstrap_count++;
             if (config->bootstrap_count >= 10) break;  // Max nodes limit
