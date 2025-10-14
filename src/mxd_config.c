@@ -169,14 +169,12 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
            config->node_id, config->port, config->metrics_port, config->data_dir, config->node_name);
            
     if (mxd_fetch_bootstrap_nodes(config) != 0) {
-        MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes from API, using configured bootstrap nodes");
-        if (config->bootstrap_count == 0) {
-            MXD_LOG_WARN("config", "No bootstrap nodes configured or fetched");
-        }
-    } else {
-        MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
-                     config->bootstrap_count, config->network_type);
+        MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from network API, terminating");
+        return -1;
     }
+    
+    MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
+                 config->bootstrap_count, config->network_type);
     
     return 0;
 }
@@ -192,25 +190,25 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
 
     mxd_http_response_t* response = mxd_http_get(endpoint);
     if (!response || response->status_code != 200) {
-        // Fall back to hardcoded nodes
-        MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes, using fallback nodes");
+        MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from %s (status: %d)", 
+                      endpoint, response ? response->status_code : 0);
         mxd_http_free_response(response);
-        return 0;
+        return -1;
     }
     
     cJSON* root = cJSON_Parse(response->data);
     if (!root) {
-        MXD_LOG_WARN("config", "Failed to parse bootstrap nodes JSON, using fallback nodes");
+        MXD_LOG_ERROR("config", "Failed to parse bootstrap nodes JSON response from %s", endpoint);
         mxd_http_free_response(response);
-        return 0;
+        return -1;
     }
     
     cJSON* nodes = cJSON_GetObjectItem(root, "bootstrap_nodes");
     if (!nodes || !cJSON_IsArray(nodes)) {
-        MXD_LOG_WARN("config", "Invalid bootstrap nodes format, using fallback nodes");
+        MXD_LOG_ERROR("config", "Invalid bootstrap nodes format in response from %s", endpoint);
         cJSON_Delete(root);
         mxd_http_free_response(response);
-        return 0;
+        return -1;
     }
     
     // Start with fresh node list
@@ -237,15 +235,15 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
         }
     }
     
-    // If no valid nodes found, set fallback bootstrap nodes only
+    // If no valid nodes found, return error
     if (config->bootstrap_count == 0) {
-        MXD_LOG_WARN("config", "No valid bootstrap nodes found, setting fallback bootstrap nodes");
-        config->bootstrap_count = 2;
-        strncpy(config->bootstrap_nodes[0], "127.0.0.1:8001", sizeof(config->bootstrap_nodes[0]) - 1);
-        strncpy(config->bootstrap_nodes[1], "127.0.0.1:8002", sizeof(config->bootstrap_nodes[1]) - 1);
-    } else {
-        MXD_LOG_INFO("config", "Loaded %d bootstrap nodes from network", config->bootstrap_count);
+        MXD_LOG_ERROR("config", "No valid bootstrap nodes found in API response from %s", endpoint);
+        cJSON_Delete(root);
+        mxd_http_free_response(response);
+        return -1;
     }
+    
+    MXD_LOG_INFO("config", "Loaded %d bootstrap nodes from network", config->bootstrap_count);
     
     cJSON_Delete(root);
     mxd_http_free_response(response);
