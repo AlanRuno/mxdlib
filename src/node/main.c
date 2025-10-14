@@ -223,7 +223,11 @@ int main(int argc, char** argv) {
         if (mxd_register_bootstrap_node(&current_config) == 0) {
             MXD_LOG_INFO("node", "Successfully registered as bootstrap node");
         } else {
-            MXD_LOG_WARN("node", "Failed to register as bootstrap node (continuing anyway)");
+            MXD_LOG_ERROR("node", "Failed to register as bootstrap node, terminating");
+            mxd_stop_metrics_server();
+            mxd_cleanup_monitoring();
+            mxd_stop_dht();
+            return 1;
         }
     }
     
