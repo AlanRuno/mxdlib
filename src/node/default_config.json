@@ -6,8 +6,7 @@
     "node_name": "MXD Default Node",
     "initial_stake": 100.0,
     "bootstrap_nodes": [
-        "127.0.0.1:8001",
-        "127.0.0.1:8002"
+        "127.0.0.1:8000"
     ],
     "metrics": {
         "update_interval": 1000,
