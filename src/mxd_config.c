@@ -168,16 +168,12 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     MXD_LOG_INFO("config", "Loaded config: node_id=%s, port=%d, metrics_port=%d, data_dir=%s, node_name=%s",
            config->node_id, config->port, config->metrics_port, config->data_dir, config->node_name);
            
-    if (config->bootstrap_count == 0) {
-        if (mxd_fetch_bootstrap_nodes(config) != 0) {
-            MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from network API, terminating");
-            return -1;
-        }
-        MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
-                     config->bootstrap_count, config->network_type);
-    } else {
-        MXD_LOG_INFO("config", "Using %d bootstrap nodes from configuration file", config->bootstrap_count);
+    if (mxd_fetch_bootstrap_nodes(config) != 0) {
+        MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from network API, terminating");
+        return -1;
     }
+    MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
+                 config->bootstrap_count, config->network_type);
     
     return 0;
 }
