@@ -64,10 +64,9 @@ static void mxd_set_default_config(mxd_config_t* config) {
     config->metrics_interval = 1000;
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
     
-    // Default bootstrap nodes
-    config->bootstrap_count = 2;
-    strncpy(config->bootstrap_nodes[0], "127.0.0.1:8001", sizeof(config->bootstrap_nodes[0]) - 1);
-    strncpy(config->bootstrap_nodes[1], "127.0.0.1:8002", sizeof(config->bootstrap_nodes[1]) - 1);
+    // Default bootstrap nodes (self-connection for local node operation)
+    config->bootstrap_count = 1;
+    strncpy(config->bootstrap_nodes[0], "127.0.0.1:8000", sizeof(config->bootstrap_nodes[0]) - 1);
     
     // Node data (empty by default)
     strncpy(config->node_data, "", sizeof(config->node_data) - 1);
@@ -92,62 +91,86 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
         return mxd_validate_config(config);
     }
     
-    char line[1024];
-    char key[256], value[768];
+    fseek(fp, 0, SEEK_END);
+    long fsize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
     
-    while (fgets(line, sizeof(line), fp)) {
-        char* trimmed = trim(line);
-        if (strlen(trimmed) == 0 || trimmed[0] == '{' || trimmed[0] == '}' || trimmed[0] == ',') {
-            continue;
+    char* file_contents = malloc(fsize + 1);
+    if (!file_contents) {
+        fclose(fp);
+        MXD_LOG_ERROR("config", "Failed to allocate memory for config file");
+        return -1;
+    }
+    
+    size_t read_size = fread(file_contents, 1, fsize, fp);
+    file_contents[read_size] = '\0';
+    fclose(fp);
+    
+    cJSON* root = cJSON_Parse(file_contents);
+    free(file_contents);
+    
+    if (!root) {
+        MXD_LOG_WARN("config", "Failed to parse config file as JSON, using defaults");
+        return mxd_validate_config(config);
+    }
+    
+    cJSON* item;
+    
+    if ((item = cJSON_GetObjectItem(root, "node_id")) && cJSON_IsString(item)) {
+        strncpy(config->node_id, item->valuestring, sizeof(config->node_id) - 1);
+    }
+    if ((item = cJSON_GetObjectItem(root, "data_dir")) && cJSON_IsString(item)) {
+        strncpy(config->data_dir, item->valuestring, sizeof(config->data_dir) - 1);
+    }
+    if ((item = cJSON_GetObjectItem(root, "port")) && cJSON_IsNumber(item)) {
+        config->port = (uint16_t)item->valueint;
+    }
+    if ((item = cJSON_GetObjectItem(root, "node_name")) && cJSON_IsString(item)) {
+        strncpy(config->node_name, item->valuestring, sizeof(config->node_name) - 1);
+    }
+    if ((item = cJSON_GetObjectItem(root, "node_data")) && cJSON_IsString(item)) {
+        strncpy(config->node_data, item->valuestring, sizeof(config->node_data) - 1);
+    }
+    if ((item = cJSON_GetObjectItem(root, "initial_stake")) && cJSON_IsNumber(item)) {
+        config->initial_stake = item->valuedouble;
+    }
+    if ((item = cJSON_GetObjectItem(root, "network_type")) && cJSON_IsString(item)) {
+        strncpy(config->network_type, item->valuestring, sizeof(config->network_type) - 1);
+    }
+    
+    cJSON* metrics = cJSON_GetObjectItem(root, "metrics");
+    if (metrics && cJSON_IsObject(metrics)) {
+        if ((item = cJSON_GetObjectItem(metrics, "update_interval")) && cJSON_IsNumber(item)) {
+            config->metrics_interval = (uint32_t)item->valueint;
         }
-        
-        if (sscanf(trimmed, "\"%255[^\"]\" : \"%767[^\"]\"", key, value) == 2 ||
-            sscanf(trimmed, "\"%255[^\"]\":%767[^,\n]", key, value) == 2) {
-            
-            char* trimmed_value = trim(value);
-            trimmed_value = strip_quotes(trimmed_value);
-            
-            if (strcmp(key, "node_id") == 0) {
-                strncpy(config->node_id, trimmed_value, sizeof(config->node_id) - 1);
-            } else if (strcmp(key, "data_dir") == 0) {
-                strncpy(config->data_dir, trimmed_value, sizeof(config->data_dir) - 1);
-            } else if (strcmp(key, "port") == 0) {
-                config->port = (uint16_t)atoi(trimmed_value);
-            } else if (strcmp(key, "node_name") == 0) {
-                strncpy(config->node_name, trimmed_value, sizeof(config->node_name) - 1);
-            } else if (strcmp(key, "node_data") == 0) {
-                strncpy(config->node_data, trimmed_value, sizeof(config->node_data) - 1);
-            } else if (strcmp(key, "initial_stake") == 0) {
-                config->initial_stake = atof(trimmed_value);
-            } else if (strcmp(key, "network_type") == 0) {
-                strncpy(config->network_type, trimmed_value, sizeof(config->network_type) - 1);
-            } else if (strcmp(key, "metrics_interval") == 0) {
-                config->metrics_interval = (uint32_t)atoi(trimmed_value);
-            } else if (strcmp(key, "metrics_port") == 0) {
-                config->metrics_port = (uint16_t)atoi(trimmed_value);
-            } else if (strcmp(key, "bootstrap_nodes") == 0) {
-                // Parse bootstrap nodes array
-                char* node = strtok(trimmed_value, "[], ");
-                config->bootstrap_count = 0;
-                while (node != NULL && config->bootstrap_count < 10) {
-                    // Remove quotes if present
-                    if (node[0] == '"') {
-                        node++;
-                        node[strlen(node)-1] = '\0';
-                    }
-                    strncpy(config->bootstrap_nodes[config->bootstrap_count], 
-                           node, sizeof(config->bootstrap_nodes[0]) - 1);
-                    config->bootstrap_count++;
-                    node = strtok(NULL, "[], ");
-                }
-            } else if (strcmp(key, "enable_upnp") == 0) {
-                config->enable_upnp = (strcmp(trimmed_value, "true") == 0 || 
-                                      strcmp(trimmed_value, "1") == 0);
+    }
+    
+    // Try to get metrics_port from root first, then from metrics object
+    if ((item = cJSON_GetObjectItem(root, "metrics_port")) && cJSON_IsNumber(item)) {
+        config->metrics_port = (uint16_t)item->valueint;
+    } else if (metrics && (item = cJSON_GetObjectItem(metrics, "port")) && cJSON_IsNumber(item)) {
+        config->metrics_port = (uint16_t)item->valueint;
+    }
+    
+    // Parse bootstrap_nodes array
+    cJSON* bootstrap_nodes = cJSON_GetObjectItem(root, "bootstrap_nodes");
+    if (bootstrap_nodes && cJSON_IsArray(bootstrap_nodes)) {
+        config->bootstrap_count = 0;
+        cJSON* node;
+        cJSON_ArrayForEach(node, bootstrap_nodes) {
+            if (cJSON_IsString(node) && config->bootstrap_count < 10) {
+                strncpy(config->bootstrap_nodes[config->bootstrap_count], 
+                       node->valuestring, sizeof(config->bootstrap_nodes[0]) - 1);
+                config->bootstrap_count++;
             }
         }
     }
     
-    fclose(fp);
+    if ((item = cJSON_GetObjectItem(root, "enable_upnp")) && cJSON_IsBool(item)) {
+        config->enable_upnp = cJSON_IsTrue(item);
+    }
+    
+    cJSON_Delete(root);
     
     // Validate final configuration
     if (mxd_validate_config(config) != 0) {
@@ -167,13 +190,27 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     
     MXD_LOG_INFO("config", "Loaded config: node_id=%s, port=%d, metrics_port=%d, data_dir=%s, node_name=%s",
            config->node_id, config->port, config->metrics_port, config->data_dir, config->node_name);
-           
-    if (mxd_fetch_bootstrap_nodes(config) != 0) {
-        MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from network API, terminating");
-        return -1;
+    
+    int has_local_bootstrap = 0;
+    for (int i = 0; i < config->bootstrap_count; i++) {
+        if (strstr(config->bootstrap_nodes[i], "127.0.0.1") != NULL ||
+            strstr(config->bootstrap_nodes[i], "localhost") != NULL) {
+            has_local_bootstrap = 1;
+            break;
+        }
     }
-    MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
-                 config->bootstrap_count, config->network_type);
+    
+    if (has_local_bootstrap) {
+        MXD_LOG_INFO("config", "Local bootstrap nodes detected, skipping network API fetch");
+        MXD_LOG_INFO("config", "Using %d local bootstrap nodes for single-node operation", config->bootstrap_count);
+    } else {
+        if (mxd_fetch_bootstrap_nodes(config) != 0) {
+            MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from network API, terminating");
+            return -1;
+        }
+        MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
+                     config->bootstrap_count, config->network_type);
+    }
     
     return 0;
 }

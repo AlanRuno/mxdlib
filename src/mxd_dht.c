@@ -103,6 +103,12 @@ int mxd_init_node(const void* config) {
             char host[256];
             int port;
             if (sscanf(bootstrap_addr, "%255[^:]:%d", host, &port) == 2) {
+                int is_localhost = (strcmp(host, "127.0.0.1") == 0 || strcmp(host, "localhost") == 0);
+                if (is_localhost && port == (int)dht_port) {
+                    MXD_LOG_INFO("dht", "Skipping self-connection to %s:%d (local node port)", host, port);
+                    continue;
+                }
+                
                 MXD_LOG_INFO("dht", "Adding bootstrap node %s:%d to peer list", host, port);
                 
                 mxd_dht_node_t* peer = &peer_list[peer_count];
