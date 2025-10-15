@@ -19,6 +19,7 @@
 #include "mxd_logging.h"
 #include "mxd_secrets.h"
 #include "utils/mxd_http.h"
+#include "mxd_p2p.h"
 
 static mxd_node_metrics_t node_metrics = {
     .message_success = 0,
@@ -97,7 +98,7 @@ int mxd_init_node(const void* config) {
     // Connect to bootstrap nodes if specified
     peer_count = 0;
     for (int i = 0; i < cfg->bootstrap_count && peer_count < MXD_MAX_PEERS; i++) {
-        char* bootstrap_addr = cfg->bootstrap_nodes[i];
+        const char* bootstrap_addr = cfg->bootstrap_nodes[i];
         if (bootstrap_addr[0] != '\0') {
             // Extract host and port
             char host[256];
@@ -115,7 +116,7 @@ int mxd_init_node(const void* config) {
                 strncpy(peer->address, host, sizeof(peer->address) - 1);
                 peer->address[sizeof(peer->address) - 1] = '\0';
                 peer->port = port;
-                peer->active = 0;  // Bootstrap peers start inactive until connection is verified
+                peer->active = 1;
                 peer_count++;
                 
                 gettimeofday(&last_ping_time, NULL);
@@ -143,6 +144,18 @@ int mxd_start_dht(uint16_t port) {
     }
     
     dht_port = port;
+    
+    uint8_t dummy_pubkey[32] = {0};
+    if (mxd_init_p2p(port, dummy_pubkey) != 0) {
+        MXD_LOG_ERROR("dht", "Failed to initialize P2P on port %d", port);
+        return 1;
+    }
+    
+    if (mxd_start_p2p() != 0) {
+        MXD_LOG_ERROR("dht", "Failed to start P2P server on port %d", port);
+        return 1;
+    }
+    
     MXD_LOG_INFO("dht", "DHT service started on port %d for node %s", port, node_id);
     
     // Initialize metrics based on node type
@@ -186,6 +199,23 @@ int mxd_start_dht(uint16_t port) {
     node_metrics.performance_score = reliability;
     node_metrics.tip_share = 0.0;
     
+    if (!is_bootstrap && peer_count > 0) {
+        MXD_LOG_INFO("dht", "Requesting peer lists from %zu bootstrap nodes", peer_count);
+        for (size_t i = 0; i < peer_count; i++) {
+            if (peer_list[i].active) {
+                uint16_t my_port = dht_port;
+                if (mxd_send_message(peer_list[i].address, peer_list[i].port, 
+                                   MXD_MSG_GET_PEERS, &my_port, sizeof(uint16_t)) == 0) {
+                    MXD_LOG_INFO("dht", "Requested peers from bootstrap %s:%d (my port: %d)", 
+                               peer_list[i].address, peer_list[i].port, my_port);
+                } else {
+                    MXD_LOG_WARN("dht", "Failed to request peers from bootstrap %s:%d", 
+                               peer_list[i].address, peer_list[i].port);
+                }
+            }
+        }
+    }
+    
     return 0;
 }
 
@@ -193,6 +223,8 @@ int mxd_stop_dht(void) {
     if (!dht_initialized) {
         return 0;
     }
+    
+    mxd_stop_p2p();
     
     if (upnp_mapped) {
         mxd_dht_disable_nat_traversal();
@@ -568,37 +600,8 @@ uint64_t mxd_get_network_latency(void) {
                     last_discovery_time = current_time;
                 }
                 
-                if (current_time - last_discovery_time > 2000) {
-                    for (int port_candidate = 8000; port_candidate <= 8004 && peer_count < MXD_MAX_PEERS; port_candidate++) {
-                        if (port_candidate == dht_port) continue;
-                        
-                        int already_have = 0;
-                        for (size_t i = 0; i < peer_count; i++) {
-                            if (peer_list[i].port == port_candidate) {
-                                already_have = 1;
-                                break;
-                            }
-                        }
-                        
-                        if (!already_have) {
-                            mxd_dht_node_t* new_peer = &peer_list[peer_count];
-                            strncpy(new_peer->address, "127.0.0.1", sizeof(new_peer->address) - 1);
-                            new_peer->port = port_candidate;
-                            new_peer->active = 1;
-                            peer_count++;
-                            
-                            size_t active_count = 0;
-                            for (size_t i = 0; i < peer_count; i++) {
-                                if (peer_list[i].active) active_count++;
-                            }
-                            connected_peers = active_count;
-                            
-                            MXD_LOG_INFO("dht", "Discovered peer 127.0.0.1:%d via DHT (total peers: %zu, active: %zu)", 
-                                        port_candidate, peer_count, active_count);
-                            last_discovery_time = current_time;
-                            break;
-                        }
-                    }
+                if (current_time - last_discovery_time > 5000) {
+                    last_discovery_time = current_time;
                 }
             }
             
@@ -643,6 +646,47 @@ uint64_t mxd_get_network_latency(void) {
     return connected_peers > 0 ? (diff_ms > 3000 ? 3000 : diff_ms) : 3000;
 }
 
+int mxd_dht_add_peer(const char* address, uint16_t port) {
+    if (!dht_initialized || !address) {
+        return -1;
+    }
+    
+    if (port == dht_port && strcmp(address, "127.0.0.1") == 0) {
+        return 0;
+    }
+    
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peer_list[i].port == port && strcmp(peer_list[i].address, address) == 0) {
+            peer_list[i].active = 1;
+            MXD_LOG_DEBUG("dht", "Peer %s:%d already exists, marked active", address, port);
+            return 0;
+        }
+    }
+    
+    if (peer_count >= MXD_MAX_PEERS) {
+        MXD_LOG_WARN("dht", "Peer list full, cannot add %s:%d", address, port);
+        return -1;
+    }
+    
+    mxd_dht_node_t* new_peer = &peer_list[peer_count];
+    strncpy(new_peer->address, address, sizeof(new_peer->address) - 1);
+    new_peer->address[sizeof(new_peer->address) - 1] = '\0';
+    new_peer->port = port;
+    new_peer->active = 1;
+    peer_count++;
+    
+    size_t active_count = 0;
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peer_list[i].active) active_count++;
+    }
+    connected_peers = active_count;
+    
+    MXD_LOG_INFO("dht", "Added peer %s:%d (total peers: %zu, active: %zu)", 
+                address, port, peer_count, active_count);
+    
+    return 0;
+}
+
 int mxd_dht_get_peers(mxd_dht_node_t* nodes, size_t* count) {
     if (!dht_initialized || !nodes || !count) {
         MXD_LOG_DEBUG("dht", "mxd_dht_get_peers failed: dht_initialized=%d nodes=%p count=%p", 
@@ -653,7 +697,6 @@ int mxd_dht_get_peers(mxd_dht_node_t* nodes, size_t* count) {
     size_t max_count = *count;
     *count = 0;
     
-    // Only return active peers
     for (size_t i = 0; i < peer_count && *count < max_count; i++) {
         if (peer_list[i].active) {
             memcpy(&nodes[*count], &peer_list[i], sizeof(mxd_dht_node_t));
