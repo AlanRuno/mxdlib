@@ -16,6 +16,15 @@
 #include "mxd_logging.h"
 #include "mxd_secrets.h"
 
+static struct {
+    char address[256];
+    uint16_t port;
+    int active;
+} manual_peers[MXD_MAX_PEERS];
+static size_t manual_peer_count = 0;
+static pthread_mutex_t manual_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+
 static int p2p_initialized = 0;
 static uint16_t p2p_port = 0;
 static uint8_t node_public_key[32] = {0};
@@ -385,6 +394,10 @@ static void* server_thread_func(void* arg) {
 }
 
 int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
+    if (mxd_init_secrets(NULL) != 0) {
+        MXD_LOG_WARN("p2p", "Secrets initialization failed, using defaults");
+    }
+    
     if (p2p_initialized) {
         return 0;
     }
@@ -406,6 +419,9 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     
     memset(active_connections, 0, sizeof(active_connections));
     active_connection_count = 0;
+    
+    memset(manual_peers, 0, sizeof(manual_peers));
+    manual_peer_count = 0;
     
     p2p_initialized = 1;
     MXD_LOG_INFO("p2p", "P2P initialized on port %d", port);
@@ -475,6 +491,7 @@ int mxd_stop_p2p(void) {
     server_running = 0;
     
     if (server_socket >= 0) {
+        shutdown(server_socket, SHUT_RDWR);
         close(server_socket);
         server_socket = -1;
     }
@@ -497,10 +514,39 @@ int mxd_stop_p2p(void) {
 }
 
 int mxd_add_peer(const char* address, uint16_t port) {
-    if (!p2p_initialized) {
+    if (!p2p_initialized || !address) {
         return 1;
     }
-    MXD_LOG_INFO("p2p", "Added peer %s:%d", address, port);
+    
+    pthread_mutex_lock(&manual_peer_mutex);
+    
+    for (size_t i = 0; i < manual_peer_count; i++) {
+        if (manual_peers[i].port == port && 
+            strcmp(manual_peers[i].address, address) == 0) {
+            manual_peers[i].active = 1;
+            pthread_mutex_unlock(&manual_peer_mutex);
+            MXD_LOG_INFO("p2p", "Peer %s:%d already exists", address, port);
+            return 0;
+        }
+    }
+    
+    if (manual_peer_count >= MXD_MAX_PEERS) {
+        pthread_mutex_unlock(&manual_peer_mutex);
+        MXD_LOG_WARN("p2p", "Manual peer list full");
+        return 1;
+    }
+    
+    strncpy(manual_peers[manual_peer_count].address, address, sizeof(manual_peers[0].address) - 1);
+    manual_peers[manual_peer_count].address[sizeof(manual_peers[0].address) - 1] = '\0';
+    manual_peers[manual_peer_count].port = port;
+    manual_peers[manual_peer_count].active = 1;
+    manual_peer_count++;
+    
+    pthread_mutex_unlock(&manual_peer_mutex);
+    
+    mxd_dht_add_peer(address, port);
+    
+    MXD_LOG_INFO("p2p", "Added peer %s:%d (total manual peers: %zu)", address, port, manual_peer_count);
     return 0;
 }
 
@@ -653,11 +699,20 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
     mxd_dht_node_t peers[MXD_MAX_PEERS];
     size_t peer_count = MXD_MAX_PEERS;
     
-    if (mxd_dht_get_peers(peers, &peer_count) != 0) {
-        return -1;
-    }
+    mxd_dht_get_peers(peers, &peer_count);
     
     int success_count = 0;
+    
+    pthread_mutex_lock(&manual_peer_mutex);
+    for (size_t i = 0; i < manual_peer_count; i++) {
+        if (manual_peers[i].active) {
+            if (mxd_send_message(manual_peers[i].address, manual_peers[i].port, type, payload, payload_length) == 0) {
+                success_count++;
+            }
+        }
+    }
+    pthread_mutex_unlock(&manual_peer_mutex);
+    
     for (size_t i = 0; i < peer_count; i++) {
         if (peers[i].active) {
             if (mxd_send_message(peers[i].address, peers[i].port, type, payload, payload_length) == 0) {
@@ -666,7 +721,7 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
         }
     }
     
-    MXD_LOG_DEBUG("p2p", "Broadcast to %d/%zu peers", success_count, peer_count);
+    MXD_LOG_DEBUG("p2p", "Broadcast to %d peers", success_count);
     
     return success_count > 0 ? 0 : -1;
 }
