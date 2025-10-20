@@ -38,6 +38,7 @@ int mxd_dht_enable_nat_traversal(void);
 int mxd_dht_disable_nat_traversal(void);
 uint64_t mxd_get_network_latency(void);  // Get current network latency
 int mxd_dht_get_peers(mxd_dht_node_t* nodes, size_t* count);  // Get discovered peers
+int mxd_dht_add_peer(const char* address, uint16_t port);  // Add a peer to the DHT
 int mxd_register_bootstrap_node(const mxd_config_t* config);  // Register as bootstrap node
 
 // Test functions
