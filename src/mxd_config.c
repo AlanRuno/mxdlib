@@ -72,6 +72,7 @@ static void mxd_set_default_config(mxd_config_t* config) {
     strncpy(config->node_data, "", sizeof(config->node_data) - 1);
     
     config->enable_upnp = 1;
+    config->bootstrap_refresh_interval = 300;
 }
 
 int mxd_load_config(const char* config_file, mxd_config_t* config) {
@@ -254,8 +255,16 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
     cJSON_ArrayForEach(node, nodes) {
         if (!cJSON_IsObject(node)) continue;
         
+        cJSON* ip = cJSON_GetObjectItem(node, "ip");
         cJSON* hostname = cJSON_GetObjectItem(node, "hostname");
         cJSON* port = cJSON_GetObjectItem(node, "port");
+        
+        const char* address = NULL;
+        if (ip && cJSON_IsString(ip)) {
+            address = ip->valuestring;
+        } else if (hostname && cJSON_IsString(hostname)) {
+            address = hostname->valuestring;
+        }
         
         int port_num = 0;
         if (port) {
@@ -266,16 +275,16 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
             }
         }
         
-        if (hostname && cJSON_IsString(hostname) && port_num > 0) {
-            
+        if (address && port_num > 0) {
             snprintf(config->bootstrap_nodes[config->bootstrap_count],
                     sizeof(config->bootstrap_nodes[0]),
                     "%s:%d",
-                    hostname->valuestring,
+                    address,
                     port_num);
             
             config->bootstrap_count++;
-            if (config->bootstrap_count >= 10) break;  // Max nodes limit
+            MXD_LOG_INFO("config", "Added bootstrap node %s:%d", address, port_num);
+            if (config->bootstrap_count >= 10) break;
         }
     }
     
@@ -285,6 +294,19 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
         cJSON_Delete(root);
         mxd_http_free_response(response);
         return -1;
+    }
+    
+    cJSON* network_info = cJSON_GetObjectItem(root, "network_info");
+    if (network_info && cJSON_IsObject(network_info)) {
+        cJSON* update_interval = cJSON_GetObjectItem(network_info, "update_interval");
+        if (update_interval && cJSON_IsNumber(update_interval)) {
+            config->bootstrap_refresh_interval = update_interval->valueint;
+            MXD_LOG_INFO("config", "Bootstrap refresh interval: %d seconds", config->bootstrap_refresh_interval);
+        }
+    }
+    
+    if (config->bootstrap_refresh_interval == 0) {
+        config->bootstrap_refresh_interval = 300;
     }
     
     MXD_LOG_INFO("config", "Loaded %d bootstrap nodes from network", config->bootstrap_count);

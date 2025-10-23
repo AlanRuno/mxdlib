@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <time.h>
+#include <pthread.h>
 #include <miniupnpc/miniupnpc.h>
 #include <miniupnpc/upnpcommands.h>
 #include <ifaddrs.h>
@@ -33,6 +34,10 @@ static mxd_node_metrics_t node_metrics = {
     .tip_share = 0.0
 };
 
+static pthread_t bootstrap_refresh_thread;
+static int refresh_thread_running = 0;
+static pthread_mutex_t bootstrap_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static int dht_initialized = 0;
 static uint16_t dht_port = 0;
 static int nat_enabled = 0;
@@ -48,6 +53,9 @@ static mxd_dht_node_t peer_list[MXD_MAX_PEERS];
 static size_t peer_count = 0;
 static struct UPNPUrls upnp_urls;
 static struct IGDdatas upnp_data;
+static mxd_config_t* global_config = NULL;
+
+static void* bootstrap_refresh_thread_func(void* arg);
 static char upnp_mapped = 0;
 
 void mxd_generate_node_id(uint8_t* node_id) {
@@ -68,6 +76,7 @@ int mxd_init_node(const void* config) {
     }
     
     const mxd_config_t* cfg = (const mxd_config_t*)config;
+    global_config = (mxd_config_t*)config;
     MXD_LOG_INFO("dht", "Initializing DHT node %s (port %d)", cfg->node_id, cfg->port);
     
     // Initialize random seed
@@ -204,8 +213,8 @@ int mxd_start_dht(uint16_t port) {
         for (size_t i = 0; i < peer_count; i++) {
             if (peer_list[i].active) {
                 uint16_t my_port = dht_port;
-                if (mxd_send_message(peer_list[i].address, peer_list[i].port, 
-                                   MXD_MSG_GET_PEERS, &my_port, sizeof(uint16_t)) == 0) {
+                if (mxd_send_message_with_retry(peer_list[i].address, peer_list[i].port, 
+                                   MXD_MSG_GET_PEERS, &my_port, sizeof(uint16_t), 5) == 0) {
                     MXD_LOG_INFO("dht", "Requested peers from bootstrap %s:%d (my port: %d)", 
                                peer_list[i].address, peer_list[i].port, my_port);
                 } else {
@@ -214,14 +223,81 @@ int mxd_start_dht(uint16_t port) {
                 }
             }
         }
+        
+        const char* first_peer = peer_list[0].address;
+        int is_local = (strcmp(first_peer, "127.0.0.1") == 0 || strcmp(first_peer, "localhost") == 0);
+        
+        if (!is_local && !refresh_thread_running && global_config != NULL) {
+            refresh_thread_running = 1;
+            if (pthread_create(&bootstrap_refresh_thread, NULL, bootstrap_refresh_thread_func, (void*)global_config) != 0) {
+                MXD_LOG_ERROR("dht", "Failed to create bootstrap refresh thread");
+                refresh_thread_running = 0;
+            } else {
+                pthread_detach(bootstrap_refresh_thread);
+                MXD_LOG_INFO("dht", "Started bootstrap refresh thread");
+            }
+        }
     }
     
     return 0;
 }
 
+static void* bootstrap_refresh_thread_func(void* arg) {
+    mxd_config_t* config = (mxd_config_t*)arg;
+    
+    MXD_LOG_INFO("dht", "Bootstrap refresh thread started (interval: %d seconds)", 
+                config->bootstrap_refresh_interval);
+    
+    while (refresh_thread_running) {
+        for (int i = 0; i < config->bootstrap_refresh_interval && refresh_thread_running; i++) {
+            sleep(1);
+        }
+        
+        if (!refresh_thread_running) break;
+        
+        MXD_LOG_INFO("dht", "Refreshing bootstrap node list from network API");
+        
+        pthread_mutex_lock(&bootstrap_mutex);
+        int old_count = config->bootstrap_count;
+        int result = mxd_fetch_bootstrap_nodes(config);
+        pthread_mutex_unlock(&bootstrap_mutex);
+        
+        if (result == 0) {
+            MXD_LOG_INFO("dht", "Bootstrap refresh successful: %d nodes (was %d)", 
+                       config->bootstrap_count, old_count);
+            
+            pthread_mutex_lock(&bootstrap_mutex);
+            for (int i = 0; i < config->bootstrap_count && i < MXD_MAX_PEERS; i++) {
+                char host[256];
+                int port;
+                if (sscanf(config->bootstrap_nodes[i], "%255[^:]:%d", host, &port) == 2) {
+                    mxd_dht_add_peer(host, port);
+                }
+            }
+            
+            size_t active_peer_count = 0;
+            for (size_t j = 0; j < peer_count; j++) {
+                if (peer_list[j].active) active_peer_count++;
+            }
+            MXD_LOG_INFO("dht", "Active peer discovery: %zu/%zu peers active", active_peer_count, peer_count);
+            pthread_mutex_unlock(&bootstrap_mutex);
+        } else {
+            MXD_LOG_WARN("dht", "Bootstrap refresh failed, will retry at next interval");
+        }
+    }
+    
+    MXD_LOG_INFO("dht", "Bootstrap refresh thread stopped");
+    return NULL;
+}
+
 int mxd_stop_dht(void) {
     if (!dht_initialized) {
         return 0;
+    }
+    
+    if (refresh_thread_running) {
+        refresh_thread_running = 0;
+        MXD_LOG_INFO("dht", "Stopping bootstrap refresh thread...");
     }
     
     mxd_stop_p2p();

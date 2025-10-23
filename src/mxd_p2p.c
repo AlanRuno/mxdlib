@@ -585,6 +585,34 @@ int mxd_get_peers(mxd_peer_t* peers, size_t* peer_count) {
     return 0;
 }
 
+int mxd_send_message_with_retry(const char* address, uint16_t port, 
+                                       mxd_message_type_t type, const void* payload, 
+                                       size_t payload_length, int max_retries) {
+    int retry_delay_ms = 1000;
+    const int max_delay_ms = 60000;
+    
+    for (int attempt = 0; attempt < max_retries; attempt++) {
+        int result = mxd_send_message(address, port, type, payload, payload_length);
+        if (result == 0) {
+            if (attempt > 0) {
+                MXD_LOG_INFO("p2p", "Successfully connected to %s:%d after %d retries", 
+                           address, port, attempt);
+            }
+            return 0;
+        }
+        
+        if (attempt < max_retries - 1) {
+            MXD_LOG_WARN("p2p", "Connection attempt %d/%d to %s:%d failed, retrying in %d ms", 
+                       attempt + 1, max_retries, address, port, retry_delay_ms);
+            usleep(retry_delay_ms * 1000);
+            retry_delay_ms = (retry_delay_ms * 2 > max_delay_ms) ? max_delay_ms : retry_delay_ms * 2;
+        }
+    }
+    
+    MXD_LOG_ERROR("p2p", "Failed to connect to %s:%d after %d attempts", address, port, max_retries);
+    return -1;
+}
+
 int mxd_send_message(const char* address, uint16_t port, 
                     mxd_message_type_t type, const void* payload, 
                     size_t payload_length) {
@@ -617,7 +645,7 @@ int mxd_send_message(const char* address, uint16_t port,
     }
     
     if (connect(sock, (struct sockaddr*)&peer_addr, sizeof(peer_addr)) < 0) {
-        MXD_LOG_DEBUG("p2p", "Failed to connect to %s:%d: %s", address, port, strerror(errno));
+        MXD_LOG_WARN("p2p", "Failed to connect to %s:%d: %s", address, port, strerror(errno));
         close(sock);
         return -1;
     }
