@@ -89,6 +89,11 @@ int mxd_send_message(const char *address, uint16_t port,
                      mxd_message_type_t type, const void *payload,
                      size_t payload_length);
 
+// Send message to peer with retry logic
+int mxd_send_message_with_retry(const char *address, uint16_t port,
+                                mxd_message_type_t type, const void *payload,
+                                size_t payload_length, int max_retries);
+
 // Broadcast message to all peers
 int mxd_broadcast_message(mxd_message_type_t type, const void *payload,
                           size_t payload_length);
