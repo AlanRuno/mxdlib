@@ -192,26 +192,12 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     MXD_LOG_INFO("config", "Loaded config: node_id=%s, port=%d, metrics_port=%d, data_dir=%s, node_name=%s",
            config->node_id, config->port, config->metrics_port, config->data_dir, config->node_name);
     
-    int has_local_bootstrap = 0;
-    for (int i = 0; i < config->bootstrap_count; i++) {
-        if (strstr(config->bootstrap_nodes[i], "127.0.0.1") != NULL ||
-            strstr(config->bootstrap_nodes[i], "localhost") != NULL) {
-            has_local_bootstrap = 1;
-            break;
-        }
+    if (mxd_fetch_bootstrap_nodes(config) != 0) {
+        MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from network API, terminating");
+        return -1;
     }
-    
-    if (has_local_bootstrap) {
-        MXD_LOG_INFO("config", "Local bootstrap nodes detected, skipping network API fetch");
-        MXD_LOG_INFO("config", "Using %d local bootstrap nodes for single-node operation", config->bootstrap_count);
-    } else {
-        if (mxd_fetch_bootstrap_nodes(config) != 0) {
-            MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from network API, terminating");
-            return -1;
-        }
-        MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
-                     config->bootstrap_count, config->network_type);
-    }
+    MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
+                 config->bootstrap_count, config->network_type);
     
     return 0;
 }
