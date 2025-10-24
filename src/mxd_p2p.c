@@ -82,6 +82,8 @@ static void update_unified_peer_sent(const char *address, uint16_t port) {
     pthread_mutex_lock(&unified_peer_mutex);
     
     int found = 0;
+    int inactive_slot = -1;
+    
     for (size_t i = 0; i < unified_peer_count; i++) {
         if (strcmp(unified_peers[i].address, address) == 0 && unified_peers[i].port == port) {
             unified_peers[i].last_message_sent = time(NULL);
@@ -90,18 +92,28 @@ static void update_unified_peer_sent(const char *address, uint16_t port) {
             found = 1;
             break;
         }
+        if (!unified_peers[i].active && inactive_slot == -1) {
+            inactive_slot = i;
+        }
     }
     
-    if (!found && unified_peer_count < MXD_MAX_PEERS) {
-        strncpy(unified_peers[unified_peer_count].address, address, sizeof(unified_peers[0].address) - 1);
-        unified_peers[unified_peer_count].address[sizeof(unified_peers[0].address) - 1] = '\0';
-        unified_peers[unified_peer_count].port = port;
-        unified_peers[unified_peer_count].last_message_sent = time(NULL);
-        unified_peers[unified_peer_count].last_message_received = 0;
-        unified_peers[unified_peer_count].messages_sent = 1;
-        unified_peers[unified_peer_count].messages_received = 0;
-        unified_peers[unified_peer_count].active = 1;
-        unified_peer_count++;
+    if (!found) {
+        int slot = (inactive_slot >= 0) ? inactive_slot : unified_peer_count;
+        
+        if (slot < MXD_MAX_PEERS) {
+            strncpy(unified_peers[slot].address, address, sizeof(unified_peers[0].address) - 1);
+            unified_peers[slot].address[sizeof(unified_peers[0].address) - 1] = '\0';
+            unified_peers[slot].port = port;
+            unified_peers[slot].last_message_sent = time(NULL);
+            unified_peers[slot].last_message_received = 0;
+            unified_peers[slot].messages_sent = 1;
+            unified_peers[slot].messages_received = 0;
+            unified_peers[slot].active = 1;
+            
+            if (inactive_slot < 0) {
+                unified_peer_count++;
+            }
+        }
     }
     
     pthread_mutex_unlock(&unified_peer_mutex);
@@ -111,6 +123,8 @@ static void update_unified_peer_received(const char *address, uint16_t port) {
     pthread_mutex_lock(&unified_peer_mutex);
     
     int found = 0;
+    int inactive_slot = -1;
+    
     for (size_t i = 0; i < unified_peer_count; i++) {
         if (strcmp(unified_peers[i].address, address) == 0 && unified_peers[i].port == port) {
             unified_peers[i].last_message_received = time(NULL);
@@ -119,18 +133,28 @@ static void update_unified_peer_received(const char *address, uint16_t port) {
             found = 1;
             break;
         }
+        if (!unified_peers[i].active && inactive_slot == -1) {
+            inactive_slot = i;
+        }
     }
     
-    if (!found && unified_peer_count < MXD_MAX_PEERS) {
-        strncpy(unified_peers[unified_peer_count].address, address, sizeof(unified_peers[0].address) - 1);
-        unified_peers[unified_peer_count].address[sizeof(unified_peers[0].address) - 1] = '\0';
-        unified_peers[unified_peer_count].port = port;
-        unified_peers[unified_peer_count].last_message_sent = 0;
-        unified_peers[unified_peer_count].last_message_received = time(NULL);
-        unified_peers[unified_peer_count].messages_sent = 0;
-        unified_peers[unified_peer_count].messages_received = 1;
-        unified_peers[unified_peer_count].active = 1;
-        unified_peer_count++;
+    if (!found) {
+        int slot = (inactive_slot >= 0) ? inactive_slot : unified_peer_count;
+        
+        if (slot < MXD_MAX_PEERS) {
+            strncpy(unified_peers[slot].address, address, sizeof(unified_peers[0].address) - 1);
+            unified_peers[slot].address[sizeof(unified_peers[0].address) - 1] = '\0';
+            unified_peers[slot].port = port;
+            unified_peers[slot].last_message_sent = 0;
+            unified_peers[slot].last_message_received = time(NULL);
+            unified_peers[slot].messages_sent = 0;
+            unified_peers[slot].messages_received = 1;
+            unified_peers[slot].active = 1;
+            
+            if (inactive_slot < 0) {
+                unified_peer_count++;
+            }
+        }
     }
     
     pthread_mutex_unlock(&unified_peer_mutex);
@@ -411,6 +435,42 @@ static void* keepalive_thread_func(void* arg) {
         if (!keepalive_running) break;
         
         time_t now = time(NULL);
+        
+        pthread_mutex_lock(&unified_peer_mutex);
+        
+        for (size_t i = 0; i < unified_peer_count; i++) {
+            if (!unified_peers[i].active) continue;
+            
+            if (unified_peers[i].last_message_received > 0) {
+                time_t time_since_last_received = now - unified_peers[i].last_message_received;
+                
+                if (time_since_last_received > MXD_KEEPALIVE_TIMEOUT) {
+                    MXD_LOG_WARN("p2p", "Peer %s:%d timed out (no response for %ld seconds), marking inactive",
+                               unified_peers[i].address, unified_peers[i].port, 
+                               time_since_last_received);
+                    unified_peers[i].active = 0;
+                    continue;
+                }
+            }
+            
+            time_t time_since_last_sent = (unified_peers[i].last_message_sent > 0) ? 
+                                          (now - unified_peers[i].last_message_sent) : MXD_KEEPALIVE_INTERVAL;
+            
+            if (time_since_last_sent >= MXD_KEEPALIVE_INTERVAL) {
+                uint8_t ping_payload = 1;
+                if (mxd_send_message(unified_peers[i].address, unified_peers[i].port,
+                                   MXD_MSG_PING, &ping_payload, sizeof(ping_payload)) == 0) {
+                    MXD_LOG_DEBUG("p2p", "Sent keepalive PING to %s:%d", 
+                               unified_peers[i].address, unified_peers[i].port);
+                } else {
+                    MXD_LOG_DEBUG("p2p", "Failed to send keepalive to %s:%d",
+                               unified_peers[i].address, unified_peers[i].port);
+                }
+            }
+        }
+        
+        pthread_mutex_unlock(&unified_peer_mutex);
+        
         pthread_mutex_lock(&peer_mutex);
         
         for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
@@ -419,37 +479,11 @@ static void* keepalive_thread_func(void* arg) {
             time_t time_since_last_received = now - active_connections[i].last_keepalive_received;
             
             if (time_since_last_received > MXD_KEEPALIVE_TIMEOUT) {
-                MXD_LOG_WARN("p2p", "Peer %s:%d timed out (no response for %ld seconds), removing",
-                           active_connections[i].address, active_connections[i].port, 
-                           time_since_last_received);
+                MXD_LOG_WARN("p2p", "Incoming connection %s:%d timed out, closing socket",
+                           active_connections[i].address, active_connections[i].port);
                 close(active_connections[i].socket);
                 active_connections[i].active = 0;
                 active_connection_count--;
-                continue;
-            }
-            
-            time_t time_since_last_sent = now - active_connections[i].last_keepalive_sent;
-            if (time_since_last_sent >= MXD_KEEPALIVE_INTERVAL) {
-                uint8_t ping_payload = 1;
-                if (mxd_send_message(active_connections[i].address, active_connections[i].port,
-                                   MXD_MSG_PING, &ping_payload, sizeof(ping_payload)) == 0) {
-                    active_connections[i].last_keepalive_sent = now;
-                    MXD_LOG_DEBUG("p2p", "Sent keepalive PING to %s:%d", 
-                               active_connections[i].address, active_connections[i].port);
-                } else {
-                    active_connections[i].keepalive_failures++;
-                    MXD_LOG_WARN("p2p", "Failed to send keepalive to %s:%d (failures: %d)",
-                               active_connections[i].address, active_connections[i].port,
-                               active_connections[i].keepalive_failures);
-                    
-                    if (active_connections[i].keepalive_failures >= MXD_MAX_KEEPALIVE_FAILURES) {
-                        MXD_LOG_WARN("p2p", "Peer %s:%d exceeded max keepalive failures, removing",
-                                   active_connections[i].address, active_connections[i].port);
-                        close(active_connections[i].socket);
-                        active_connections[i].active = 0;
-                        active_connection_count--;
-                    }
-                }
             }
         }
         
