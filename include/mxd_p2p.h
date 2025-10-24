@@ -177,6 +177,9 @@ typedef struct {
 // Get detailed information about peer connections
 int mxd_get_peer_connections(mxd_peer_info_t* peer_info, size_t* count);
 
+// Get unified peer list (all peers we've communicated with)
+int mxd_get_unified_peers(mxd_peer_info_t* peer_info, size_t* count);
+
 #ifdef __cplusplus
 }
 #endif
