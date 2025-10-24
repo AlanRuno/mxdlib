@@ -1,5 +1,6 @@
 #include "../include/mxd_logging.h"
 #include "../include/mxd_config.h"
+#include "../include/mxd_p2p.h"
 #include <time.h>
 #include <string.h>
 #include <stdio.h>
@@ -59,6 +60,60 @@ void display_node_metrics(const mxd_node_metrics_t* metrics, const mxd_node_stak
     MXD_LOG_INFO("metrics_display", "Rank: %d", stake->rank);
     MXD_LOG_INFO("metrics_display", "Status: %s", is_active ? "✓ Active" : "✗ Inactive");
     MXD_LOG_INFO("metrics_display", "Connected Peers: %zu", metrics->peer_count);
+    MXD_LOG_INFO("metrics_display", "");
+    
+    int connection_count = mxd_get_connection_count();
+    int known_peer_count = mxd_get_known_peer_count();
+    
+    MXD_LOG_INFO("metrics_display", "━━━ Connection Debug Info ━━━");
+    MXD_LOG_INFO("metrics_display", "Active Connections: %d", connection_count);
+    MXD_LOG_INFO("metrics_display", "Known Peers (DHT): %d", known_peer_count);
+    
+    if (connection_count > 0) {
+        mxd_peer_info_t peer_info[10];
+        size_t peer_info_count = 10;
+        
+        if (mxd_get_peer_connections(peer_info, &peer_info_count) == 0 && peer_info_count > 0) {
+            MXD_LOG_INFO("metrics_display", "");
+            MXD_LOG_INFO("metrics_display", "━━━ Connected Peers Detail ━━━");
+            MXD_LOG_INFO("metrics_display", "┌────────────────────┬──────┬──────────┬─────────┬─────────┐");
+            MXD_LOG_INFO("metrics_display", "│ Address            │ Port │ Uptime   │ Last RX │ Failures│");
+            MXD_LOG_INFO("metrics_display", "├────────────────────┼──────┼──────────┼─────────┼─────────┤");
+            
+            time_t now = time(NULL);
+            for (size_t i = 0; i < peer_info_count && i < 10; i++) {
+                time_t uptime = now - peer_info[i].connected_at;
+                time_t last_rx = now - peer_info[i].last_keepalive_received;
+                
+                char addr_short[21];
+                snprintf(addr_short, sizeof(addr_short), "%.20s", peer_info[i].address);
+                
+                char uptime_str[11];
+                if (uptime < 60) {
+                    snprintf(uptime_str, sizeof(uptime_str), "%lds", uptime);
+                } else if (uptime < 3600) {
+                    snprintf(uptime_str, sizeof(uptime_str), "%ldm", uptime / 60);
+                } else {
+                    snprintf(uptime_str, sizeof(uptime_str), "%ldh%ldm", uptime / 3600, (uptime % 3600) / 60);
+                }
+                
+                char last_rx_str[10];
+                if (last_rx < 60) {
+                    snprintf(last_rx_str, sizeof(last_rx_str), "%lds", last_rx);
+                } else if (last_rx < 3600) {
+                    snprintf(last_rx_str, sizeof(last_rx_str), "%ldm", last_rx / 60);
+                } else {
+                    snprintf(last_rx_str, sizeof(last_rx_str), "%ldh", last_rx / 3600);
+                }
+                
+                MXD_LOG_INFO("metrics_display", "│%-20s│%6d│%10s│%9s│%9d│",
+                           addr_short, peer_info[i].port, uptime_str, last_rx_str, 
+                           peer_info[i].keepalive_failures);
+            }
+            
+            MXD_LOG_INFO("metrics_display", "└────────────────────┴──────┴──────────┴─────────┴─────────┘");
+        }
+    }
     MXD_LOG_INFO("metrics_display", "");
     
     MXD_LOG_INFO("metrics_display", "━━━ Performance Metrics ━━━");

@@ -158,6 +158,25 @@ int mxd_enable_nat_traversal(void);
 // Disable NAT traversal
 int mxd_disable_nat_traversal(void);
 
+// Get number of active connections
+int mxd_get_connection_count(void);
+
+// Get number of known peers from DHT
+int mxd_get_known_peer_count(void);
+
+// Peer connection information
+typedef struct {
+    char address[256];
+    uint16_t port;
+    uint64_t connected_at;
+    uint64_t last_keepalive_sent;
+    uint64_t last_keepalive_received;
+    int keepalive_failures;
+} mxd_peer_info_t;
+
+// Get detailed information about peer connections
+int mxd_get_peer_connections(mxd_peer_info_t* peer_info, size_t* count);
+
 #ifdef __cplusplus
 }
 #endif

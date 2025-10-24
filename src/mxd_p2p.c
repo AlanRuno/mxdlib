@@ -48,11 +48,21 @@ typedef struct {
     char address[256];
     uint16_t port;
     time_t connected_at;
+    time_t last_keepalive_sent;
+    time_t last_keepalive_received;
     int active;
+    int keepalive_failures;
 } peer_connection_t;
 
 static peer_connection_t active_connections[MXD_MAX_PEERS];
 static size_t active_connection_count = 0;
+
+#define MXD_KEEPALIVE_INTERVAL 30  // Send keepalive every 30 seconds
+#define MXD_KEEPALIVE_TIMEOUT 90   // Remove peer after 90 seconds without response
+#define MXD_MAX_KEEPALIVE_FAILURES 3
+
+static pthread_t keepalive_thread;
+static volatile int keepalive_running = 0;
 
 // Reset rate limiting state
 static void reset_rate_limit(void) {
@@ -242,6 +252,41 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
     }
 }
 
+static void handle_ping_message(const char *address, uint16_t port) {
+    MXD_LOG_DEBUG("p2p", "Received PING from %s:%d, sending PONG", address, port);
+    
+    pthread_mutex_lock(&peer_mutex);
+    for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
+        if (active_connections[i].active && 
+            strcmp(active_connections[i].address, address) == 0 &&
+            active_connections[i].port == port) {
+            active_connections[i].last_keepalive_received = time(NULL);
+            active_connections[i].keepalive_failures = 0;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&peer_mutex);
+    
+    uint8_t pong_payload = 1;
+    mxd_send_message(address, port, MXD_MSG_PONG, &pong_payload, sizeof(pong_payload));
+}
+
+static void handle_pong_message(const char *address, uint16_t port) {
+    MXD_LOG_DEBUG("p2p", "Received PONG from %s:%d", address, port);
+    
+    pthread_mutex_lock(&peer_mutex);
+    for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
+        if (active_connections[i].active && 
+            strcmp(active_connections[i].address, address) == 0 &&
+            active_connections[i].port == port) {
+            active_connections[i].last_keepalive_received = time(NULL);
+            active_connections[i].keepalive_failures = 0;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&peer_mutex);
+}
+
 static int handle_incoming_message(const char *address, uint16_t port, 
                                  const mxd_message_header_t *header, 
                                  const void *payload) {
@@ -260,6 +305,12 @@ static int handle_incoming_message(const char *address, uint16_t port,
     consecutive_errors = 0;
 
     switch (header->type) {
+        case MXD_MSG_PING:
+            handle_ping_message(address, port);
+            break;
+        case MXD_MSG_PONG:
+            handle_pong_message(address, port);
+            break;
         case MXD_MSG_GET_PEERS:
             handle_get_peers_message(address, port, payload, header->length);
             break;
@@ -274,6 +325,66 @@ static int handle_incoming_message(const char *address, uint16_t port,
     }
 
     return 0;
+}
+
+static void* keepalive_thread_func(void* arg) {
+    (void)arg;
+    
+    MXD_LOG_INFO("p2p", "Keepalive thread started");
+    
+    while (keepalive_running) {
+        sleep(MXD_KEEPALIVE_INTERVAL);
+        
+        if (!keepalive_running) break;
+        
+        time_t now = time(NULL);
+        pthread_mutex_lock(&peer_mutex);
+        
+        for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
+            if (!active_connections[i].active) continue;
+            
+            time_t time_since_last_received = now - active_connections[i].last_keepalive_received;
+            
+            if (time_since_last_received > MXD_KEEPALIVE_TIMEOUT) {
+                MXD_LOG_WARN("p2p", "Peer %s:%d timed out (no response for %ld seconds), removing",
+                           active_connections[i].address, active_connections[i].port, 
+                           time_since_last_received);
+                close(active_connections[i].socket);
+                active_connections[i].active = 0;
+                active_connection_count--;
+                continue;
+            }
+            
+            time_t time_since_last_sent = now - active_connections[i].last_keepalive_sent;
+            if (time_since_last_sent >= MXD_KEEPALIVE_INTERVAL) {
+                uint8_t ping_payload = 1;
+                if (mxd_send_message(active_connections[i].address, active_connections[i].port,
+                                   MXD_MSG_PING, &ping_payload, sizeof(ping_payload)) == 0) {
+                    active_connections[i].last_keepalive_sent = now;
+                    MXD_LOG_DEBUG("p2p", "Sent keepalive PING to %s:%d", 
+                               active_connections[i].address, active_connections[i].port);
+                } else {
+                    active_connections[i].keepalive_failures++;
+                    MXD_LOG_WARN("p2p", "Failed to send keepalive to %s:%d (failures: %d)",
+                               active_connections[i].address, active_connections[i].port,
+                               active_connections[i].keepalive_failures);
+                    
+                    if (active_connections[i].keepalive_failures >= MXD_MAX_KEEPALIVE_FAILURES) {
+                        MXD_LOG_WARN("p2p", "Peer %s:%d exceeded max keepalive failures, removing",
+                                   active_connections[i].address, active_connections[i].port);
+                        close(active_connections[i].socket);
+                        active_connections[i].active = 0;
+                        active_connection_count--;
+                    }
+                }
+            }
+        }
+        
+        pthread_mutex_unlock(&peer_mutex);
+    }
+    
+    MXD_LOG_INFO("p2p", "Keepalive thread stopped");
+    return NULL;
 }
 
 static void* connection_handler(void* arg) {
@@ -370,10 +481,14 @@ static void* server_thread_func(void* arg) {
         char *client_ip = inet_ntoa(client_addr.sin_addr);
         uint16_t client_port = ntohs(client_addr.sin_port);
         
+        time_t now = time(NULL);
         active_connections[slot].socket = client_socket;
         strncpy(active_connections[slot].address, client_ip, sizeof(active_connections[slot].address) - 1);
         active_connections[slot].port = client_port;
-        active_connections[slot].connected_at = time(NULL);
+        active_connections[slot].connected_at = now;
+        active_connections[slot].last_keepalive_sent = now;
+        active_connections[slot].last_keepalive_received = now;
+        active_connections[slot].keepalive_failures = 0;
         active_connections[slot].active = 1;
         
         if (pthread_create(&connection_threads[slot], NULL, connection_handler, &active_connections[slot]) != 0) {
@@ -479,6 +594,15 @@ int mxd_start_p2p(void) {
         return 1;
     }
     
+    keepalive_running = 1;
+    if (pthread_create(&keepalive_thread, NULL, keepalive_thread_func, NULL) != 0) {
+        MXD_LOG_ERROR("p2p", "Failed to create keepalive thread: %s", strerror(errno));
+        keepalive_running = 0;
+    } else {
+        pthread_detach(keepalive_thread);
+        MXD_LOG_INFO("p2p", "Keepalive thread started");
+    }
+    
     MXD_LOG_INFO("p2p", "P2P server started on port %d", p2p_port);
     return 0;
 }
@@ -488,6 +612,7 @@ int mxd_stop_p2p(void) {
         return 0;
     }
     
+    keepalive_running = 0;
     server_running = 0;
     
     if (server_socket >= 0) {
@@ -778,5 +903,62 @@ int mxd_start_peer_discovery(void) {
 int mxd_stop_peer_discovery(void) {
     mxd_stop_dht();
     MXD_LOG_INFO("p2p", "Peer discovery stopped");
+    return 0;
+}
+
+int mxd_get_connection_count(void) {
+    if (!p2p_initialized) {
+        return 0;
+    }
+    
+    pthread_mutex_lock(&peer_mutex);
+    size_t count = active_connection_count;
+    pthread_mutex_unlock(&peer_mutex);
+    
+    return (int)count;
+}
+
+int mxd_get_known_peer_count(void) {
+    size_t dht_count = MXD_MAX_PEERS;
+    mxd_dht_node_t dht_nodes[MXD_MAX_PEERS];
+    
+    if (mxd_dht_get_peers(dht_nodes, &dht_count) != 0) {
+        return 0;
+    }
+    
+    size_t active_count = 0;
+    for (size_t i = 0; i < dht_count; i++) {
+        if (dht_nodes[i].active) {
+            active_count++;
+        }
+    }
+    
+    return (int)active_count;
+}
+
+int mxd_get_peer_connections(mxd_peer_info_t* peer_info, size_t* count) {
+    if (!peer_info || !count || !p2p_initialized) {
+        return -1;
+    }
+    
+    size_t max_count = *count;
+    *count = 0;
+    
+    pthread_mutex_lock(&peer_mutex);
+    for (size_t i = 0; i < MXD_MAX_PEERS && *count < max_count; i++) {
+        if (active_connections[i].active) {
+            strncpy(peer_info[*count].address, active_connections[i].address, 
+                   sizeof(peer_info[*count].address) - 1);
+            peer_info[*count].address[sizeof(peer_info[*count].address) - 1] = '\0';
+            peer_info[*count].port = active_connections[i].port;
+            peer_info[*count].connected_at = active_connections[i].connected_at;
+            peer_info[*count].last_keepalive_sent = active_connections[i].last_keepalive_sent;
+            peer_info[*count].last_keepalive_received = active_connections[i].last_keepalive_received;
+            peer_info[*count].keepalive_failures = active_connections[i].keepalive_failures;
+            (*count)++;
+        }
+    }
+    pthread_mutex_unlock(&peer_mutex);
+    
     return 0;
 }
