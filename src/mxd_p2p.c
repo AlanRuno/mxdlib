@@ -57,21 +57,92 @@ typedef struct {
 static peer_connection_t active_connections[MXD_MAX_PEERS];
 static size_t active_connection_count = 0;
 
-#define MXD_KEEPALIVE_INTERVAL 30  // Send keepalive every 30 seconds
-#define MXD_KEEPALIVE_TIMEOUT 90   // Remove peer after 90 seconds without response
+typedef struct {
+    char address[256];
+    uint16_t port;
+    time_t last_message_sent;
+    time_t last_message_received;
+    uint32_t messages_sent;
+    uint32_t messages_received;
+    int active;
+} unified_peer_t;
+
+static unified_peer_t unified_peers[MXD_MAX_PEERS];
+static size_t unified_peer_count = 0;
+static pthread_mutex_t unified_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+#define MXD_KEEPALIVE_INTERVAL 30
+#define MXD_KEEPALIVE_TIMEOUT 90
 #define MXD_MAX_KEEPALIVE_FAILURES 3
 
 static pthread_t keepalive_thread;
 static volatile int keepalive_running = 0;
 
-// Reset rate limiting state
+static void update_unified_peer_sent(const char *address, uint16_t port) {
+    pthread_mutex_lock(&unified_peer_mutex);
+    
+    int found = 0;
+    for (size_t i = 0; i < unified_peer_count; i++) {
+        if (strcmp(unified_peers[i].address, address) == 0 && unified_peers[i].port == port) {
+            unified_peers[i].last_message_sent = time(NULL);
+            unified_peers[i].messages_sent++;
+            unified_peers[i].active = 1;
+            found = 1;
+            break;
+        }
+    }
+    
+    if (!found && unified_peer_count < MXD_MAX_PEERS) {
+        strncpy(unified_peers[unified_peer_count].address, address, sizeof(unified_peers[0].address) - 1);
+        unified_peers[unified_peer_count].address[sizeof(unified_peers[0].address) - 1] = '\0';
+        unified_peers[unified_peer_count].port = port;
+        unified_peers[unified_peer_count].last_message_sent = time(NULL);
+        unified_peers[unified_peer_count].last_message_received = 0;
+        unified_peers[unified_peer_count].messages_sent = 1;
+        unified_peers[unified_peer_count].messages_received = 0;
+        unified_peers[unified_peer_count].active = 1;
+        unified_peer_count++;
+    }
+    
+    pthread_mutex_unlock(&unified_peer_mutex);
+}
+
+static void update_unified_peer_received(const char *address, uint16_t port) {
+    pthread_mutex_lock(&unified_peer_mutex);
+    
+    int found = 0;
+    for (size_t i = 0; i < unified_peer_count; i++) {
+        if (strcmp(unified_peers[i].address, address) == 0 && unified_peers[i].port == port) {
+            unified_peers[i].last_message_received = time(NULL);
+            unified_peers[i].messages_received++;
+            unified_peers[i].active = 1;
+            found = 1;
+            break;
+        }
+    }
+    
+    if (!found && unified_peer_count < MXD_MAX_PEERS) {
+        strncpy(unified_peers[unified_peer_count].address, address, sizeof(unified_peers[0].address) - 1);
+        unified_peers[unified_peer_count].address[sizeof(unified_peers[0].address) - 1] = '\0';
+        unified_peers[unified_peer_count].port = port;
+        unified_peers[unified_peer_count].last_message_sent = 0;
+        unified_peers[unified_peer_count].last_message_received = time(NULL);
+        unified_peers[unified_peer_count].messages_sent = 0;
+        unified_peers[unified_peer_count].messages_received = 1;
+        unified_peers[unified_peer_count].active = 1;
+        unified_peer_count++;
+    }
+    
+    pthread_mutex_unlock(&unified_peer_mutex);
+}
+
 static void reset_rate_limit(void) {
     last_message_time = 0;
     messages_this_second = 0;
     last_tx_time = 0;
     tx_this_second = 0;
     consecutive_errors = 0;
-    error_simulation_count = 0;  // Reset error simulation counter
+    error_simulation_count = 0;
 }
 
 // Public function to reset rate limiting
@@ -303,6 +374,8 @@ static int handle_incoming_message(const char *address, uint16_t port,
     }
 
     consecutive_errors = 0;
+    
+    update_unified_peer_received(address, port);
 
     switch (header->type) {
         case MXD_MSG_PING:
@@ -828,6 +901,9 @@ int mxd_send_message(const char* address, uint16_t port,
     }
     
     close(sock);
+    
+    update_unified_peer_sent(address, port);
+    
     return 0;
 }
 
@@ -976,6 +1052,33 @@ int mxd_get_peer_connections(mxd_peer_info_t* peer_info, size_t* count) {
         }
     }
     pthread_mutex_unlock(&peer_mutex);
+    
+    return 0;
+}
+
+int mxd_get_unified_peers(mxd_peer_info_t* peer_info, size_t* count) {
+    if (!peer_info || !count) {
+        return -1;
+    }
+    
+    size_t max_count = *count;
+    *count = 0;
+    
+    pthread_mutex_lock(&unified_peer_mutex);
+    for (size_t i = 0; i < unified_peer_count && *count < max_count; i++) {
+        if (unified_peers[i].active) {
+            strncpy(peer_info[*count].address, unified_peers[i].address, 
+                   sizeof(peer_info[*count].address) - 1);
+            peer_info[*count].address[sizeof(peer_info[*count].address) - 1] = '\0';
+            peer_info[*count].port = unified_peers[i].port;
+            peer_info[*count].connected_at = 0;
+            peer_info[*count].last_keepalive_sent = unified_peers[i].last_message_sent;
+            peer_info[*count].last_keepalive_received = unified_peers[i].last_message_received;
+            peer_info[*count].keepalive_failures = 0;
+            (*count)++;
+        }
+    }
+    pthread_mutex_unlock(&unified_peer_mutex);
     
     return 0;
 }
