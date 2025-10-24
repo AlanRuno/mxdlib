@@ -463,6 +463,26 @@ static void* server_thread_func(void* arg) {
         
         pthread_mutex_lock(&peer_mutex);
         
+        char *client_ip = inet_ntoa(client_addr.sin_addr);
+        uint16_t client_port = ntohs(client_addr.sin_port);
+        
+        int duplicate_found = 0;
+        for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
+            if (active_connections[i].active &&
+                strcmp(active_connections[i].address, client_ip) == 0 &&
+                active_connections[i].port == client_port) {
+                duplicate_found = 1;
+                break;
+            }
+        }
+        
+        if (duplicate_found) {
+            MXD_LOG_INFO("p2p", "Duplicate connection from %s:%d rejected", client_ip, client_port);
+            close(client_socket);
+            pthread_mutex_unlock(&peer_mutex);
+            continue;
+        }
+        
         int slot = -1;
         for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
             if (!active_connections[i].active) {
@@ -477,9 +497,6 @@ static void* server_thread_func(void* arg) {
             pthread_mutex_unlock(&peer_mutex);
             continue;
         }
-        
-        char *client_ip = inet_ntoa(client_addr.sin_addr);
-        uint16_t client_port = ntohs(client_addr.sin_port);
         
         time_t now = time(NULL);
         active_connections[slot].socket = client_socket;
