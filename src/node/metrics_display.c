@@ -62,56 +62,63 @@ void display_node_metrics(const mxd_node_metrics_t* metrics, const mxd_node_stak
     MXD_LOG_INFO("metrics_display", "Connected Peers: %zu", metrics->peer_count);
     MXD_LOG_INFO("metrics_display", "");
     
-    int connection_count = mxd_get_connection_count();
-    int known_peer_count = mxd_get_known_peer_count();
+    mxd_peer_info_t peer_info[50];
+    size_t peer_info_count = 50;
     
-    MXD_LOG_INFO("metrics_display", "━━━ Connection Debug Info ━━━");
-    MXD_LOG_INFO("metrics_display", "Active Connections: %d", connection_count);
-    MXD_LOG_INFO("metrics_display", "Known Peers (DHT): %d", known_peer_count);
-    
-    if (connection_count > 0) {
-        mxd_peer_info_t peer_info[10];
-        size_t peer_info_count = 10;
+    if (mxd_get_unified_peers(peer_info, &peer_info_count) == 0) {
+        MXD_LOG_INFO("metrics_display", "━━━ Peer Communication Status ━━━");
+        MXD_LOG_INFO("metrics_display", "Total Active Peers: %zu", peer_info_count);
         
-        if (mxd_get_peer_connections(peer_info, &peer_info_count) == 0 && peer_info_count > 0) {
+        if (peer_info_count > 0) {
             MXD_LOG_INFO("metrics_display", "");
-            MXD_LOG_INFO("metrics_display", "━━━ Connected Peers Detail ━━━");
-            MXD_LOG_INFO("metrics_display", "┌────────────────────┬──────┬──────────┬─────────┬─────────┐");
-            MXD_LOG_INFO("metrics_display", "│ Address            │ Port │ Uptime   │ Last RX │ Failures│");
-            MXD_LOG_INFO("metrics_display", "├────────────────────┼──────┼──────────┼─────────┼─────────┤");
+            MXD_LOG_INFO("metrics_display", "┌────────────────────┬──────┬──────────┬──────────┐");
+            MXD_LOG_INFO("metrics_display", "│ Address            │ Port │ Last TX  │ Last RX  │");
+            MXD_LOG_INFO("metrics_display", "├────────────────────┼──────┼──────────┼──────────┤");
             
             time_t now = time(NULL);
-            for (size_t i = 0; i < peer_info_count && i < 10; i++) {
-                time_t uptime = now - peer_info[i].connected_at;
-                time_t last_rx = now - peer_info[i].last_keepalive_received;
-                
+            size_t display_count = peer_info_count > 20 ? 20 : peer_info_count;
+            
+            for (size_t i = 0; i < display_count; i++) {
                 char addr_short[21];
                 snprintf(addr_short, sizeof(addr_short), "%.20s", peer_info[i].address);
                 
-                char uptime_str[11];
-                if (uptime < 60) {
-                    snprintf(uptime_str, sizeof(uptime_str), "%lds", uptime);
-                } else if (uptime < 3600) {
-                    snprintf(uptime_str, sizeof(uptime_str), "%ldm", uptime / 60);
+                char last_tx_str[11];
+                if (peer_info[i].last_keepalive_sent > 0) {
+                    time_t last_tx = now - peer_info[i].last_keepalive_sent;
+                    if (last_tx < 60) {
+                        snprintf(last_tx_str, sizeof(last_tx_str), "%lds ago", last_tx);
+                    } else if (last_tx < 3600) {
+                        snprintf(last_tx_str, sizeof(last_tx_str), "%ldm ago", last_tx / 60);
+                    } else {
+                        snprintf(last_tx_str, sizeof(last_tx_str), "%ldh ago", last_tx / 3600);
+                    }
                 } else {
-                    snprintf(uptime_str, sizeof(uptime_str), "%ldh%ldm", uptime / 3600, (uptime % 3600) / 60);
+                    snprintf(last_tx_str, sizeof(last_tx_str), "never");
                 }
                 
-                char last_rx_str[10];
-                if (last_rx < 60) {
-                    snprintf(last_rx_str, sizeof(last_rx_str), "%lds", last_rx);
-                } else if (last_rx < 3600) {
-                    snprintf(last_rx_str, sizeof(last_rx_str), "%ldm", last_rx / 60);
+                char last_rx_str[11];
+                if (peer_info[i].last_keepalive_received > 0) {
+                    time_t last_rx = now - peer_info[i].last_keepalive_received;
+                    if (last_rx < 60) {
+                        snprintf(last_rx_str, sizeof(last_rx_str), "%lds ago", last_rx);
+                    } else if (last_rx < 3600) {
+                        snprintf(last_rx_str, sizeof(last_rx_str), "%ldm ago", last_rx / 60);
+                    } else {
+                        snprintf(last_rx_str, sizeof(last_rx_str), "%ldh ago", last_rx / 3600);
+                    }
                 } else {
-                    snprintf(last_rx_str, sizeof(last_rx_str), "%ldh", last_rx / 3600);
+                    snprintf(last_rx_str, sizeof(last_rx_str), "never");
                 }
                 
-                MXD_LOG_INFO("metrics_display", "│%-20s│%6d│%10s│%9s│%9d│",
-                           addr_short, peer_info[i].port, uptime_str, last_rx_str, 
-                           peer_info[i].keepalive_failures);
+                MXD_LOG_INFO("metrics_display", "│%-20s│%6d│%10s│%10s│",
+                           addr_short, peer_info[i].port, last_tx_str, last_rx_str);
             }
             
-            MXD_LOG_INFO("metrics_display", "└────────────────────┴──────┴──────────┴─────────┴─────────┘");
+            MXD_LOG_INFO("metrics_display", "└────────────────────┴──────┴──────────┴──────────┘");
+            
+            if (peer_info_count > 20) {
+                MXD_LOG_INFO("metrics_display", "... and %zu more peers", peer_info_count - 20);
+            }
         }
     }
     MXD_LOG_INFO("metrics_display", "");
