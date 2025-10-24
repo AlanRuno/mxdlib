@@ -104,12 +104,10 @@ int mxd_init_node(const void* config) {
     node_metrics.performance_score = reliability;
     node_metrics.last_update = time(NULL);
     
-    // Connect to bootstrap nodes if specified
     peer_count = 0;
-    for (int i = 0; i < cfg->bootstrap_count && peer_count < MXD_MAX_PEERS; i++) {
+    for (int i = 0; i < cfg->bootstrap_count; i++) {
         const char* bootstrap_addr = cfg->bootstrap_nodes[i];
         if (bootstrap_addr[0] != '\0') {
-            // Extract host and port
             char host[256];
             int port;
             if (sscanf(bootstrap_addr, "%255[^:]:%d", host, &port) == 2) {
@@ -120,16 +118,7 @@ int mxd_init_node(const void* config) {
                 }
                 
                 MXD_LOG_INFO("dht", "Adding bootstrap node %s:%d to peer list", host, port);
-                
-                mxd_dht_node_t* peer = &peer_list[peer_count];
-                strncpy(peer->address, host, sizeof(peer->address) - 1);
-                peer->address[sizeof(peer->address) - 1] = '\0';
-                peer->port = port;
-                peer->active = 1;
-                peer_count++;
-                
-                gettimeofday(&last_ping_time, NULL);
-                MXD_LOG_INFO("dht", "Added bootstrap peer %s:%d to peer list (total: %zu)", host, port, peer_count);
+                mxd_dht_add_peer(host, port);
             }
         }
     }
