@@ -1095,6 +1095,11 @@ int mxd_get_unified_peers(mxd_peer_info_t* peer_info, size_t* count) {
         return -1;
     }
     
+    if (!p2p_initialized) {
+        *count = 0;
+        return 0;
+    }
+    
     size_t max_count = *count;
     *count = 0;
     
