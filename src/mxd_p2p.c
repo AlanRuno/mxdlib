@@ -148,6 +148,96 @@ static void wire_to_header(const mxd_wire_header_t *wire, mxd_message_header_t *
     memcpy(header->checksum, wire->checksum, 64);
 }
 
+typedef struct {
+    uint32_t magic;
+    uint32_t type;
+    uint32_t length;
+    uint8_t checksum[64];
+} __attribute__((packed)) mxd_legacy_header_t;
+
+static int try_parse_v1_header(const uint8_t *buffer, mxd_message_header_t *header, uint32_t expected_magic) {
+    mxd_wire_header_t *wire = (mxd_wire_header_t*)buffer;
+    
+    uint32_t magic = ntohl(wire->magic);
+    uint8_t type = wire->type;
+    uint32_t length = ntohl(wire->length);
+    
+    if (magic != expected_magic) {
+        return -1;
+    }
+    
+    if (type > MXD_MSG_RAPID_TABLE_UPDATE) {
+        return -1;
+    }
+    
+    if (length > MXD_MAX_MESSAGE_SIZE || length == 0) {
+        return -1;
+    }
+    
+    if (wire->reserved[0] != 0 || wire->reserved[1] != 0 || wire->reserved[2] != 0) {
+        return -1;
+    }
+    
+    header->magic = magic;
+    header->type = (mxd_message_type_t)type;
+    header->length = length;
+    memcpy(header->checksum, wire->checksum, 64);
+    
+    return 0;
+}
+
+static int try_parse_legacy_header(const uint8_t *buffer, mxd_message_header_t *header, uint32_t expected_magic) {
+    mxd_legacy_header_t *legacy = (mxd_legacy_header_t*)buffer;
+    
+    if (legacy->magic != expected_magic) {
+        return -1;
+    }
+    
+    if (legacy->type > MXD_MSG_RAPID_TABLE_UPDATE) {
+        return -1;
+    }
+    
+    if (legacy->length > MXD_MAX_MESSAGE_SIZE || legacy->length == 0) {
+        return -1;
+    }
+    
+    header->magic = legacy->magic;
+    header->type = (mxd_message_type_t)legacy->type;
+    header->length = legacy->length;
+    memcpy(header->checksum, legacy->checksum, 64);
+    
+    return 0;
+}
+
+static int parse_header_dual(const uint8_t *buffer, mxd_message_header_t *header, uint32_t expected_magic, int *is_legacy) {
+    if (try_parse_v1_header(buffer, header, expected_magic) == 0) {
+        *is_legacy = 0;
+        return 0;
+    }
+    
+    if (try_parse_legacy_header(buffer, header, expected_magic) == 0) {
+        *is_legacy = 1;
+        return 0;
+    }
+    
+    return -1;
+}
+
+static int use_legacy_wire_format(void) {
+    const char *env = getenv("MXD_P2P_WIRE_FORMAT");
+    if (env && strcmp(env, "v1") == 0) {
+        return 0;
+    }
+    return 1;
+}
+
+static void header_to_legacy(const mxd_message_header_t *header, mxd_legacy_header_t *legacy) {
+    legacy->magic = header->magic;
+    legacy->type = (uint32_t)header->type;
+    legacy->length = header->length;
+    memcpy(legacy->checksum, header->checksum, 64);
+}
+
 static void update_unified_peer_sent(const char *address, uint16_t port) {
     pthread_mutex_lock(&unified_peer_mutex);
     
@@ -571,16 +661,13 @@ static void* connection_handler(void* arg) {
     MXD_LOG_INFO("p2p", "Connection handler started for %s:%d", conn->address, conn->port);
     
     while (conn->active && server_running) {
-        mxd_wire_header_t wire_header;
+        uint8_t header_buffer[76];
         
-        if (read_n(conn->socket, &wire_header, sizeof(wire_header)) != 0) {
+        if (read_n(conn->socket, header_buffer, sizeof(header_buffer)) != 0) {
             MXD_LOG_INFO("p2p", "Peer %s:%d disconnected or error reading header", 
                        conn->address, conn->port);
             break;
         }
-        
-        mxd_message_header_t header;
-        wire_to_header(&wire_header, &header);
         
         const mxd_secrets_t *secrets = mxd_get_secrets();
         if (!secrets) {
@@ -588,27 +675,17 @@ static void* connection_handler(void* arg) {
             break;
         }
         
-        if (header.magic != secrets->network_magic) {
-            MXD_LOG_WARN("p2p", "Invalid network magic from %s:%d: received=0x%08X expected=0x%08X", 
-                       conn->address, conn->port, header.magic, secrets->network_magic);
+        mxd_message_header_t header;
+        int is_legacy = 0;
+        
+        if (parse_header_dual(header_buffer, &header, secrets->network_magic, &is_legacy) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to parse header from %s:%d (tried both v1 and legacy formats)", 
+                       conn->address, conn->port);
             break;
         }
         
-        if (header.type > MXD_MSG_RAPID_TABLE_UPDATE) {
-            MXD_LOG_WARN("p2p", "Invalid message type from %s:%d: type=%u", 
-                       conn->address, conn->port, header.type);
-            break;
-        }
-        
-        if (header.length > MXD_MAX_MESSAGE_SIZE) {
-            MXD_LOG_WARN("p2p", "Message too large from %s:%d: %u bytes (max %d)", 
-                       conn->address, conn->port, header.length, MXD_MAX_MESSAGE_SIZE);
-            break;
-        }
-        
-        if (header.length == 0) {
-            MXD_LOG_WARN("p2p", "Empty message from %s:%d", conn->address, conn->port);
-            break;
+        if (is_legacy) {
+            MXD_LOG_DEBUG("p2p", "Accepted legacy header from %s:%d", conn->address, conn->port);
         }
         
         uint8_t *payload = malloc(header.length);
@@ -687,6 +764,11 @@ static void* server_thread_func(void* arg) {
             pthread_mutex_unlock(&peer_mutex);
             continue;
         }
+        
+        struct timeval timeout;
+        timeout.tv_sec = 10;
+        timeout.tv_usec = 0;
+        setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         
         time_t now = time(NULL);
         active_connections[slot].socket = client_socket;
@@ -1009,13 +1091,24 @@ int mxd_send_message(const char* address, uint16_t port,
         return -1;
     }
     
-    mxd_wire_header_t wire_header;
-    header_to_wire(&header, &wire_header);
-    
-    if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
-        MXD_LOG_WARN("p2p", "Failed to send header to %s:%d", address, port);
-        close(sock);
-        return -1;
+    if (use_legacy_wire_format()) {
+        mxd_legacy_header_t legacy_header;
+        header_to_legacy(&header, &legacy_header);
+        
+        if (write_n(sock, &legacy_header, sizeof(legacy_header)) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to send legacy header to %s:%d", address, port);
+            close(sock);
+            return -1;
+        }
+    } else {
+        mxd_wire_header_t wire_header;
+        header_to_wire(&header, &wire_header);
+        
+        if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to send v1 header to %s:%d", address, port);
+            close(sock);
+            return -1;
+        }
     }
     
     if (write_n(sock, payload, payload_length) != 0) {
