@@ -78,6 +78,76 @@ static pthread_mutex_t unified_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t keepalive_thread;
 static volatile int keepalive_running = 0;
 
+typedef struct {
+    uint32_t magic;      // Network byte order
+    uint8_t type;        // Fixed size instead of enum
+    uint8_t reserved[3]; // Padding for alignment
+    uint32_t length;     // Network byte order
+    uint8_t checksum[64]; // SHA-512 checksum
+} __attribute__((packed)) mxd_wire_header_t;
+
+static int read_n(int sock, void *buffer, size_t n) {
+    size_t total_read = 0;
+    uint8_t *buf = (uint8_t*)buffer;
+    
+    while (total_read < n) {
+        ssize_t bytes_read = recv(sock, buf + total_read, n - total_read, 0);
+        if (bytes_read <= 0) {
+            if (bytes_read == 0) {
+                return -1; // Connection closed
+            }
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                return -1; // Error
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        total_read += bytes_read;
+    }
+    
+    return 0;
+}
+
+static int write_n(int sock, const void *buffer, size_t n) {
+    size_t total_written = 0;
+    const uint8_t *buf = (const uint8_t*)buffer;
+    
+    while (total_written < n) {
+        ssize_t bytes_written = send(sock, buf + total_written, n - total_written, 0);
+        if (bytes_written <= 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+                return -1; // Error
+            }
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        total_written += bytes_written;
+    }
+    
+    return 0;
+}
+
+static void header_to_wire(const mxd_message_header_t *header, mxd_wire_header_t *wire) {
+    wire->magic = htonl(header->magic);
+    wire->type = (uint8_t)header->type;
+    wire->reserved[0] = 0;
+    wire->reserved[1] = 0;
+    wire->reserved[2] = 0;
+    wire->length = htonl(header->length);
+    memcpy(wire->checksum, header->checksum, 64);
+}
+
+static void wire_to_header(const mxd_wire_header_t *wire, mxd_message_header_t *header) {
+    header->magic = ntohl(wire->magic);
+    header->type = (mxd_message_type_t)wire->type;
+    header->length = ntohl(wire->length);
+    memcpy(header->checksum, wire->checksum, 64);
+}
+
 static void update_unified_peer_sent(const char *address, uint16_t port) {
     pthread_mutex_lock(&unified_peer_mutex);
     
@@ -192,13 +262,14 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
     }
     uint32_t expected_magic = secrets->network_magic;
     if (header->magic != expected_magic) {
-        MXD_LOG_WARN("p2p", "Invalid network magic received");
+        MXD_LOG_WARN("p2p", "Invalid network magic: received=0x%08X expected=0x%08X type=%u length=%u", 
+                   header->magic, expected_magic, header->type, header->length);
         return -1;
     }
 
     // Check message size
     if (header->length > MXD_MAX_MESSAGE_SIZE) {
-        MXD_LOG_WARN("p2p", "Message size %zu exceeds maximum %d", header->length, MXD_MAX_MESSAGE_SIZE);
+        MXD_LOG_WARN("p2p", "Message size %u exceeds maximum %d", header->length, MXD_MAX_MESSAGE_SIZE);
         return -1;
     }
     
@@ -500,22 +571,43 @@ static void* connection_handler(void* arg) {
     MXD_LOG_INFO("p2p", "Connection handler started for %s:%d", conn->address, conn->port);
     
     while (conn->active && server_running) {
-        mxd_message_header_t header;
-        ssize_t bytes_read = recv(conn->socket, &header, sizeof(header), 0);
+        mxd_wire_header_t wire_header;
         
-        if (bytes_read != sizeof(header)) {
-            if (bytes_read == 0) {
-                MXD_LOG_INFO("p2p", "Peer %s:%d disconnected", conn->address, conn->port);
-            } else if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                MXD_LOG_WARN("p2p", "Error reading header from %s:%d: %s", 
-                           conn->address, conn->port, strerror(errno));
-            }
+        if (read_n(conn->socket, &wire_header, sizeof(wire_header)) != 0) {
+            MXD_LOG_INFO("p2p", "Peer %s:%d disconnected or error reading header", 
+                       conn->address, conn->port);
+            break;
+        }
+        
+        mxd_message_header_t header;
+        wire_to_header(&wire_header, &header);
+        
+        const mxd_secrets_t *secrets = mxd_get_secrets();
+        if (!secrets) {
+            MXD_LOG_ERROR("p2p", "Secrets not initialized");
+            break;
+        }
+        
+        if (header.magic != secrets->network_magic) {
+            MXD_LOG_WARN("p2p", "Invalid network magic from %s:%d: received=0x%08X expected=0x%08X", 
+                       conn->address, conn->port, header.magic, secrets->network_magic);
+            break;
+        }
+        
+        if (header.type > MXD_MSG_RAPID_TABLE_UPDATE) {
+            MXD_LOG_WARN("p2p", "Invalid message type from %s:%d: type=%u", 
+                       conn->address, conn->port, header.type);
             break;
         }
         
         if (header.length > MXD_MAX_MESSAGE_SIZE) {
-            MXD_LOG_WARN("p2p", "Message too large from %s:%d: %u bytes", 
-                       conn->address, conn->port, header.length);
+            MXD_LOG_WARN("p2p", "Message too large from %s:%d: %u bytes (max %d)", 
+                       conn->address, conn->port, header.length, MXD_MAX_MESSAGE_SIZE);
+            break;
+        }
+        
+        if (header.length == 0) {
+            MXD_LOG_WARN("p2p", "Empty message from %s:%d", conn->address, conn->port);
             break;
         }
         
@@ -525,22 +617,13 @@ static void* connection_handler(void* arg) {
             break;
         }
         
-        size_t total_read = 0;
-        while (total_read < header.length) {
-            bytes_read = recv(conn->socket, payload + total_read, header.length - total_read, 0);
-            if (bytes_read <= 0) {
-                if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                    MXD_LOG_WARN("p2p", "Error reading payload from %s:%d", conn->address, conn->port);
-                }
-                break;
-            }
-            total_read += bytes_read;
+        if (read_n(conn->socket, payload, header.length) != 0) {
+            MXD_LOG_WARN("p2p", "Error reading payload from %s:%d", conn->address, conn->port);
+            free(payload);
+            break;
         }
         
-        if (total_read == header.length) {
-            handle_incoming_message(conn->address, conn->port, &header, payload);
-        }
-        
+        handle_incoming_message(conn->address, conn->port, &header, payload);
         free(payload);
     }
     
@@ -639,6 +722,15 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     
     if (p2p_initialized) {
         return 0;
+    }
+    
+    const mxd_secrets_t *secrets = mxd_get_secrets();
+    if (secrets) {
+        MXD_LOG_INFO("p2p", "Wire format: sizeof(mxd_wire_header_t)=%zu, sizeof(mxd_message_header_t)=%zu, sizeof(mxd_message_type_t)=%zu",
+                   sizeof(mxd_wire_header_t), sizeof(mxd_message_header_t), sizeof(mxd_message_type_t));
+        MXD_LOG_INFO("p2p", "Network magic: 0x%08X", secrets->network_magic);
+    } else {
+        MXD_LOG_ERROR("p2p", "Failed to get secrets during initialization");
     }
     
     reset_rate_limit();
@@ -917,21 +1009,19 @@ int mxd_send_message(const char* address, uint16_t port,
         return -1;
     }
     
-    if (send(sock, &header, sizeof(header), 0) != sizeof(header)) {
+    mxd_wire_header_t wire_header;
+    header_to_wire(&header, &wire_header);
+    
+    if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
         MXD_LOG_WARN("p2p", "Failed to send header to %s:%d", address, port);
         close(sock);
         return -1;
     }
     
-    size_t total_sent = 0;
-    while (total_sent < payload_length) {
-        ssize_t sent = send(sock, (uint8_t*)payload + total_sent, payload_length - total_sent, 0);
-        if (sent <= 0) {
-            MXD_LOG_WARN("p2p", "Failed to send payload to %s:%d", address, port);
-            close(sock);
-            return -1;
-        }
-        total_sent += sent;
+    if (write_n(sock, payload, payload_length) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to send payload to %s:%d", address, port);
+        close(sock);
+        return -1;
     }
     
     close(sock);
