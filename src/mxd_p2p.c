@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <signal.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -123,8 +124,14 @@ static int write_n(int sock, const void *buffer, size_t n) {
     size_t total_written = 0;
     const uint8_t *buf = (const uint8_t*)buffer;
     
+#ifdef MSG_NOSIGNAL
+    int flags = MSG_NOSIGNAL;
+#else
+    int flags = 0;
+#endif
+    
     while (total_written < n) {
-        ssize_t bytes_written = send(sock, buf + total_written, n - total_written, 0);
+        ssize_t bytes_written = send(sock, buf + total_written, n - total_written, flags);
         if (bytes_written <= 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                 return -1; // Error
@@ -821,26 +828,45 @@ static void* keepalive_thread_func(void* arg) {
     
     MXD_LOG_INFO("p2p", "Keepalive thread started");
     
+    typedef struct {
+        char address[256];
+        uint16_t port;
+        int timed_out;
+        time_t time_since_last_received;
+        int needs_ping;
+        int ping_success;
+    } peer_action_t;
+    
+    peer_action_t peer_actions[MXD_MAX_PEERS];
+    
     while (keepalive_running) {
         sleep(MXD_KEEPALIVE_INTERVAL);
         
         if (!keepalive_running) break;
         
         time_t now = time(NULL);
+        size_t action_count = 0;
         
         pthread_mutex_lock(&unified_peer_mutex);
         
-        for (size_t i = 0; i < unified_peer_count; i++) {
+        for (size_t i = 0; i < unified_peer_count && action_count < MXD_MAX_PEERS; i++) {
             if (!unified_peers[i].active) continue;
+            
+            peer_actions[action_count].timed_out = 0;
+            peer_actions[action_count].needs_ping = 0;
+            peer_actions[action_count].ping_success = 0;
+            strncpy(peer_actions[action_count].address, unified_peers[i].address, sizeof(peer_actions[action_count].address) - 1);
+            peer_actions[action_count].address[sizeof(peer_actions[action_count].address) - 1] = '\0';
+            peer_actions[action_count].port = unified_peers[i].port;
             
             if (unified_peers[i].last_message_received > 0) {
                 time_t time_since_last_received = now - unified_peers[i].last_message_received;
                 
                 if (time_since_last_received > MXD_KEEPALIVE_TIMEOUT) {
-                    MXD_LOG_WARN("p2p", "Peer %s:%d timed out (no response for %ld seconds), marking inactive",
-                               unified_peers[i].address, unified_peers[i].port, 
-                               time_since_last_received);
+                    peer_actions[action_count].timed_out = 1;
+                    peer_actions[action_count].time_since_last_received = time_since_last_received;
                     unified_peers[i].active = 0;
+                    action_count++;
                     continue;
                 }
             }
@@ -849,19 +875,30 @@ static void* keepalive_thread_func(void* arg) {
                                           (now - unified_peers[i].last_message_sent) : MXD_KEEPALIVE_INTERVAL;
             
             if (time_since_last_sent >= MXD_KEEPALIVE_INTERVAL) {
-                uint8_t ping_payload = 1;
-                if (mxd_send_message(unified_peers[i].address, unified_peers[i].port,
-                                   MXD_MSG_PING, &ping_payload, sizeof(ping_payload)) == 0) {
-                    MXD_LOG_DEBUG("p2p", "Sent keepalive PING to %s:%d", 
-                               unified_peers[i].address, unified_peers[i].port);
-                } else {
-                    MXD_LOG_DEBUG("p2p", "Failed to send keepalive to %s:%d",
-                               unified_peers[i].address, unified_peers[i].port);
-                }
+                peer_actions[action_count].needs_ping = 1;
+                action_count++;
             }
         }
         
         pthread_mutex_unlock(&unified_peer_mutex);
+        
+        for (size_t i = 0; i < action_count; i++) {
+            if (peer_actions[i].timed_out) {
+                MXD_LOG_WARN("p2p", "Peer %s:%d timed out (no response for %ld seconds), marking inactive",
+                           peer_actions[i].address, peer_actions[i].port, 
+                           peer_actions[i].time_since_last_received);
+            } else if (peer_actions[i].needs_ping && !peer_actions[i].timed_out) {
+                uint8_t ping_payload = 1;
+                if (mxd_send_message(peer_actions[i].address, peer_actions[i].port,
+                                   MXD_MSG_PING, &ping_payload, sizeof(ping_payload)) == 0) {
+                    MXD_LOG_DEBUG("p2p", "Sent keepalive PING to %s:%d", 
+                               peer_actions[i].address, peer_actions[i].port);
+                } else {
+                    MXD_LOG_DEBUG("p2p", "Failed to send keepalive to %s:%d",
+                               peer_actions[i].address, peer_actions[i].port);
+                }
+            }
+        }
         
         pthread_mutex_lock(&peer_mutex);
         
@@ -1117,6 +1154,8 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
         return 0;
     }
     
+    signal(SIGPIPE, SIG_IGN);
+    
     const mxd_secrets_t *secrets = mxd_get_secrets();
     if (secrets) {
         MXD_LOG_INFO("p2p", "Wire format: sizeof(mxd_wire_header_t)=%zu, sizeof(mxd_message_header_t)=%zu, sizeof(mxd_message_type_t)=%zu",
@@ -1360,6 +1399,11 @@ int mxd_send_message(const char* address, uint16_t port,
         MXD_LOG_WARN("p2p", "Failed to create socket for sending: %s", strerror(errno));
         return -1;
     }
+    
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    int set = 1;
+    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &set, sizeof(set));
+#endif
     
     struct timeval timeout;
     timeout.tv_sec = 5;

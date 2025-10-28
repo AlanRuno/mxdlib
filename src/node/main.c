@@ -48,15 +48,20 @@ void* metrics_collector(void* arg) {
     uint64_t last_success_time = time(NULL);
     
     while (keep_running) {
-        pthread_mutex_lock(&metrics_mutex);
-        
-        // Update metrics
         uint64_t current_time = time(NULL);
         uint64_t response_time = mxd_get_network_latency();
         
         // Update peer count
         size_t peer_count = MXD_MAX_PEERS;
         mxd_peer_t peers[MXD_MAX_PEERS];
+        
+        int should_warn_errors = 0;
+        int should_warn_tps = 0;
+        double tps_value = 0.0;
+        uint64_t error_count_snapshot = 0;
+        
+        pthread_mutex_lock(&metrics_mutex);
+        
         if (mxd_get_peers(peers, &peer_count) == 0) {
             node_metrics.peer_count = peer_count;
         }
@@ -71,7 +76,8 @@ void* metrics_collector(void* arg) {
         } else {
             consecutive_errors++;
             if (consecutive_errors > 10) {  // Performance requirement: max 10 consecutive errors
-                MXD_LOG_WARN("node", "High consecutive error count: %lu", consecutive_errors);
+                should_warn_errors = 1;
+                error_count_snapshot = consecutive_errors;
             }
             // Record failed message
             mxd_record_message_result(&node_metrics, 0);
@@ -87,11 +93,20 @@ void* metrics_collector(void* arg) {
         if (time_diff > 0) {
             double tps = node_metrics.message_success / time_diff;
             if (tps < 10.0) {  // Performance requirement: ≥10 TPS
-                MXD_LOG_WARN("node", "Low TPS: %.2f", tps);
+                should_warn_tps = 1;
+                tps_value = tps;
             }
         }
         
         pthread_mutex_unlock(&metrics_mutex);
+        
+        if (should_warn_errors) {
+            MXD_LOG_WARN("node", "High consecutive error count: %lu", error_count_snapshot);
+        }
+        if (should_warn_tps) {
+            MXD_LOG_WARN("node", "Low TPS: %.2f", tps_value);
+        }
+        
         usleep(current_config.metrics_interval * 1000);  // Convert ms to μs
     }
     return NULL;
@@ -264,21 +279,23 @@ int main(int argc, char** argv) {
     
     // Main display loop
     while (keep_running) {
+        mxd_node_metrics_t local_metrics;
+        mxd_node_stake_t local_stake;
+        uint32_t blockchain_height = 0;
+        uint8_t latest_block_hash[64] = {0};
+        int has_block = 0;
+        
+        mxd_node_stake_t *snapshot_nodes[100];
+        mxd_node_stake_t snapshot_storage[100];
+        size_t snapshot_count = 0;
+        
         pthread_mutex_lock(&metrics_mutex);
         
-        node_stake.metrics = node_metrics;
-        node_stake.active = mxd_validate_performance(&node_metrics);
-        node_stake.rank = (int)(node_metrics.performance_score * 100);
-        
-        uint32_t blockchain_height = 0;
-        mxd_get_blockchain_height(&blockchain_height);
-        
-        uint8_t latest_block_hash[64] = {0};
-        mxd_block_t latest_block;
-        if (blockchain_height > 0 && mxd_retrieve_block_by_height(blockchain_height, &latest_block) == 0) {
-            memcpy(latest_block_hash, latest_block.block_hash, 64);
-            mxd_free_validation_chain(&latest_block);
-        }
+        local_metrics = node_metrics;
+        local_stake = node_stake;
+        local_stake.metrics = local_metrics;
+        local_stake.active = mxd_validate_performance(&local_metrics);
+        local_stake.rank = (int)(local_metrics.performance_score * 100);
         
         if (rapid_table.count == 0 || rapid_table.count < 10) {
             int found = 0;
@@ -294,9 +311,36 @@ int main(int argc, char** argv) {
             }
         }
         
-        display_node_metrics(&node_metrics, &node_stake, &current_config, &rapid_table,
-                           blockchain_height, blockchain_height > 0 ? latest_block_hash : NULL);
+        snapshot_count = rapid_table.count < 100 ? rapid_table.count : 100;
+        for (size_t i = 0; i < snapshot_count; i++) {
+            if (rapid_table.nodes[i]) {
+                snapshot_storage[i] = *rapid_table.nodes[i];
+                snapshot_nodes[i] = &snapshot_storage[i];
+            } else {
+                snapshot_nodes[i] = NULL;
+            }
+        }
+        
         pthread_mutex_unlock(&metrics_mutex);
+        
+        mxd_get_blockchain_height(&blockchain_height);
+        
+        mxd_block_t latest_block;
+        if (blockchain_height > 0 && mxd_retrieve_block_by_height(blockchain_height, &latest_block) == 0) {
+            memcpy(latest_block_hash, latest_block.block_hash, 64);
+            mxd_free_validation_chain(&latest_block);
+            has_block = 1;
+        }
+        
+        mxd_rapid_table_t snapshot_table = {
+            .nodes = snapshot_nodes,
+            .count = snapshot_count,
+            .capacity = 100,
+            .last_update = 0
+        };
+        
+        display_node_metrics(&local_metrics, &local_stake, &current_config, &snapshot_table,
+                           blockchain_height, has_block ? latest_block_hash : NULL);
         sleep(1);
     }
     
