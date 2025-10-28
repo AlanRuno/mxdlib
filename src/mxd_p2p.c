@@ -821,26 +821,45 @@ static void* keepalive_thread_func(void* arg) {
     
     MXD_LOG_INFO("p2p", "Keepalive thread started");
     
+    typedef struct {
+        char address[256];
+        uint16_t port;
+        int timed_out;
+        time_t time_since_last_received;
+        int needs_ping;
+        int ping_success;
+    } peer_action_t;
+    
+    peer_action_t peer_actions[MXD_MAX_PEERS];
+    
     while (keepalive_running) {
         sleep(MXD_KEEPALIVE_INTERVAL);
         
         if (!keepalive_running) break;
         
         time_t now = time(NULL);
+        size_t action_count = 0;
         
         pthread_mutex_lock(&unified_peer_mutex);
         
-        for (size_t i = 0; i < unified_peer_count; i++) {
+        for (size_t i = 0; i < unified_peer_count && action_count < MXD_MAX_PEERS; i++) {
             if (!unified_peers[i].active) continue;
+            
+            peer_actions[action_count].timed_out = 0;
+            peer_actions[action_count].needs_ping = 0;
+            peer_actions[action_count].ping_success = 0;
+            strncpy(peer_actions[action_count].address, unified_peers[i].address, sizeof(peer_actions[action_count].address) - 1);
+            peer_actions[action_count].address[sizeof(peer_actions[action_count].address) - 1] = '\0';
+            peer_actions[action_count].port = unified_peers[i].port;
             
             if (unified_peers[i].last_message_received > 0) {
                 time_t time_since_last_received = now - unified_peers[i].last_message_received;
                 
                 if (time_since_last_received > MXD_KEEPALIVE_TIMEOUT) {
-                    MXD_LOG_WARN("p2p", "Peer %s:%d timed out (no response for %ld seconds), marking inactive",
-                               unified_peers[i].address, unified_peers[i].port, 
-                               time_since_last_received);
+                    peer_actions[action_count].timed_out = 1;
+                    peer_actions[action_count].time_since_last_received = time_since_last_received;
                     unified_peers[i].active = 0;
+                    action_count++;
                     continue;
                 }
             }
@@ -849,19 +868,30 @@ static void* keepalive_thread_func(void* arg) {
                                           (now - unified_peers[i].last_message_sent) : MXD_KEEPALIVE_INTERVAL;
             
             if (time_since_last_sent >= MXD_KEEPALIVE_INTERVAL) {
-                uint8_t ping_payload = 1;
-                if (mxd_send_message(unified_peers[i].address, unified_peers[i].port,
-                                   MXD_MSG_PING, &ping_payload, sizeof(ping_payload)) == 0) {
-                    MXD_LOG_DEBUG("p2p", "Sent keepalive PING to %s:%d", 
-                               unified_peers[i].address, unified_peers[i].port);
-                } else {
-                    MXD_LOG_DEBUG("p2p", "Failed to send keepalive to %s:%d",
-                               unified_peers[i].address, unified_peers[i].port);
-                }
+                peer_actions[action_count].needs_ping = 1;
+                action_count++;
             }
         }
         
         pthread_mutex_unlock(&unified_peer_mutex);
+        
+        for (size_t i = 0; i < action_count; i++) {
+            if (peer_actions[i].timed_out) {
+                MXD_LOG_WARN("p2p", "Peer %s:%d timed out (no response for %ld seconds), marking inactive",
+                           peer_actions[i].address, peer_actions[i].port, 
+                           peer_actions[i].time_since_last_received);
+            } else if (peer_actions[i].needs_ping) {
+                uint8_t ping_payload = 1;
+                if (mxd_send_message(peer_actions[i].address, peer_actions[i].port,
+                                   MXD_MSG_PING, &ping_payload, sizeof(ping_payload)) == 0) {
+                    MXD_LOG_DEBUG("p2p", "Sent keepalive PING to %s:%d", 
+                               peer_actions[i].address, peer_actions[i].port);
+                } else {
+                    MXD_LOG_DEBUG("p2p", "Failed to send keepalive to %s:%d",
+                               peer_actions[i].address, peer_actions[i].port);
+                }
+            }
+        }
         
         pthread_mutex_lock(&peer_mutex);
         

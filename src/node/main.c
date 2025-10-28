@@ -264,21 +264,22 @@ int main(int argc, char** argv) {
     
     // Main display loop
     while (keep_running) {
+        mxd_node_metrics_t local_metrics;
+        mxd_node_stake_t local_stake;
+        mxd_rapid_table_t local_rapid_table;
+        uint32_t blockchain_height = 0;
+        uint8_t latest_block_hash[64] = {0};
+        int has_block = 0;
+        
         pthread_mutex_lock(&metrics_mutex);
         
-        node_stake.metrics = node_metrics;
-        node_stake.active = mxd_validate_performance(&node_metrics);
-        node_stake.rank = (int)(node_metrics.performance_score * 100);
+        local_metrics = node_metrics;
+        local_stake = node_stake;
+        local_stake.metrics = local_metrics;
+        local_stake.active = mxd_validate_performance(&local_metrics);
+        local_stake.rank = (int)(local_metrics.performance_score * 100);
         
-        uint32_t blockchain_height = 0;
-        mxd_get_blockchain_height(&blockchain_height);
-        
-        uint8_t latest_block_hash[64] = {0};
-        mxd_block_t latest_block;
-        if (blockchain_height > 0 && mxd_retrieve_block_by_height(blockchain_height, &latest_block) == 0) {
-            memcpy(latest_block_hash, latest_block.block_hash, 64);
-            mxd_free_validation_chain(&latest_block);
-        }
+        local_rapid_table = rapid_table;
         
         if (rapid_table.count == 0 || rapid_table.count < 10) {
             int found = 0;
@@ -294,9 +295,19 @@ int main(int argc, char** argv) {
             }
         }
         
-        display_node_metrics(&node_metrics, &node_stake, &current_config, &rapid_table,
-                           blockchain_height, blockchain_height > 0 ? latest_block_hash : NULL);
         pthread_mutex_unlock(&metrics_mutex);
+        
+        mxd_get_blockchain_height(&blockchain_height);
+        
+        mxd_block_t latest_block;
+        if (blockchain_height > 0 && mxd_retrieve_block_by_height(blockchain_height, &latest_block) == 0) {
+            memcpy(latest_block_hash, latest_block.block_hash, 64);
+            mxd_free_validation_chain(&latest_block);
+            has_block = 1;
+        }
+        
+        display_node_metrics(&local_metrics, &local_stake, &current_config, &local_rapid_table,
+                           blockchain_height, has_block ? latest_block_hash : NULL);
         sleep(1);
     }
     
