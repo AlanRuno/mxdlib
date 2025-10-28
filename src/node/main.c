@@ -33,6 +33,16 @@ void handle_signal(int signum) {
     mxd_stop_metrics_server();
 }
 
+void* upnp_nat_thread(void* arg) {
+    MXD_LOG_INFO("node", "Starting UPnP NAT traversal in background thread...");
+    if (mxd_dht_enable_nat_traversal() == 0) {
+        MXD_LOG_INFO("node", "UPnP NAT traversal enabled successfully");
+    } else {
+        MXD_LOG_INFO("node", "UPnP NAT traversal failed, node may not accept incoming connections through NAT");
+    }
+    return NULL;
+}
+
 void* metrics_collector(void* arg) {
     uint64_t consecutive_errors = 0;
     uint64_t last_success_time = time(NULL);
@@ -216,10 +226,23 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    if (current_config.enable_upnp && mxd_dht_enable_nat_traversal() == 0) {
-        MXD_LOG_INFO("node", "UPnP NAT traversal enabled");
-    } else if (current_config.enable_upnp) {
-        MXD_LOG_INFO("node", "UPnP not available, node may not accept incoming connections through NAT");
+    // Start metrics collector thread BEFORE UPnP to ensure display loop runs
+    pthread_t collector_thread;
+    if (pthread_create(&collector_thread, NULL, metrics_collector, NULL) != 0) {
+        MXD_LOG_ERROR("node", "Failed to start metrics collector");
+        mxd_stop_dht();
+        return 1;
+    }
+    MXD_LOG_INFO("node", "Metrics collector thread started");
+    
+    if (current_config.enable_upnp) {
+        pthread_t nat_thread;
+        if (pthread_create(&nat_thread, NULL, upnp_nat_thread, NULL) == 0) {
+            pthread_detach(nat_thread);
+            MXD_LOG_INFO("node", "UPnP NAT traversal thread started in background");
+        } else {
+            MXD_LOG_WARN("node", "Failed to start UPnP NAT traversal thread");
+        }
     } else {
         MXD_LOG_INFO("node", "UPnP disabled in configuration");
     }
@@ -237,15 +260,7 @@ int main(int argc, char** argv) {
         }
     }
     
-    // Start metrics collector thread
-    pthread_t collector_thread;
-    if (pthread_create(&collector_thread, NULL, metrics_collector, NULL) != 0) {
-        MXD_LOG_ERROR("node", "Failed to start metrics collector");
-        mxd_stop_dht();
-        return 1;
-    }
-    
-    MXD_LOG_INFO("node", "Node started successfully");
+    MXD_LOG_INFO("node", "Node started successfully, entering display loop");
     
     // Main display loop
     while (keep_running) {

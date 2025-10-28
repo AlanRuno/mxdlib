@@ -88,6 +88,12 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     FILE* fp = fopen(config_file, "r");
     if (!fp) {
         MXD_LOG_WARN("config", "Failed to open config file: %s, using default configuration", config_file);
+        if (mxd_fetch_bootstrap_nodes(config) != 0) {
+            MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes from network API with defaults");
+        } else {
+            MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
+                         config->bootstrap_count, config->network_type);
+        }
         return mxd_validate_config(config);
     }
     
