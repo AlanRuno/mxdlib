@@ -79,6 +79,9 @@ static pthread_mutex_t unified_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t keepalive_thread;
 static volatile int keepalive_running = 0;
 
+static pthread_t peer_connector_thread;
+static volatile int peer_connector_running = 0;
+
 typedef struct {
     uint32_t magic;      // Network byte order
     uint8_t type;        // Fixed size instead of enum
@@ -544,29 +547,35 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
         memcpy(&peer_port, (uint8_t*)payload + offset, sizeof(uint16_t));
         offset += sizeof(uint16_t);
         
-        if (peer_port != p2p_port || strcmp(peer_addr, "127.0.0.1") != 0) {
-            mxd_dht_add_peer(peer_addr, peer_port);
-            MXD_LOG_INFO("p2p", "Learned new peer from %s:%d -> %s:%d", address, port, peer_addr, peer_port);
-            
-            pthread_mutex_lock(&peer_mutex);
-            int already_connected = 0;
-            for (size_t j = 0; j < MXD_MAX_PEERS; j++) {
-                if (active_connections[j].active && 
-                    strcmp(active_connections[j].address, peer_addr) == 0 &&
-                    active_connections[j].port == peer_port) {
-                    already_connected = 1;
-                    break;
-                }
+        int is_localhost = (strcmp(peer_addr, "127.0.0.1") == 0 || strcmp(peer_addr, "localhost") == 0);
+        int is_self_port = (peer_port == p2p_port);
+        
+        if (is_localhost && is_self_port) {
+            MXD_LOG_DEBUG("p2p", "Skipping self-peer (localhost:%d)", peer_port);
+            continue;
+        }
+        
+        mxd_dht_add_peer(peer_addr, peer_port);
+        MXD_LOG_INFO("p2p", "Learned new peer from %s:%d -> %s:%d", address, port, peer_addr, peer_port);
+        
+        pthread_mutex_lock(&peer_mutex);
+        int already_connected = 0;
+        for (size_t j = 0; j < MXD_MAX_PEERS; j++) {
+            if (active_connections[j].active && 
+                strcmp(active_connections[j].address, peer_addr) == 0 &&
+                active_connections[j].port == peer_port) {
+                already_connected = 1;
+                break;
             }
-            pthread_mutex_unlock(&peer_mutex);
-            
-            if (!already_connected) {
-                MXD_LOG_INFO("p2p", "Attempting persistent connection to new peer %s:%d", peer_addr, peer_port);
-                if (try_establish_persistent_connection(peer_addr, peer_port) == 0) {
-                    MXD_LOG_INFO("p2p", "Successfully established persistent connection to %s:%d", peer_addr, peer_port);
-                } else {
-                    MXD_LOG_DEBUG("p2p", "Peer %s:%d does not support persistent connections or connection failed", peer_addr, peer_port);
-                }
+        }
+        pthread_mutex_unlock(&peer_mutex);
+        
+        if (!already_connected) {
+            MXD_LOG_INFO("p2p", "Attempting persistent connection to new peer %s:%d", peer_addr, peer_port);
+            if (try_establish_persistent_connection(peer_addr, peer_port) == 0) {
+                MXD_LOG_INFO("p2p", "Successfully established persistent connection to %s:%d", peer_addr, peer_port);
+            } else {
+                MXD_LOG_DEBUG("p2p", "Peer %s:%d does not support persistent connections or connection failed", peer_addr, peer_port);
             }
         }
     }
@@ -821,6 +830,56 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     
     MXD_LOG_INFO("p2p", "Established persistent connection to %s:%d (slot %d)", address, port, slot);
     return 0;
+}
+
+static void* peer_connector_thread_func(void* arg) {
+    (void)arg;
+    
+    MXD_LOG_INFO("p2p", "Peer connector thread started");
+    
+    while (peer_connector_running) {
+        sleep(30);
+        
+        if (!peer_connector_running) break;
+        
+        mxd_dht_node_t dht_peers[MXD_MAX_PEERS];
+        size_t dht_peer_count = MXD_MAX_PEERS;
+        
+        if (mxd_dht_get_peers(dht_peers, &dht_peer_count) != 0) {
+            continue;
+        }
+        
+        for (size_t i = 0; i < dht_peer_count; i++) {
+            if (!dht_peers[i].active) continue;
+            
+            pthread_mutex_lock(&peer_mutex);
+            int already_connected = 0;
+            for (size_t j = 0; j < MXD_MAX_PEERS; j++) {
+                if (active_connections[j].active && 
+                    strcmp(active_connections[j].address, dht_peers[i].address) == 0 &&
+                    active_connections[j].port == dht_peers[i].port) {
+                    already_connected = 1;
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&peer_mutex);
+            
+            if (!already_connected) {
+                MXD_LOG_INFO("p2p", "Proactively attempting persistent connection to DHT peer %s:%d", 
+                           dht_peers[i].address, dht_peers[i].port);
+                if (try_establish_persistent_connection(dht_peers[i].address, dht_peers[i].port) == 0) {
+                    MXD_LOG_INFO("p2p", "Successfully established persistent connection to %s:%d", 
+                               dht_peers[i].address, dht_peers[i].port);
+                } else {
+                    MXD_LOG_DEBUG("p2p", "Failed to establish persistent connection to %s:%d", 
+                                dht_peers[i].address, dht_peers[i].port);
+                }
+            }
+        }
+    }
+    
+    MXD_LOG_INFO("p2p", "Peer connector thread stopped");
+    return NULL;
 }
 
 static void* keepalive_thread_func(void* arg) {
@@ -1242,6 +1301,8 @@ int mxd_start_p2p(void) {
         return 1;
     }
     
+    usleep(50000);
+    
     keepalive_running = 1;
     if (pthread_create(&keepalive_thread, NULL, keepalive_thread_func, NULL) != 0) {
         MXD_LOG_ERROR("p2p", "Failed to create keepalive thread: %s", strerror(errno));
@@ -1249,6 +1310,20 @@ int mxd_start_p2p(void) {
     } else {
         pthread_detach(keepalive_thread);
         MXD_LOG_INFO("p2p", "Keepalive thread started");
+    }
+    
+    const char* enable_peer_connector = getenv("MXD_ENABLE_PEER_CONNECTOR");
+    if (enable_peer_connector && strcmp(enable_peer_connector, "1") == 0) {
+        peer_connector_running = 1;
+        if (pthread_create(&peer_connector_thread, NULL, peer_connector_thread_func, NULL) != 0) {
+            MXD_LOG_ERROR("p2p", "Failed to create peer connector thread: %s", strerror(errno));
+            peer_connector_running = 0;
+        } else {
+            pthread_detach(peer_connector_thread);
+            MXD_LOG_INFO("p2p", "Peer connector thread started");
+        }
+    } else {
+        MXD_LOG_DEBUG("p2p", "Peer connector thread disabled (set MXD_ENABLE_PEER_CONNECTOR=1 to enable)");
     }
     
     MXD_LOG_INFO("p2p", "P2P server started on port %d", p2p_port);
@@ -1261,6 +1336,7 @@ int mxd_stop_p2p(void) {
     }
     
     keepalive_running = 0;
+    peer_connector_running = 0;
     server_running = 0;
     
     if (server_socket >= 0) {
@@ -1434,6 +1510,46 @@ int mxd_send_message(const char* address, uint16_t port,
         close(sock);
         return -1;
     }
+    
+    mxd_handshake_payload_t handshake = {
+        .protocol_version = 1,
+        .listen_port = p2p_port
+    };
+    strncpy(handshake.node_id, node_config.node_id, sizeof(handshake.node_id) - 1);
+    handshake.node_id[sizeof(handshake.node_id) - 1] = '\0';
+    
+    if (send_on_socket(sock, MXD_MSG_HANDSHAKE, &handshake, sizeof(handshake)) != 0) {
+        MXD_LOG_DEBUG("p2p", "Failed to send HANDSHAKE to %s:%d", address, port);
+        close(sock);
+        return -1;
+    }
+    
+    struct timeval short_timeout;
+    short_timeout.tv_sec = 0;
+    short_timeout.tv_usec = 250000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &short_timeout, sizeof(short_timeout));
+    
+    uint8_t header_buffer[76];
+    int read_result = read_n(sock, header_buffer, sizeof(header_buffer));
+    if (read_result == 0) {
+        mxd_message_header_t server_header;
+        if (parse_wire_header(header_buffer, &server_header, secrets->network_magic) == 0 &&
+            server_header.type == MXD_MSG_HANDSHAKE) {
+            
+            uint8_t *server_payload = malloc(server_header.length);
+            if (server_payload && read_n(sock, server_payload, server_header.length) == 0) {
+                MXD_LOG_DEBUG("p2p", "Received server HANDSHAKE from %s:%d", address, port);
+                free(server_payload);
+            } else {
+                if (server_payload) free(server_payload);
+            }
+        }
+    }
+    
+    struct timeval normal_timeout;
+    normal_timeout.tv_sec = 5;
+    normal_timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &normal_timeout, sizeof(normal_timeout));
     
     mxd_message_header_t header = {
         .magic = secrets->network_magic,
