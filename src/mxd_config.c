@@ -262,6 +262,12 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
         }
         
         if (address && port_num > 0) {
+            if (port_num == config->port) {
+                MXD_LOG_DEBUG("config", "Skipping bootstrap node %s:%d (same as our port %d)", 
+                            address, port_num, config->port);
+                continue;
+            }
+            
             snprintf(config->bootstrap_nodes[config->bootstrap_count],
                     sizeof(config->bootstrap_nodes[0]),
                     "%s:%d",

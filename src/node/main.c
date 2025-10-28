@@ -155,6 +155,12 @@ int main(int argc, char** argv) {
     }
     MXD_LOG_INFO("node", "Configuration loaded successfully");
     
+    memset(&node_stake, 0, sizeof(node_stake));
+    strncpy(node_stake.node_id, current_config.node_id, sizeof(node_stake.node_id) - 1);
+    node_stake.stake_amount = current_config.initial_stake;
+    node_stake.active = 0;
+    node_stake.rank = 0;
+    
     // Override port if specified on command line
     if (override_port > 0) {
         current_config.port = override_port;
