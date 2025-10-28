@@ -880,7 +880,7 @@ static void* keepalive_thread_func(void* arg) {
                 MXD_LOG_WARN("p2p", "Peer %s:%d timed out (no response for %ld seconds), marking inactive",
                            peer_actions[i].address, peer_actions[i].port, 
                            peer_actions[i].time_since_last_received);
-            } else if (peer_actions[i].needs_ping) {
+            } else if (peer_actions[i].needs_ping && !peer_actions[i].timed_out) {
                 uint8_t ping_payload = 1;
                 if (mxd_send_message(peer_actions[i].address, peer_actions[i].port,
                                    MXD_MSG_PING, &ping_payload, sizeof(ping_payload)) == 0) {
