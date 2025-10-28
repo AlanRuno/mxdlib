@@ -1301,6 +1301,8 @@ int mxd_start_p2p(void) {
         return 1;
     }
     
+    usleep(50000);
+    
     keepalive_running = 1;
     if (pthread_create(&keepalive_thread, NULL, keepalive_thread_func, NULL) != 0) {
         MXD_LOG_ERROR("p2p", "Failed to create keepalive thread: %s", strerror(errno));
@@ -1310,13 +1312,18 @@ int mxd_start_p2p(void) {
         MXD_LOG_INFO("p2p", "Keepalive thread started");
     }
     
-    peer_connector_running = 1;
-    if (pthread_create(&peer_connector_thread, NULL, peer_connector_thread_func, NULL) != 0) {
-        MXD_LOG_ERROR("p2p", "Failed to create peer connector thread: %s", strerror(errno));
-        peer_connector_running = 0;
+    const char* enable_peer_connector = getenv("MXD_ENABLE_PEER_CONNECTOR");
+    if (enable_peer_connector && strcmp(enable_peer_connector, "1") == 0) {
+        peer_connector_running = 1;
+        if (pthread_create(&peer_connector_thread, NULL, peer_connector_thread_func, NULL) != 0) {
+            MXD_LOG_ERROR("p2p", "Failed to create peer connector thread: %s", strerror(errno));
+            peer_connector_running = 0;
+        } else {
+            pthread_detach(peer_connector_thread);
+            MXD_LOG_INFO("p2p", "Peer connector thread started");
+        }
     } else {
-        pthread_detach(peer_connector_thread);
-        MXD_LOG_INFO("p2p", "Peer connector thread started");
+        MXD_LOG_DEBUG("p2p", "Peer connector thread disabled (set MXD_ENABLE_PEER_CONNECTOR=1 to enable)");
     }
     
     MXD_LOG_INFO("p2p", "P2P server started on port %d", p2p_port);
@@ -1504,53 +1511,6 @@ int mxd_send_message(const char* address, uint16_t port,
         return -1;
     }
     
-    uint8_t header_buffer[76];
-    int read_result = read_n(sock, header_buffer, sizeof(header_buffer));
-    if (read_result != 0) {
-        MXD_LOG_DEBUG("p2p", "Failed to read server HANDSHAKE from %s:%d", address, port);
-        close(sock);
-        return -1;
-    }
-    
-    mxd_message_header_t server_header;
-    if (parse_wire_header(header_buffer, &server_header, secrets->network_magic) != 0) {
-        MXD_LOG_DEBUG("p2p", "Failed to parse server HANDSHAKE header from %s:%d", address, port);
-        close(sock);
-        return -1;
-    }
-    
-    if (server_header.type != MXD_MSG_HANDSHAKE) {
-        MXD_LOG_DEBUG("p2p", "Server %s:%d sent unexpected message type %d instead of HANDSHAKE", 
-                   address, port, server_header.type);
-        close(sock);
-        return -1;
-    }
-    
-    uint8_t *server_payload = malloc(server_header.length);
-    if (!server_payload) {
-        close(sock);
-        return -1;
-    }
-    
-    if (read_n(sock, server_payload, server_header.length) != 0) {
-        MXD_LOG_DEBUG("p2p", "Failed to read server HANDSHAKE payload from %s:%d", address, port);
-        free(server_payload);
-        close(sock);
-        return -1;
-    }
-    
-    const mxd_handshake_payload_t *server_handshake = (const mxd_handshake_payload_t *)server_payload;
-    
-    if (strcmp(server_handshake->node_id, node_config.node_id) == 0) {
-        MXD_LOG_DEBUG("p2p", "Detected self-connection to %s:%d (node_id: %s), aborting", 
-                   address, port, server_handshake->node_id);
-        free(server_payload);
-        close(sock);
-        return -1;
-    }
-    
-    free(server_payload);
-    
     mxd_handshake_payload_t handshake = {
         .protocol_version = 1,
         .listen_port = p2p_port
@@ -1563,6 +1523,33 @@ int mxd_send_message(const char* address, uint16_t port,
         close(sock);
         return -1;
     }
+    
+    struct timeval short_timeout;
+    short_timeout.tv_sec = 0;
+    short_timeout.tv_usec = 250000;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &short_timeout, sizeof(short_timeout));
+    
+    uint8_t header_buffer[76];
+    int read_result = read_n(sock, header_buffer, sizeof(header_buffer));
+    if (read_result == 0) {
+        mxd_message_header_t server_header;
+        if (parse_wire_header(header_buffer, &server_header, secrets->network_magic) == 0 &&
+            server_header.type == MXD_MSG_HANDSHAKE) {
+            
+            uint8_t *server_payload = malloc(server_header.length);
+            if (server_payload && read_n(sock, server_payload, server_header.length) == 0) {
+                MXD_LOG_DEBUG("p2p", "Received server HANDSHAKE from %s:%d", address, port);
+                free(server_payload);
+            } else {
+                if (server_payload) free(server_payload);
+            }
+        }
+    }
+    
+    struct timeval normal_timeout;
+    normal_timeout.tv_sec = 5;
+    normal_timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &normal_timeout, sizeof(normal_timeout));
     
     mxd_message_header_t header = {
         .magic = secrets->network_magic,
@@ -1588,28 +1575,6 @@ int mxd_send_message(const char* address, uint16_t port,
         MXD_LOG_WARN("p2p", "Failed to send payload to %s:%d", address, port);
         close(sock);
         return -1;
-    }
-    
-    if (type == MXD_MSG_GET_PEERS) {
-        read_result = read_n(sock, header_buffer, sizeof(header_buffer));
-        if (read_result == 0) {
-            mxd_message_header_t response_header;
-            if (parse_wire_header(header_buffer, &response_header, secrets->network_magic) == 0) {
-                if (response_header.type == MXD_MSG_PEERS && response_header.length <= MXD_MAX_MESSAGE_SIZE) {
-                    uint8_t *response_payload = malloc(response_header.length);
-                    if (response_payload) {
-                        if (read_n(sock, response_payload, response_header.length) == 0) {
-                            if (validate_message(&response_header, response_payload) == 0) {
-                                MXD_LOG_DEBUG("p2p", "Received PEERS response from %s:%d", address, port);
-                                update_unified_peer_received(address, port);
-                                handle_peers_message(address, port, response_payload, response_header.length);
-                            }
-                        }
-                        free(response_payload);
-                    }
-                }
-            }
-        }
     }
     
     close(sock);
