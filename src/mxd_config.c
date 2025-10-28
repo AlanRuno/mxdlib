@@ -55,7 +55,7 @@ static void mxd_set_default_config(mxd_config_t* config) {
     // Node identification
     snprintf(config->node_id, sizeof(config->node_id), "node_%lu", (unsigned long)time(NULL));
     strncpy(config->node_name, "MXD Default Node", sizeof(config->node_name) - 1);
-    strncpy(config->network_type, "mainnet", sizeof(config->network_type) - 1);
+    strncpy(config->network_type, "testnet", sizeof(config->network_type) - 1);
     
     // Basic settings
     config->port = 8000;
@@ -64,9 +64,8 @@ static void mxd_set_default_config(mxd_config_t* config) {
     config->metrics_interval = 1000;
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
     
-    // Default bootstrap nodes (self-connection for local node operation)
-    config->bootstrap_count = 1;
-    strncpy(config->bootstrap_nodes[0], "127.0.0.1:8000", sizeof(config->bootstrap_nodes[0]) - 1);
+    // Default bootstrap nodes - will be fetched from API, this is fallback
+    config->bootstrap_count = 0;
     
     // Node data (empty by default)
     strncpy(config->node_data, "", sizeof(config->node_data) - 1);
