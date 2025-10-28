@@ -157,14 +157,7 @@ static void wire_to_header(const mxd_wire_header_t *wire, mxd_message_header_t *
     memcpy(header->checksum, wire->checksum, 64);
 }
 
-typedef struct {
-    uint32_t magic;
-    uint32_t type;
-    uint32_t length;
-    uint8_t checksum[64];
-} __attribute__((packed)) mxd_legacy_header_t;
-
-static int try_parse_v1_header(const uint8_t *buffer, mxd_message_header_t *header, uint32_t expected_magic) {
+static int parse_wire_header(const uint8_t *buffer, mxd_message_header_t *header, uint32_t expected_magic) {
     mxd_wire_header_t *wire = (mxd_wire_header_t*)buffer;
     
     uint32_t magic = ntohl(wire->magic);
@@ -195,58 +188,6 @@ static int try_parse_v1_header(const uint8_t *buffer, mxd_message_header_t *head
     return 0;
 }
 
-static int try_parse_legacy_header(const uint8_t *buffer, mxd_message_header_t *header, uint32_t expected_magic) {
-    mxd_legacy_header_t *legacy = (mxd_legacy_header_t*)buffer;
-    
-    if (legacy->magic != expected_magic) {
-        return -1;
-    }
-    
-    if (legacy->type > MXD_MSG_RAPID_TABLE_UPDATE) {
-        return -1;
-    }
-    
-    if (legacy->length > MXD_MAX_MESSAGE_SIZE || legacy->length == 0) {
-        return -1;
-    }
-    
-    header->magic = legacy->magic;
-    header->type = (mxd_message_type_t)legacy->type;
-    header->length = legacy->length;
-    memcpy(header->checksum, legacy->checksum, 64);
-    
-    return 0;
-}
-
-static int parse_header_dual(const uint8_t *buffer, mxd_message_header_t *header, uint32_t expected_magic, int *is_legacy) {
-    if (try_parse_v1_header(buffer, header, expected_magic) == 0) {
-        *is_legacy = 0;
-        return 0;
-    }
-    
-    if (try_parse_legacy_header(buffer, header, expected_magic) == 0) {
-        *is_legacy = 1;
-        return 0;
-    }
-    
-    return -1;
-}
-
-static int use_legacy_wire_format(void) {
-    const char *env = getenv("MXD_P2P_WIRE_FORMAT");
-    if (env && strcmp(env, "v1") == 0) {
-        return 0;
-    }
-    return 1;
-}
-
-static void header_to_legacy(const mxd_message_header_t *header, mxd_legacy_header_t *legacy) {
-    legacy->magic = header->magic;
-    legacy->type = (uint32_t)header->type;
-    legacy->length = header->length;
-    memcpy(legacy->checksum, header->checksum, 64);
-}
-
 static int send_on_socket(int sock, mxd_message_type_t type, const void* payload, size_t payload_length) {
     if (sock < 0 || !payload || payload_length > MXD_MAX_MESSAGE_SIZE) {
         return -1;
@@ -268,20 +209,11 @@ static int send_on_socket(int sock, mxd_message_type_t type, const void* payload
         return -1;
     }
     
-    if (use_legacy_wire_format()) {
-        mxd_legacy_header_t legacy_header;
-        header_to_legacy(&header, &legacy_header);
-        
-        if (write_n(sock, &legacy_header, sizeof(legacy_header)) != 0) {
-            return -1;
-        }
-    } else {
-        mxd_wire_header_t wire_header;
-        header_to_wire(&header, &wire_header);
-        
-        if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
-            return -1;
-        }
+    mxd_wire_header_t wire_header;
+    header_to_wire(&header, &wire_header);
+    
+    if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
+        return -1;
     }
     
     if (write_n(sock, payload, payload_length) != 0) {
@@ -803,10 +735,9 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     }
     
     mxd_message_header_t header;
-    int is_legacy = 0;
     
-    if (parse_header_dual(header_buffer, &header, secrets->network_magic, &is_legacy) != 0) {
-        MXD_LOG_DEBUG("p2p", "Failed to parse HANDSHAKE response from %s:%d", address, port);
+    if (parse_wire_header(header_buffer, &header, secrets->network_magic) != 0) {
+        MXD_LOG_INFO("p2p", "Failed to parse HANDSHAKE response from %s:%d (invalid wire format)", address, port);
         close(sock);
         return -1;
     }
@@ -960,8 +891,84 @@ static void* connection_handler(void* arg) {
     
     MXD_LOG_INFO("p2p", "Connection handler started for %s:%d", conn->address, conn->port);
     
-    int handshake_received = 0;
-    int is_persistent = 0;
+    mxd_handshake_payload_t handshake = {
+        .protocol_version = 1,
+        .listen_port = p2p_port
+    };
+    strncpy(handshake.node_id, node_config.node_id, sizeof(handshake.node_id) - 1);
+    handshake.node_id[sizeof(handshake.node_id) - 1] = '\0';
+    
+    if (send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, &handshake, sizeof(handshake)) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE to %s:%d", conn->address, conn->port);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    
+    MXD_LOG_INFO("p2p", "Sent HANDSHAKE to %s:%d", conn->address, conn->port);
+    
+    uint8_t header_buffer[76];
+    int read_result = read_n(conn->socket, header_buffer, sizeof(header_buffer));
+    if (read_result != 0) {
+        MXD_LOG_WARN("p2p", "Failed to read HANDSHAKE from %s:%d (v2 protocol requires HANDSHAKE)", 
+                   conn->address, conn->port);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    
+    const mxd_secrets_t *secrets = mxd_get_secrets();
+    if (!secrets) {
+        MXD_LOG_ERROR("p2p", "Secrets not initialized");
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    
+    mxd_message_header_t header;
+    if (parse_wire_header(header_buffer, &header, secrets->network_magic) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to parse header from %s:%d (invalid v2 wire format)", 
+                   conn->address, conn->port);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    
+    if (header.type != MXD_MSG_HANDSHAKE) {
+        MXD_LOG_WARN("p2p", "Peer %s:%d sent %d instead of HANDSHAKE (v2 protocol violation)", 
+                   conn->address, conn->port, header.type);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    
+    uint8_t *payload = malloc(header.length);
+    if (!payload) {
+        MXD_LOG_ERROR("p2p", "Failed to allocate memory for HANDSHAKE");
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    
+    if (read_n(conn->socket, payload, header.length) != 0) {
+        MXD_LOG_WARN("p2p", "Error reading HANDSHAKE payload from %s:%d", conn->address, conn->port);
+        free(payload);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    
+    if (handle_handshake_message(conn->address, conn->port, payload, header.length, conn) != 0) {
+        MXD_LOG_INFO("p2p", "Handshake validation failed for %s:%d", conn->address, conn->port);
+        free(payload);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    free(payload);
+    
+    MXD_LOG_INFO("p2p", "Handshake completed for %s:%d, connection established", 
+               conn->address, conn->port);
     
     while (conn->active && server_running) {
         uint8_t header_buffer[76];
@@ -981,23 +988,11 @@ static void* connection_handler(void* arg) {
             break;
         }
         
-        const mxd_secrets_t *secrets = mxd_get_secrets();
-        if (!secrets) {
-            MXD_LOG_ERROR("p2p", "Secrets not initialized");
-            break;
-        }
-        
         mxd_message_header_t header;
-        int is_legacy = 0;
-        
-        if (parse_header_dual(header_buffer, &header, secrets->network_magic, &is_legacy) != 0) {
-            MXD_LOG_WARN("p2p", "Failed to parse header from %s:%d (tried both v1 and legacy formats)", 
+        if (parse_wire_header(header_buffer, &header, secrets->network_magic) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to parse header from %s:%d (invalid v2 wire format)", 
                        conn->address, conn->port);
             break;
-        }
-        
-        if (is_legacy) {
-            MXD_LOG_DEBUG("p2p", "Accepted legacy header from %s:%d", conn->address, conn->port);
         }
         
         uint8_t *payload = malloc(header.length);
@@ -1012,39 +1007,8 @@ static void* connection_handler(void* arg) {
             break;
         }
         
-        if (header.type == MXD_MSG_HANDSHAKE && !handshake_received) {
-            if (handle_handshake_message(conn->address, conn->port, payload, header.length, conn) != 0) {
-                MXD_LOG_INFO("p2p", "Handshake failed for %s:%d, closing connection", 
-                           conn->address, conn->port);
-                free(payload);
-                break;
-            }
-            handshake_received = 1;
-            is_persistent = 1;
-            
-            mxd_handshake_payload_t response = {
-                .protocol_version = 1,
-                .listen_port = p2p_port
-            };
-            strncpy(response.node_id, node_config.node_id, sizeof(response.node_id) - 1);
-            response.node_id[sizeof(response.node_id) - 1] = '\0';
-            
-            if (send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, &response, sizeof(response)) != 0) {
-                MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE response to %s:%d", conn->address, conn->port);
-                free(payload);
-                break;
-            }
-            
-            MXD_LOG_INFO("p2p", "Handshake completed for %s:%d, connection promoted to persistent", 
-                       conn->address, conn->port);
-        } else if (header.type == MXD_MSG_GET_PEERS && is_persistent) {
+        if (header.type == MXD_MSG_GET_PEERS) {
             handle_get_peers_on_socket(conn->socket, conn->address, conn->port, payload, header.length);
-        } else if (!handshake_received && !is_persistent) {
-            MXD_LOG_INFO("p2p", "Peer %s:%d using legacy protocol (first message: %d), treating as RPC-style", 
-                       conn->address, conn->port, header.type);
-            handle_incoming_message(conn->address, conn->port, &header, payload);
-            free(payload);
-            break;
         } else {
             handle_incoming_message(conn->address, conn->port, &header, payload);
         }
@@ -1438,24 +1402,13 @@ int mxd_send_message(const char* address, uint16_t port,
         return -1;
     }
     
-    if (use_legacy_wire_format()) {
-        mxd_legacy_header_t legacy_header;
-        header_to_legacy(&header, &legacy_header);
-        
-        if (write_n(sock, &legacy_header, sizeof(legacy_header)) != 0) {
-            MXD_LOG_WARN("p2p", "Failed to send legacy header to %s:%d", address, port);
-            close(sock);
-            return -1;
-        }
-    } else {
-        mxd_wire_header_t wire_header;
-        header_to_wire(&header, &wire_header);
-        
-        if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
-            MXD_LOG_WARN("p2p", "Failed to send v1 header to %s:%d", address, port);
-            close(sock);
-            return -1;
-        }
+    mxd_wire_header_t wire_header;
+    header_to_wire(&header, &wire_header);
+    
+    if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to send v2 header to %s:%d", address, port);
+        close(sock);
+        return -1;
     }
     
     if (write_n(sock, payload, payload_length) != 0) {
