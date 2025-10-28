@@ -64,7 +64,7 @@ static void mxd_set_default_config(mxd_config_t* config) {
     config->metrics_interval = 1000;
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
     
-    // Default bootstrap nodes - will be fetched from API
+    // Default bootstrap nodes - will be fetched from API, this is fallback
     config->bootstrap_count = 0;
     
     // Node data (empty by default)

@@ -1,12 +1,12 @@
 {
     "node_id": "default_node",
-    "network_type": "mainnet",
+    "network_type": "testnet",
     "port": 8000,
     "data_dir": "./data",
     "node_name": "MXD Default Node",
     "initial_stake": 100.0,
     "bootstrap_nodes": [
-        "127.0.0.1:8000"
+        "34.31.52.198:8000"
     ],
     "metrics": {
         "update_interval": 1000,
