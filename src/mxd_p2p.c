@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <signal.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -123,8 +124,14 @@ static int write_n(int sock, const void *buffer, size_t n) {
     size_t total_written = 0;
     const uint8_t *buf = (const uint8_t*)buffer;
     
+#ifdef MSG_NOSIGNAL
+    int flags = MSG_NOSIGNAL;
+#else
+    int flags = 0;
+#endif
+    
     while (total_written < n) {
-        ssize_t bytes_written = send(sock, buf + total_written, n - total_written, 0);
+        ssize_t bytes_written = send(sock, buf + total_written, n - total_written, flags);
         if (bytes_written <= 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
                 return -1; // Error
@@ -1147,6 +1154,8 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
         return 0;
     }
     
+    signal(SIGPIPE, SIG_IGN);
+    
     const mxd_secrets_t *secrets = mxd_get_secrets();
     if (secrets) {
         MXD_LOG_INFO("p2p", "Wire format: sizeof(mxd_wire_header_t)=%zu, sizeof(mxd_message_header_t)=%zu, sizeof(mxd_message_type_t)=%zu",
@@ -1390,6 +1399,11 @@ int mxd_send_message(const char* address, uint16_t port,
         MXD_LOG_WARN("p2p", "Failed to create socket for sending: %s", strerror(errno));
         return -1;
     }
+    
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    int set = 1;
+    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &set, sizeof(set));
+#endif
     
     struct timeval timeout;
     timeout.tv_sec = 5;
