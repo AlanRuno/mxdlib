@@ -55,7 +55,7 @@ static void mxd_set_default_config(mxd_config_t* config) {
     // Node identification
     snprintf(config->node_id, sizeof(config->node_id), "node_%lu", (unsigned long)time(NULL));
     strncpy(config->node_name, "MXD Default Node", sizeof(config->node_name) - 1);
-    strncpy(config->network_type, "mainnet", sizeof(config->network_type) - 1);
+    strncpy(config->network_type, "testnet", sizeof(config->network_type) - 1);
     
     // Basic settings
     config->port = 8000;
@@ -64,9 +64,8 @@ static void mxd_set_default_config(mxd_config_t* config) {
     config->metrics_interval = 1000;
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
     
-    // Default bootstrap nodes (self-connection for local node operation)
-    config->bootstrap_count = 1;
-    strncpy(config->bootstrap_nodes[0], "127.0.0.1:8000", sizeof(config->bootstrap_nodes[0]) - 1);
+    // Default bootstrap nodes - will be fetched from API
+    config->bootstrap_count = 0;
     
     // Node data (empty by default)
     strncpy(config->node_data, "", sizeof(config->node_data) - 1);
@@ -89,6 +88,12 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     FILE* fp = fopen(config_file, "r");
     if (!fp) {
         MXD_LOG_WARN("config", "Failed to open config file: %s, using default configuration", config_file);
+        if (mxd_fetch_bootstrap_nodes(config) != 0) {
+            MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes from network API with defaults");
+        } else {
+            MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
+                         config->bootstrap_count, config->network_type);
+        }
         return mxd_validate_config(config);
     }
     
