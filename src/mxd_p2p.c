@@ -86,6 +86,12 @@ typedef struct {
     uint8_t checksum[64]; // SHA-512 checksum
 } __attribute__((packed)) mxd_wire_header_t;
 
+typedef struct {
+    char node_id[256];        // Node identifier
+    uint32_t protocol_version; // Protocol version
+    uint16_t listen_port;      // Listening port
+} mxd_handshake_payload_t;
+
 static int read_n(int sock, void *buffer, size_t n) {
     size_t total_read = 0;
     uint8_t *buf = (uint8_t*)buffer;
@@ -94,7 +100,7 @@ static int read_n(int sock, void *buffer, size_t n) {
         ssize_t bytes_read = recv(sock, buf + total_read, n - total_read, 0);
         if (bytes_read <= 0) {
             if (bytes_read == 0) {
-                return -2; // Connection closed (EOF)
+                return -2;
             }
             if (errno == EINTR) {
                 continue;
@@ -236,6 +242,50 @@ static void header_to_legacy(const mxd_message_header_t *header, mxd_legacy_head
     legacy->type = (uint32_t)header->type;
     legacy->length = header->length;
     memcpy(legacy->checksum, header->checksum, 64);
+}
+
+static int send_on_socket(int sock, mxd_message_type_t type, const void* payload, size_t payload_length) {
+    if (sock < 0 || !payload || payload_length > MXD_MAX_MESSAGE_SIZE) {
+        return -1;
+    }
+    
+    const mxd_secrets_t *secrets = mxd_get_secrets();
+    if (!secrets) {
+        MXD_LOG_ERROR("p2p", "Secrets not initialized");
+        return -1;
+    }
+    
+    mxd_message_header_t header = {
+        .magic = secrets->network_magic,
+        .type = type,
+        .length = payload_length
+    };
+    
+    if (mxd_sha512(payload, payload_length, header.checksum) != 0) {
+        return -1;
+    }
+    
+    if (use_legacy_wire_format()) {
+        mxd_legacy_header_t legacy_header;
+        header_to_legacy(&header, &legacy_header);
+        
+        if (write_n(sock, &legacy_header, sizeof(legacy_header)) != 0) {
+            return -1;
+        }
+    } else {
+        mxd_wire_header_t wire_header;
+        header_to_wire(&header, &wire_header);
+        
+        if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
+            return -1;
+        }
+    }
+    
+    if (write_n(sock, payload, payload_length) != 0) {
+        return -1;
+    }
+    
+    return 0;
 }
 
 static void update_unified_peer_sent(const char *address, uint16_t port) {
@@ -476,6 +526,57 @@ static void handle_get_peers_message(const char *address, uint16_t port, const v
     free(response);
 }
 
+static void handle_get_peers_on_socket(int sock, const char *address, uint16_t port, const void *payload, size_t length) {
+    uint16_t peer_listening_port = port;
+    
+    if (length >= sizeof(uint16_t)) {
+        memcpy(&peer_listening_port, payload, sizeof(uint16_t));
+        MXD_LOG_INFO("p2p", "GET_PEERS from %s:%d (listening on port %d) on persistent connection", address, port, peer_listening_port);
+        
+        if (mxd_dht_add_peer(address, peer_listening_port) == 0) {
+            MXD_LOG_INFO("p2p", "Added requesting peer %s:%d to DHT", address, peer_listening_port);
+        }
+    } else {
+        MXD_LOG_WARN("p2p", "GET_PEERS message from %s:%d missing listening port", address, port);
+    }
+    
+    mxd_dht_node_t peers[MXD_MAX_PEERS];
+    size_t peer_count = MXD_MAX_PEERS;
+    
+    if (mxd_dht_get_peers(peers, &peer_count) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to get peers for GET_PEERS request from %s:%d", address, port);
+        return;
+    }
+    
+    size_t payload_size = sizeof(uint32_t) + (peer_count * (256 + sizeof(uint16_t)));
+    uint8_t *response = malloc(payload_size);
+    if (!response) {
+        MXD_LOG_ERROR("p2p", "Failed to allocate memory for PEERS response");
+        return;
+    }
+    
+    uint32_t count = (uint32_t)peer_count;
+    memcpy(response, &count, sizeof(uint32_t));
+    
+    size_t offset = sizeof(uint32_t);
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peers[i].active) {
+            memcpy(response + offset, peers[i].address, 256);
+            offset += 256;
+            memcpy(response + offset, &peers[i].port, sizeof(uint16_t));
+            offset += sizeof(uint16_t);
+        }
+    }
+    
+    if (send_on_socket(sock, MXD_MSG_PEERS, response, offset) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to send PEERS response to %s:%d on persistent connection", address, peer_listening_port);
+    } else {
+        MXD_LOG_INFO("p2p", "Sent %u peers to %s:%d on persistent connection", count, address, peer_listening_port);
+    }
+    
+    free(response);
+}
+
 static void handle_peers_message(const char *address, uint16_t port, const void *payload, size_t length) {
     if (length < sizeof(uint32_t)) {
         MXD_LOG_WARN("p2p", "Invalid PEERS message from %s:%d", address, port);
@@ -543,7 +644,45 @@ static void handle_pong_message(const char *address, uint16_t port) {
     pthread_mutex_unlock(&peer_mutex);
 }
 
-static int handle_incoming_message(const char *address, uint16_t port, 
+static int handle_handshake_message(const char *address, uint16_t port, 
+                                     const void *payload, size_t length,
+                                     peer_connection_t *conn) {
+    if (!payload || length < sizeof(mxd_handshake_payload_t)) {
+        MXD_LOG_WARN("p2p", "Invalid HANDSHAKE payload from %s:%d", address, port);
+        return -1;
+    }
+    
+    const mxd_handshake_payload_t *handshake = (const mxd_handshake_payload_t *)payload;
+    
+    if (strcmp(handshake->node_id, node_config.node_id) == 0) {
+        MXD_LOG_INFO("p2p", "Rejecting self-connection from %s:%d (node_id: %s)", 
+                   address, port, handshake->node_id);
+        return -1;
+    }
+    
+    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u)", 
+               address, port, handshake->node_id, handshake->protocol_version, 
+               handshake->listen_port);
+    
+    if (conn) {
+        strncpy(conn->address, address, sizeof(conn->address) - 1);
+        conn->address[sizeof(conn->address) - 1] = '\0';
+        conn->port = handshake->listen_port;
+        conn->active = 1;
+        conn->connected_at = time(NULL);
+        conn->last_keepalive_received = time(NULL);
+        conn->keepalive_failures = 0;
+    }
+    
+    if (mxd_dht_add_peer(address, handshake->listen_port) == 0) {
+        MXD_LOG_INFO("p2p", "Added peer %s:%d to DHT after handshake", 
+                   address, handshake->listen_port);
+    }
+    
+    return 0;
+}
+
+static int handle_incoming_message(const char *address, uint16_t port,
                                  const mxd_message_header_t *header, 
                                  const void *payload) {
     if (!address || !header || !payload) {
@@ -660,6 +799,24 @@ static void* connection_handler(void* arg) {
     
     MXD_LOG_INFO("p2p", "Connection handler started for %s:%d", conn->address, conn->port);
     
+    mxd_handshake_payload_t handshake = {
+        .protocol_version = 1,
+        .listen_port = p2p_port
+    };
+    strncpy(handshake.node_id, node_config.node_id, sizeof(handshake.node_id) - 1);
+    handshake.node_id[sizeof(handshake.node_id) - 1] = '\0';
+    
+    if (send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, &handshake, sizeof(handshake)) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE to %s:%d", conn->address, conn->port);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    
+    MXD_LOG_DEBUG("p2p", "Sent HANDSHAKE to %s:%d", conn->address, conn->port);
+    
+    int handshake_received = 0;
+    
     while (conn->active && server_running) {
         uint8_t header_buffer[76];
         
@@ -709,7 +866,21 @@ static void* connection_handler(void* arg) {
             break;
         }
         
-        handle_incoming_message(conn->address, conn->port, &header, payload);
+        if (header.type == MXD_MSG_HANDSHAKE && !handshake_received) {
+            if (handle_handshake_message(conn->address, conn->port, payload, header.length, conn) != 0) {
+                MXD_LOG_INFO("p2p", "Handshake failed for %s:%d, closing connection", 
+                           conn->address, conn->port);
+                free(payload);
+                break;
+            }
+            handshake_received = 1;
+            MXD_LOG_INFO("p2p", "Handshake completed for %s:%d, connection promoted to active", 
+                       conn->address, conn->port);
+        } else if (header.type == MXD_MSG_GET_PEERS && handshake_received) {
+            handle_get_peers_on_socket(conn->socket, conn->address, conn->port, payload, header.length);
+        } else {
+            handle_incoming_message(conn->address, conn->port, &header, payload);
+        }
         free(payload);
     }
     
