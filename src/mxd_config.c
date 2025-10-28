@@ -193,11 +193,11 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
            config->node_id, config->port, config->metrics_port, config->data_dir, config->node_name);
     
     if (mxd_fetch_bootstrap_nodes(config) != 0) {
-        MXD_LOG_ERROR("config", "Failed to fetch bootstrap nodes from network API, terminating");
-        return -1;
+        MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes from network API, will use existing/default nodes and retry later");
+    } else {
+        MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
+                     config->bootstrap_count, config->network_type);
     }
-    MXD_LOG_INFO("config", "Successfully fetched %d bootstrap nodes from network API (%s)", 
-                 config->bootstrap_count, config->network_type);
     
     return 0;
 }
@@ -262,9 +262,10 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
         }
         
         if (address && port_num > 0) {
-            if (port_num == config->port) {
-                MXD_LOG_DEBUG("config", "Skipping bootstrap node %s:%d (same as our port %d)", 
-                            address, port_num, config->port);
+            const char* public_ip = getenv("MXD_PUBLIC_IP");
+            if (public_ip && strcmp(address, public_ip) == 0 && port_num == config->port) {
+                MXD_LOG_DEBUG("config", "Skipping bootstrap node %s:%d (matches our public IP and port)", 
+                            address, port_num);
                 continue;
             }
             
