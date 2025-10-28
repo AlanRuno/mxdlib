@@ -94,15 +94,15 @@ static int read_n(int sock, void *buffer, size_t n) {
         ssize_t bytes_read = recv(sock, buf + total_read, n - total_read, 0);
         if (bytes_read <= 0) {
             if (bytes_read == 0) {
-                return -1; // Connection closed
-            }
-            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
-                return -1; // Error
+                return -2; // Connection closed (EOF)
             }
             if (errno == EINTR) {
                 continue;
             }
-            return -1;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return -3; // Timeout
+            }
+            return -1; // Other error
         }
         total_read += bytes_read;
     }
@@ -663,9 +663,18 @@ static void* connection_handler(void* arg) {
     while (conn->active && server_running) {
         uint8_t header_buffer[76];
         
-        if (read_n(conn->socket, header_buffer, sizeof(header_buffer)) != 0) {
-            MXD_LOG_INFO("p2p", "Peer %s:%d disconnected or error reading header", 
-                       conn->address, conn->port);
+        int read_result = read_n(conn->socket, header_buffer, sizeof(header_buffer));
+        if (read_result != 0) {
+            if (read_result == -2) {
+                MXD_LOG_DEBUG("p2p", "Peer %s:%d closed connection (EOF)", 
+                           conn->address, conn->port);
+            } else if (read_result == -3) {
+                MXD_LOG_DEBUG("p2p", "Peer %s:%d receive timeout", 
+                           conn->address, conn->port);
+            } else {
+                MXD_LOG_WARN("p2p", "Peer %s:%d error reading header: errno=%d (%s)", 
+                           conn->address, conn->port, errno, strerror(errno));
+            }
             break;
         }
         
