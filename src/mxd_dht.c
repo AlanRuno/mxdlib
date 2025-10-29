@@ -21,6 +21,8 @@
 #include "mxd_metrics.h"
 #include "mxd_logging.h"
 #include "mxd_secrets.h"
+#include "mxd_address.h"
+#include "mxd_crypto.h"
 #include "utils/mxd_http.h"
 #include "mxd_p2p.h"
 
@@ -137,42 +139,71 @@ int mxd_init_dht(const uint8_t* public_key) {
     return 0;
 }
 
-static int load_or_generate_node_key(uint8_t* key_out) {
-    const char* key_file = "data/node_key.bin";
+static int load_or_generate_node_keypair(uint8_t public_key[256], uint8_t private_key[128]) {
+    const char* pubkey_file = "data/node_pubkey.bin";
+    const char* privkey_file = "data/node_privkey.bin";
     
     mkdir("data", 0755);
     
-    FILE* f = fopen(key_file, "rb");
+    FILE* f = fopen(pubkey_file, "rb");
     if (f) {
-        size_t read = fread(key_out, 1, 32, f);
+        size_t read = fread(public_key, 1, 256, f);
         fclose(f);
-        if (read == 32) {
-            MXD_LOG_INFO("dht", "Loaded persistent node key from %s", key_file);
-            return 0;
+        if (read == 256) {
+            f = fopen(privkey_file, "rb");
+            if (f) {
+                read = fread(private_key, 1, 128, f);
+                fclose(f);
+                if (read == 128) {
+                    MXD_LOG_INFO("dht", "Loaded persistent node keypair from data/");
+                    return 0;
+                }
+            }
         }
-        MXD_LOG_WARN("dht", "Node key file corrupted, regenerating");
+        MXD_LOG_WARN("dht", "Node keypair files corrupted, regenerating");
     }
     
-    if (RAND_bytes(key_out, 32) != 1) {
-        MXD_LOG_ERROR("dht", "Failed to generate random node key");
+    uint8_t property_key[64];
+    if (RAND_bytes(property_key, 64) != 1) {
+        MXD_LOG_ERROR("dht", "Failed to generate random property key");
         return -1;
     }
     
-    f = fopen(key_file, "wb");
+    if (mxd_generate_keypair(property_key, public_key, private_key) != 0) {
+        MXD_LOG_ERROR("dht", "Failed to generate Dilithium keypair");
+        return -1;
+    }
+    
+    f = fopen(pubkey_file, "wb");
     if (!f) {
-        MXD_LOG_WARN("dht", "Failed to persist node key to %s: %s", key_file, strerror(errno));
-        MXD_LOG_INFO("dht", "Generated ephemeral node key (not persisted)");
+        MXD_LOG_WARN("dht", "Failed to persist public key to %s: %s", pubkey_file, strerror(errno));
+        MXD_LOG_INFO("dht", "Generated ephemeral node keypair (not persisted)");
         return 0;
     }
     
-    size_t written = fwrite(key_out, 1, 32, f);
+    size_t written = fwrite(public_key, 1, 256, f);
     fclose(f);
+    chmod(pubkey_file, 0644);
     
-    if (written == 32) {
-        chmod(key_file, 0600);
-        MXD_LOG_INFO("dht", "Generated and persisted new node key to %s", key_file);
+    if (written != 256) {
+        MXD_LOG_WARN("dht", "Failed to write complete public key");
+        return 0;
+    }
+    
+    f = fopen(privkey_file, "wb");
+    if (!f) {
+        MXD_LOG_WARN("dht", "Failed to persist private key to %s: %s", privkey_file, strerror(errno));
+        return 0;
+    }
+    
+    written = fwrite(private_key, 1, 128, f);
+    fclose(f);
+    chmod(privkey_file, 0600);
+    
+    if (written == 128) {
+        MXD_LOG_INFO("dht", "Generated and persisted new Dilithium keypair to data/");
     } else {
-        MXD_LOG_WARN("dht", "Failed to write complete node key, using ephemeral key");
+        MXD_LOG_WARN("dht", "Failed to write complete private key");
     }
     
     return 0;
@@ -186,13 +217,14 @@ int mxd_start_dht(uint16_t port) {
     
     dht_port = port;
     
-    uint8_t node_key[32];
-    if (load_or_generate_node_key(node_key) != 0) {
-        MXD_LOG_ERROR("dht", "Failed to load or generate node key");
+    uint8_t public_key[256];
+    uint8_t private_key[128];
+    if (load_or_generate_node_keypair(public_key, private_key) != 0) {
+        MXD_LOG_ERROR("dht", "Failed to load or generate node keypair");
         return 1;
     }
     
-    if (mxd_init_p2p(port, node_key) != 0) {
+    if (mxd_init_p2p(port, public_key) != 0) {
         MXD_LOG_ERROR("dht", "Failed to initialize P2P on port %d", port);
         return 1;
     }
