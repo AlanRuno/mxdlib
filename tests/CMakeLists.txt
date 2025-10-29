@@ -262,7 +262,7 @@ target_link_libraries(mxd_node_network_test
 )
 
 add_test(NAME node_network_tests COMMAND mxd_node_network_test)
-set_tests_properties(node_network_tests PROPERTIES TIMEOUT 120 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=0")
+set_tests_properties(node_network_tests PROPERTIES TIMEOUT 120 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=1")
 
 # Blockchain data test
 add_executable(mxd_blockchain_data_test

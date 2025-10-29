@@ -1331,6 +1331,19 @@ int mxd_start_p2p(void) {
     }
     
     if (!enable_peer_connector || strcmp(enable_peer_connector, "0") != 0) {
+        pthread_mutex_lock(&manual_peer_mutex);
+        for (size_t i = 0; i < manual_peer_count; i++) {
+            if (manual_peers[i].active) {
+                MXD_LOG_DEBUG("p2p", "Initial connection attempt to manual peer %s:%d", 
+                           manual_peers[i].address, manual_peers[i].port);
+                if (try_establish_persistent_connection(manual_peers[i].address, manual_peers[i].port) == 0) {
+                    MXD_LOG_INFO("p2p", "Successfully established initial connection to manual peer %s:%d", 
+                               manual_peers[i].address, manual_peers[i].port);
+                }
+            }
+        }
+        pthread_mutex_unlock(&manual_peer_mutex);
+        
         mxd_dht_node_t startup_peers[MXD_MAX_PEERS];
         size_t startup_peer_count = MXD_MAX_PEERS;
         if (mxd_dht_get_peers(startup_peers, &startup_peer_count) == 0) {
@@ -1428,6 +1441,15 @@ int mxd_add_peer(const char* address, uint16_t port) {
     mxd_dht_add_peer(address, port);
     
     MXD_LOG_INFO("p2p", "Added peer %s:%d (total manual peers: %zu)", address, port, manual_peer_count);
+    
+    const char* enable_peer_connector = getenv("MXD_ENABLE_PEER_CONNECTOR");
+    if (!enable_peer_connector || strcmp(enable_peer_connector, "0") != 0) {
+        MXD_LOG_DEBUG("p2p", "Attempting immediate connection to newly added peer %s:%d", address, port);
+        if (try_establish_persistent_connection(address, port) == 0) {
+            MXD_LOG_INFO("p2p", "Successfully established immediate connection to %s:%d", address, port);
+        }
+    }
+    
     return 0;
 }
 
