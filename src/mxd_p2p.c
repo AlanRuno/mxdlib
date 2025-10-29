@@ -78,9 +78,11 @@ static pthread_mutex_t unified_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static pthread_t keepalive_thread;
 static volatile int keepalive_running = 0;
+static int keepalive_thread_created = 0;
 
 static pthread_t peer_connector_thread;
 static volatile int peer_connector_running = 0;
+static int peer_connector_thread_created = 0;
 
 typedef struct {
     uint32_t magic;      // Network byte order
@@ -1304,39 +1306,43 @@ int mxd_start_p2p(void) {
     usleep(50000);
     
     keepalive_running = 1;
+    keepalive_thread_created = 0;
     if (pthread_create(&keepalive_thread, NULL, keepalive_thread_func, NULL) != 0) {
         MXD_LOG_ERROR("p2p", "Failed to create keepalive thread: %s", strerror(errno));
         keepalive_running = 0;
     } else {
-        pthread_detach(keepalive_thread);
+        keepalive_thread_created = 1;
         MXD_LOG_INFO("p2p", "Keepalive thread started");
     }
     
     const char* enable_peer_connector = getenv("MXD_ENABLE_PEER_CONNECTOR");
+    peer_connector_thread_created = 0;
     if (!enable_peer_connector || strcmp(enable_peer_connector, "0") != 0) {
         peer_connector_running = 1;
         if (pthread_create(&peer_connector_thread, NULL, peer_connector_thread_func, NULL) != 0) {
             MXD_LOG_ERROR("p2p", "Failed to create peer connector thread: %s", strerror(errno));
             peer_connector_running = 0;
         } else {
-            pthread_detach(peer_connector_thread);
+            peer_connector_thread_created = 1;
             MXD_LOG_INFO("p2p", "Peer connector thread started");
         }
     } else {
         MXD_LOG_DEBUG("p2p", "Peer connector thread disabled (set MXD_ENABLE_PEER_CONNECTOR=0 to disable)");
     }
     
-    mxd_dht_node_t startup_peers[MXD_MAX_PEERS];
-    size_t startup_peer_count = MXD_MAX_PEERS;
-    if (mxd_dht_get_peers(startup_peers, &startup_peer_count) == 0) {
-        MXD_LOG_INFO("p2p", "Attempting initial connections to %zu DHT peers", startup_peer_count);
-        for (size_t i = 0; i < startup_peer_count; i++) {
-            if (startup_peers[i].active) {
-                MXD_LOG_DEBUG("p2p", "Initial connection attempt to %s:%d", 
-                           startup_peers[i].address, startup_peers[i].port);
-                if (try_establish_persistent_connection(startup_peers[i].address, startup_peers[i].port) == 0) {
-                    MXD_LOG_INFO("p2p", "Successfully established initial connection to %s:%d", 
+    if (!enable_peer_connector || strcmp(enable_peer_connector, "0") != 0) {
+        mxd_dht_node_t startup_peers[MXD_MAX_PEERS];
+        size_t startup_peer_count = MXD_MAX_PEERS;
+        if (mxd_dht_get_peers(startup_peers, &startup_peer_count) == 0) {
+            MXD_LOG_INFO("p2p", "Attempting initial connections to %zu DHT peers", startup_peer_count);
+            for (size_t i = 0; i < startup_peer_count; i++) {
+                if (startup_peers[i].active) {
+                    MXD_LOG_DEBUG("p2p", "Initial connection attempt to %s:%d", 
                                startup_peers[i].address, startup_peers[i].port);
+                    if (try_establish_persistent_connection(startup_peers[i].address, startup_peers[i].port) == 0) {
+                        MXD_LOG_INFO("p2p", "Successfully established initial connection to %s:%d", 
+                                   startup_peers[i].address, startup_peers[i].port);
+                    }
                 }
             }
         }
@@ -1372,6 +1378,16 @@ int mxd_stop_p2p(void) {
     pthread_mutex_unlock(&peer_mutex);
     
     pthread_join(server_thread, NULL);
+    
+    if (keepalive_thread_created) {
+        pthread_join(keepalive_thread, NULL);
+        keepalive_thread_created = 0;
+    }
+    
+    if (peer_connector_thread_created) {
+        pthread_join(peer_connector_thread, NULL);
+        peer_connector_thread_created = 0;
+    }
     
     p2p_initialized = 0;
     MXD_LOG_INFO("p2p", "P2P stopped");
