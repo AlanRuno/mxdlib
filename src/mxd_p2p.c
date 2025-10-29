@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <openssl/sha.h>
+#include <openssl/ripemd.h>
 #include "mxd_config.h"
 #include "mxd_crypto.h"
 #include "mxd_dht.h"
@@ -1206,6 +1208,49 @@ static void* server_thread_func(void* arg) {
     return NULL;
 }
 
+static void derive_node_id(char* node_id_buf, size_t buf_size, const uint8_t* public_key, uint16_t port) {
+    int is_zero_key = 1;
+    for (int i = 0; i < 32; i++) {
+        if (public_key[i] != 0) {
+            is_zero_key = 0;
+            break;
+        }
+    }
+    
+    if (is_zero_key) {
+        char hostname[256];
+        if (gethostname(hostname, sizeof(hostname)) != 0) {
+            snprintf(hostname, sizeof(hostname), "unknown");
+        }
+        
+        char input[512];
+        snprintf(input, sizeof(input), "%s:%d", hostname, port);
+        
+        unsigned char sha_hash[SHA256_DIGEST_LENGTH];
+        SHA256((unsigned char*)input, strlen(input), sha_hash);
+        
+        snprintf(node_id_buf, buf_size, "node_");
+        for (int i = 0; i < 16 && (5 + i*2) < buf_size - 1; i++) {
+            snprintf(node_id_buf + 5 + i*2, 3, "%02x", sha_hash[i]);
+        }
+        
+        MXD_LOG_INFO("p2p", "Derived node_id from hostname (fallback for zero pubkey): %s", node_id_buf);
+    } else {
+        unsigned char sha_hash[SHA256_DIGEST_LENGTH];
+        SHA256(public_key, 32, sha_hash);
+        
+        unsigned char ripemd_hash[RIPEMD160_DIGEST_LENGTH];
+        RIPEMD160(sha_hash, SHA256_DIGEST_LENGTH, ripemd_hash);
+        
+        for (int i = 0; i < RIPEMD160_DIGEST_LENGTH && i*2 < buf_size - 1; i++) {
+            snprintf(node_id_buf + i*2, 3, "%02x", ripemd_hash[i]);
+        }
+        node_id_buf[40] = '\0';
+        
+        MXD_LOG_INFO("p2p", "Derived node_id from pubkey: %s", node_id_buf);
+    }
+}
+
 int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     if (mxd_init_secrets(NULL) != 0) {
         MXD_LOG_WARN("p2p", "Secrets initialization failed, using defaults");
@@ -1238,7 +1283,7 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     
     memset(&node_config, 0, sizeof(node_config));
     node_config.port = port;
-    snprintf(node_config.node_id, sizeof(node_config.node_id), "peer_%d", port);
+    derive_node_id(node_config.node_id, sizeof(node_config.node_id), public_key, port);
     snprintf(node_config.data_dir, sizeof(node_config.data_dir), "data");
     
     memset(active_connections, 0, sizeof(active_connections));
