@@ -249,6 +249,18 @@ target_link_libraries(mxd_basic_node_setup_test
 add_test(NAME basic_node_setup_tests COMMAND mxd_basic_node_setup_test)
 set_tests_properties(basic_node_setup_tests PROPERTIES TIMEOUT 120 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=0")
 
+# Test node daemon helper
+add_executable(mxd_test_node_daemon
+    support/test_node_daemon.c
+)
+
+target_link_libraries(mxd_test_node_daemon
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
 # Node network test
 add_executable(mxd_node_network_test
     node_network_test.c
