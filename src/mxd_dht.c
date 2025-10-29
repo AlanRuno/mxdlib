@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/time.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <pthread.h>
 #include <miniupnpc/miniupnpc.h>
@@ -14,6 +15,7 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <openssl/rand.h>
 #include "mxd_dht.h"
 #include "mxd_config.h"
 #include "mxd_metrics.h"
@@ -135,6 +137,47 @@ int mxd_init_dht(const uint8_t* public_key) {
     return 0;
 }
 
+static int load_or_generate_node_key(uint8_t* key_out) {
+    const char* key_file = "data/node_key.bin";
+    
+    mkdir("data", 0755);
+    
+    FILE* f = fopen(key_file, "rb");
+    if (f) {
+        size_t read = fread(key_out, 1, 32, f);
+        fclose(f);
+        if (read == 32) {
+            MXD_LOG_INFO("dht", "Loaded persistent node key from %s", key_file);
+            return 0;
+        }
+        MXD_LOG_WARN("dht", "Node key file corrupted, regenerating");
+    }
+    
+    if (RAND_bytes(key_out, 32) != 1) {
+        MXD_LOG_ERROR("dht", "Failed to generate random node key");
+        return -1;
+    }
+    
+    f = fopen(key_file, "wb");
+    if (!f) {
+        MXD_LOG_WARN("dht", "Failed to persist node key to %s: %s", key_file, strerror(errno));
+        MXD_LOG_INFO("dht", "Generated ephemeral node key (not persisted)");
+        return 0;
+    }
+    
+    size_t written = fwrite(key_out, 1, 32, f);
+    fclose(f);
+    
+    if (written == 32) {
+        chmod(key_file, 0600);
+        MXD_LOG_INFO("dht", "Generated and persisted new node key to %s", key_file);
+    } else {
+        MXD_LOG_WARN("dht", "Failed to write complete node key, using ephemeral key");
+    }
+    
+    return 0;
+}
+
 int mxd_start_dht(uint16_t port) {
     if (!dht_initialized) {
         MXD_LOG_ERROR("dht", "DHT not initialized");
@@ -143,8 +186,13 @@ int mxd_start_dht(uint16_t port) {
     
     dht_port = port;
     
-    uint8_t dummy_pubkey[32] = {0};
-    if (mxd_init_p2p(port, dummy_pubkey) != 0) {
+    uint8_t node_key[32];
+    if (load_or_generate_node_key(node_key) != 0) {
+        MXD_LOG_ERROR("dht", "Failed to load or generate node key");
+        return 1;
+    }
+    
+    if (mxd_init_p2p(port, node_key) != 0) {
         MXD_LOG_ERROR("dht", "Failed to initialize P2P on port %d", port);
         return 1;
     }
