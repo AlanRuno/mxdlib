@@ -23,12 +23,16 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, signal_handler);
     signal(SIGINT, signal_handler);
     
-    uint8_t public_key[32] = {0};
-    for (int i = 0; i < 32; i++) {
-        public_key[i] = i + 100;
+    uint8_t public_key[256] = {0};
+    uint8_t private_key[128] = {0};
+    for (int i = 0; i < 256; i++) {
+        public_key[i] = (i + 100) % 256;
+    }
+    for (int i = 0; i < 128; i++) {
+        private_key[i] = (i + 50) % 256;
     }
     
-    if (mxd_init_p2p(port, public_key) != 0) {
+    if (mxd_init_p2p(port, public_key, private_key) != 0) {
         fprintf(stderr, "Failed to initialize P2P on port %d\n", port);
         return 1;
     }
