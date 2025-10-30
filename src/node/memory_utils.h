@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../include/mxd_logging.h"
 
 static inline void log_memory_usage(const char* phase) {
     FILE* status = fopen("/proc/self/status", "r");
@@ -25,8 +26,8 @@ static inline void log_memory_usage(const char* phase) {
     
     fclose(status);
     
-    printf("[MEMORY] %s: VmSize=%ld KB (%.1f MB), VmRSS=%ld KB (%.1f MB)\n", 
-           phase, vm_size, vm_size / 1024.0, vm_rss, vm_rss / 1024.0);
+    MXD_LOG_DEBUG("memory_utils", "%s: VmSize=%ld KB (%.1f MB), VmRSS=%ld KB (%.1f MB)", 
+                  phase, vm_size, vm_size / 1024.0, vm_rss, vm_rss / 1024.0);
 }
 
 #endif // MEMORY_UTILS_H
