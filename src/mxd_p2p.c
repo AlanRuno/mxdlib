@@ -10,6 +10,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <openssl/sha.h>
+#include <openssl/ripemd.h>
 #include "mxd_config.h"
 #include "mxd_crypto.h"
 #include "mxd_dht.h"
@@ -1271,6 +1273,44 @@ static void* server_thread_func(void* arg) {
     return NULL;
 }
 
+static void derive_node_id(char* node_id_buf, size_t buf_size, const uint8_t* public_key, uint16_t port) {
+    int is_zero_key = 1;
+    for (int i = 0; i < 256; i++) {
+        if (public_key[i] != 0) {
+            is_zero_key = 0;
+            break;
+        }
+    }
+    
+    if (is_zero_key) {
+        char hostname[256];
+        if (gethostname(hostname, sizeof(hostname)) != 0) {
+            snprintf(hostname, sizeof(hostname), "unknown");
+        }
+        
+        char input[512];
+        snprintf(input, sizeof(input), "%s:%d", hostname, port);
+        
+        unsigned char sha_hash[SHA256_DIGEST_LENGTH];
+        SHA256((unsigned char*)input, strlen(input), sha_hash);
+        
+        snprintf(node_id_buf, buf_size, "node_");
+        for (int i = 0; i < 16 && (5 + i*2) < buf_size - 1; i++) {
+            snprintf(node_id_buf + 5 + i*2, 3, "%02x", sha_hash[i]);
+        }
+        
+        MXD_LOG_INFO("p2p", "Derived node_id from hostname (fallback for zero pubkey): %s", node_id_buf);
+    } else {
+        if (mxd_generate_address(public_key, node_id_buf, buf_size) != 0) {
+            MXD_LOG_ERROR("p2p", "Failed to generate wallet address from public key");
+            snprintf(node_id_buf, buf_size, "mx_error");
+            return;
+        }
+        
+        MXD_LOG_INFO("p2p", "Derived node_id from wallet address: %s", node_id_buf);
+    }
+}
+
 int mxd_init_p2p(uint16_t port, const uint8_t* public_key, const uint8_t* private_key) {
     if (mxd_init_secrets(NULL) != 0) {
         MXD_LOG_WARN("p2p", "Secrets initialization failed, using defaults");
@@ -1305,11 +1345,7 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key, const uint8_t* privat
     memset(&node_config, 0, sizeof(node_config));
     node_config.port = port;
     
-    if (mxd_generate_address(public_key, node_config.node_id, sizeof(node_config.node_id)) != 0) {
-        MXD_LOG_ERROR("p2p", "Failed to generate wallet address for node_id");
-        return -1;
-    }
-    
+    derive_node_id(node_config.node_id, sizeof(node_config.node_id), public_key, port);
     snprintf(node_config.data_dir, sizeof(node_config.data_dir), "data");
     
     memset(active_connections, 0, sizeof(active_connections));

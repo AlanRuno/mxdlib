@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/time.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <pthread.h>
 #include <miniupnpc/miniupnpc.h>
@@ -14,6 +15,7 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <openssl/rand.h>
 #include "mxd_dht.h"
 #include "mxd_config.h"
 #include "mxd_metrics.h"
