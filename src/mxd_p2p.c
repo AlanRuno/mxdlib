@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <openssl/sha.h>
 #include <openssl/ripemd.h>
+#include <openssl/rand.h>
 #include "mxd_config.h"
 #include "mxd_crypto.h"
 #include "mxd_dht.h"
