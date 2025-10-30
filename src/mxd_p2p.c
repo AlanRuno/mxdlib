@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <openssl/sha.h>
 #include <openssl/ripemd.h>
+#include <openssl/rand.h>
 #include "mxd_config.h"
 #include "mxd_crypto.h"
 #include "mxd_dht.h"
@@ -32,6 +33,7 @@ static pthread_mutex_t manual_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int p2p_initialized = 0;
 static uint16_t p2p_port = 0;
 static uint8_t node_public_key[256] = {0};
+static uint8_t node_private_key[128] = {0};
 static mxd_config_t node_config;
 static uint64_t last_message_time = 0;
 static size_t messages_this_second = 0;
@@ -96,9 +98,13 @@ typedef struct {
 } __attribute__((packed)) mxd_wire_header_t;
 
 typedef struct {
-    char node_id[256];        // Node identifier
+    char node_id[256];        // Node identifier (wallet address)
     uint32_t protocol_version; // Protocol version
     uint16_t listen_port;      // Listening port
+    uint8_t public_key[256];   // Dilithium public key
+    uint8_t challenge[32];     // Random challenge nonce
+    uint16_t signature_length; // Length of signature
+    uint8_t signature[5000];   // Signature (max Dilithium5 size ~4595 bytes)
 } mxd_handshake_payload_t;
 
 static void* connection_handler(void* arg);
@@ -621,6 +627,41 @@ static void handle_pong_message(const char *address, uint16_t port) {
     pthread_mutex_unlock(&peer_mutex);
 }
 
+static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uint8_t *challenge, size_t challenge_len) {
+    memset(handshake, 0, sizeof(mxd_handshake_payload_t));
+    
+    strncpy(handshake->node_id, node_config.node_id, sizeof(handshake->node_id) - 1);
+    handshake->node_id[sizeof(handshake->node_id) - 1] = '\0';
+    handshake->protocol_version = 1;
+    handshake->listen_port = p2p_port;
+    
+    memcpy(handshake->public_key, node_public_key, 256);
+    
+    if (challenge && challenge_len > 0) {
+        memcpy(handshake->challenge, challenge, challenge_len < 32 ? challenge_len : 32);
+    } else {
+        if (RAND_bytes(handshake->challenge, 32) != 1) {
+            MXD_LOG_ERROR("p2p", "Failed to generate challenge nonce");
+            return -1;
+        }
+    }
+    
+    uint8_t message_to_sign[288];
+    memcpy(message_to_sign, handshake->challenge, 32);
+    memcpy(message_to_sign + 32, handshake->node_id, 256);
+    
+    size_t sig_len = 0;
+    if (mxd_dilithium_sign(handshake->signature, &sig_len, message_to_sign, 288, node_private_key) != 0) {
+        MXD_LOG_ERROR("p2p", "Failed to sign handshake");
+        return -1;
+    }
+    
+    handshake->signature_length = (uint16_t)sig_len;
+    
+    MXD_LOG_DEBUG("p2p", "Created signed handshake with signature length %u", handshake->signature_length);
+    return 0;
+}
+
 static int handle_handshake_message(const char *address, uint16_t port, 
                                      const void *payload, size_t length,
                                      peer_connection_t *conn) {
@@ -637,7 +678,30 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u)", 
+    char derived_address[64];
+    if (mxd_generate_address(handshake->public_key, derived_address, sizeof(derived_address)) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to derive address from public key for %s:%d", address, port);
+        return -1;
+    }
+    
+    if (strcmp(derived_address, handshake->node_id) != 0) {
+        MXD_LOG_WARN("p2p", "Address mismatch for %s:%d: claimed=%s, derived=%s", 
+                   address, port, handshake->node_id, derived_address);
+        return -1;
+    }
+    
+    uint8_t message_to_verify[288];
+    memcpy(message_to_verify, handshake->challenge, 32);
+    memcpy(message_to_verify + 32, handshake->node_id, 256);
+    
+    if (mxd_dilithium_verify(handshake->signature, handshake->signature_length, 
+                             message_to_verify, 288, handshake->public_key) != 0) {
+        MXD_LOG_WARN("p2p", "Signature verification failed for %s:%d (node_id: %s)", 
+                   address, port, handshake->node_id);
+        return -1;
+    }
+    
+    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u) - signature verified", 
                address, port, handshake->node_id, handshake->protocol_version, 
                handshake->listen_port);
     
@@ -728,12 +792,12 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
         return -1;
     }
     
-    mxd_handshake_payload_t handshake = {
-        .protocol_version = 1,
-        .listen_port = p2p_port
-    };
-    strncpy(handshake.node_id, node_config.node_id, sizeof(handshake.node_id) - 1);
-    handshake.node_id[sizeof(handshake.node_id) - 1] = '\0';
+    mxd_handshake_payload_t handshake;
+    if (create_signed_handshake(&handshake, NULL, 0) != 0) {
+        MXD_LOG_ERROR("p2p", "Failed to create signed handshake for %s:%d", address, port);
+        close(sock);
+        return -1;
+    }
     
     if (send_on_socket(sock, MXD_MSG_HANDSHAKE, &handshake, sizeof(handshake)) != 0) {
         MXD_LOG_DEBUG("p2p", "Failed to send HANDSHAKE to %s:%d for persistent connection", address, port);
@@ -992,12 +1056,13 @@ static void* connection_handler(void* arg) {
     
     MXD_LOG_INFO("p2p", "Connection handler started for %s:%d", conn->address, conn->port);
     
-    mxd_handshake_payload_t handshake = {
-        .protocol_version = 1,
-        .listen_port = p2p_port
-    };
-    strncpy(handshake.node_id, node_config.node_id, sizeof(handshake.node_id) - 1);
-    handshake.node_id[sizeof(handshake.node_id) - 1] = '\0';
+    mxd_handshake_payload_t handshake;
+    if (create_signed_handshake(&handshake, NULL, 0) != 0) {
+        MXD_LOG_ERROR("p2p", "Failed to create signed handshake for %s:%d", conn->address, conn->port);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
     
     if (send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, &handshake, sizeof(handshake)) != 0) {
         MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE to %s:%d", conn->address, conn->port);
@@ -1247,7 +1312,7 @@ static void derive_node_id(char* node_id_buf, size_t buf_size, const uint8_t* pu
     }
 }
 
-int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
+int mxd_init_p2p(uint16_t port, const uint8_t* public_key, const uint8_t* private_key) {
     if (mxd_init_secrets(NULL) != 0) {
         MXD_LOG_WARN("p2p", "Secrets initialization failed, using defaults");
     }
@@ -1276,9 +1341,11 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     
     p2p_port = port;
     memcpy(node_public_key, public_key, 256);
+    memcpy(node_private_key, private_key, 128);
     
     memset(&node_config, 0, sizeof(node_config));
     node_config.port = port;
+    
     derive_node_id(node_config.node_id, sizeof(node_config.node_id), public_key, port);
     snprintf(node_config.data_dir, sizeof(node_config.data_dir), "data");
     
@@ -1289,7 +1356,7 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key) {
     manual_peer_count = 0;
     
     p2p_initialized = 1;
-    MXD_LOG_INFO("p2p", "P2P initialized on port %d", port);
+    MXD_LOG_INFO("p2p", "P2P initialized on port %d with node_id: %s", port, node_config.node_id);
     return 0;
 }
 
@@ -1606,12 +1673,12 @@ int mxd_send_message(const char* address, uint16_t port,
         return -1;
     }
     
-    mxd_handshake_payload_t handshake = {
-        .protocol_version = 1,
-        .listen_port = p2p_port
-    };
-    strncpy(handshake.node_id, node_config.node_id, sizeof(handshake.node_id) - 1);
-    handshake.node_id[sizeof(handshake.node_id) - 1] = '\0';
+    mxd_handshake_payload_t handshake;
+    if (create_signed_handshake(&handshake, NULL, 0) != 0) {
+        MXD_LOG_ERROR("p2p", "Failed to create signed handshake for %s:%d", address, port);
+        close(sock);
+        return -1;
+    }
     
     if (send_on_socket(sock, MXD_MSG_HANDSHAKE, &handshake, sizeof(handshake)) != 0) {
         MXD_LOG_DEBUG("p2p", "Failed to send HANDSHAKE to %s:%d", address, port);

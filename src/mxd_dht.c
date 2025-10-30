@@ -224,7 +224,7 @@ int mxd_start_dht(uint16_t port) {
         return 1;
     }
     
-    if (mxd_init_p2p(port, public_key) != 0) {
+    if (mxd_init_p2p(port, public_key, private_key) != 0) {
         MXD_LOG_ERROR("dht", "Failed to initialize P2P on port %d", port);
         return 1;
     }
