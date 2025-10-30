@@ -740,13 +740,18 @@ int mxd_start_metrics_server(void) {
     }
     
     server_running = 1;
-    if (pthread_create(&server_thread, NULL, server_thread_func, NULL) != 0) {
+    pthread_attr_t server_attr;
+    pthread_attr_init(&server_attr);
+    pthread_attr_setstacksize(&server_attr, 512 * 1024); // 512KB stack
+    if (pthread_create(&server_thread, &server_attr, server_thread_func, NULL) != 0) {
         MXD_LOG_ERROR("monitoring", "Failed to create server thread: %s", strerror(errno));
+        pthread_attr_destroy(&server_attr);
         close(server_socket);
         server_socket = -1;
         server_running = 0;
         return -1;
     }
+    pthread_attr_destroy(&server_attr);
     
     MXD_LOG_INFO("monitoring", "Metrics server started on port %d", metrics_port);
     MXD_LOG_INFO("monitoring", "Endpoints: /metrics (Prometheus), /health (JSON)");

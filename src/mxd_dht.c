@@ -298,11 +298,16 @@ int mxd_start_dht(uint16_t port) {
         
         if (!is_local && !refresh_thread_running && global_config != NULL) {
             refresh_thread_running = 1;
-            if (pthread_create(&bootstrap_refresh_thread, NULL, bootstrap_refresh_thread_func, (void*)global_config) != 0) {
+            pthread_attr_t refresh_attr;
+            pthread_attr_init(&refresh_attr);
+            pthread_attr_setstacksize(&refresh_attr, 512 * 1024); // 512KB stack
+            if (pthread_create(&bootstrap_refresh_thread, &refresh_attr, bootstrap_refresh_thread_func, (void*)global_config) != 0) {
                 MXD_LOG_ERROR("dht", "Failed to create bootstrap refresh thread");
+                pthread_attr_destroy(&refresh_attr);
                 refresh_thread_running = 0;
             } else {
                 pthread_detach(bootstrap_refresh_thread);
+                pthread_attr_destroy(&refresh_attr);
                 MXD_LOG_INFO("dht", "Started bootstrap refresh thread");
             }
         }

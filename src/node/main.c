@@ -124,6 +124,13 @@ int main(int argc, char** argv) {
     mxd_init_logging(&log_config);
     
     MXD_LOG_INFO("node", "MXD Node starting...");
+    
+    #ifdef GIT_COMMIT_HASH
+    MXD_LOG_INFO("node", "Build version: %s", GIT_COMMIT_HASH);
+    #else
+    MXD_LOG_INFO("node", "Build version: unknown (GIT_COMMIT_HASH not defined)");
+    #endif
+    
     log_memory_usage("startup");
     
     char default_config_path[PATH_MAX];
@@ -252,19 +259,29 @@ int main(int argc, char** argv) {
     
     // Start metrics collector thread BEFORE UPnP to ensure display loop runs
     pthread_t collector_thread;
-    if (pthread_create(&collector_thread, NULL, metrics_collector, NULL) != 0) {
+    pthread_attr_t collector_attr;
+    pthread_attr_init(&collector_attr);
+    pthread_attr_setstacksize(&collector_attr, 512 * 1024); // 512KB stack (reduced from 8MB default)
+    if (pthread_create(&collector_thread, &collector_attr, metrics_collector, NULL) != 0) {
         MXD_LOG_ERROR("node", "Failed to start metrics collector");
+        pthread_attr_destroy(&collector_attr);
         mxd_stop_dht();
         return 1;
     }
+    pthread_attr_destroy(&collector_attr);
     MXD_LOG_INFO("node", "Metrics collector thread started");
     
     if (current_config.enable_upnp) {
         pthread_t nat_thread;
-        if (pthread_create(&nat_thread, NULL, upnp_nat_thread, NULL) == 0) {
+        pthread_attr_t nat_attr;
+        pthread_attr_init(&nat_attr);
+        pthread_attr_setstacksize(&nat_attr, 512 * 1024); // 512KB stack
+        if (pthread_create(&nat_thread, &nat_attr, upnp_nat_thread, NULL) == 0) {
             pthread_detach(nat_thread);
+            pthread_attr_destroy(&nat_attr);
             MXD_LOG_INFO("node", "UPnP NAT traversal thread started in background");
         } else {
+            pthread_attr_destroy(&nat_attr);
             MXD_LOG_WARN("node", "Failed to start UPnP NAT traversal thread");
         }
     } else {
