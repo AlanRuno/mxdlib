@@ -219,20 +219,30 @@ int mxd_start_dht(uint16_t port) {
     
     uint8_t public_key[256];
     uint8_t private_key[128];
+    
+    #include "../node/memory_utils.h"
+    log_memory_usage("before_keypair_gen");
+    
     if (load_or_generate_node_keypair(public_key, private_key) != 0) {
         MXD_LOG_ERROR("dht", "Failed to load or generate node keypair");
         return 1;
     }
+    
+    log_memory_usage("after_keypair_gen");
     
     if (mxd_init_p2p(port, public_key, private_key) != 0) {
         MXD_LOG_ERROR("dht", "Failed to initialize P2P on port %d", port);
         return 1;
     }
     
+    log_memory_usage("after_p2p_init");
+    
     if (mxd_start_p2p() != 0) {
         MXD_LOG_ERROR("dht", "Failed to start P2P server on port %d", port);
         return 1;
     }
+    
+    log_memory_usage("after_p2p_start");
     
     MXD_LOG_INFO("dht", "DHT service started on port %d for node %s", port, node_id);
     
