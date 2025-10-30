@@ -453,30 +453,45 @@ static void handle_get_peers_message(const char *address, uint16_t port, const v
         return;
     }
     
-    size_t payload_size = sizeof(uint32_t) + (peer_count * (256 + sizeof(uint16_t)));
+    size_t active_count = 0;
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peers[i].active) {
+            active_count++;
+        }
+    }
+    
+    MXD_LOG_DEBUG("p2p", "GET_PEERS: total peers=%zu, active peers=%zu", peer_count, active_count);
+    
+    size_t payload_size = sizeof(uint32_t) + (active_count * (256 + sizeof(uint16_t)));
     uint8_t *response = malloc(payload_size);
     if (!response) {
         MXD_LOG_ERROR("p2p", "Failed to allocate memory for PEERS response");
         return;
     }
     
-    uint32_t count = (uint32_t)peer_count;
+    uint32_t count = (uint32_t)active_count;
     memcpy(response, &count, sizeof(uint32_t));
     
     size_t offset = sizeof(uint32_t);
+    size_t serialized_count = 0;
     for (size_t i = 0; i < peer_count; i++) {
         if (peers[i].active) {
             memcpy(response + offset, peers[i].address, 256);
             offset += 256;
             memcpy(response + offset, &peers[i].port, sizeof(uint16_t));
             offset += sizeof(uint16_t);
+            serialized_count++;
+            MXD_LOG_DEBUG("p2p", "Serializing peer %zu: %s:%d", serialized_count, peers[i].address, peers[i].port);
         }
     }
+    
+    MXD_LOG_DEBUG("p2p", "PEERS response: count=%u, serialized=%zu, payload_size=%zu, actual_offset=%zu", 
+                 count, serialized_count, payload_size, offset);
     
     if (mxd_send_message(address, peer_listening_port, MXD_MSG_PEERS, response, offset) != 0) {
         MXD_LOG_WARN("p2p", "Failed to send PEERS response to %s:%d", address, peer_listening_port);
     } else {
-        MXD_LOG_INFO("p2p", "Sent %u peers to %s:%d", count, address, peer_listening_port);
+        MXD_LOG_INFO("p2p", "Sent %u active peers to %s:%d (payload: %zu bytes)", count, address, peer_listening_port, offset);
     }
     
     free(response);
@@ -504,30 +519,45 @@ static void handle_get_peers_on_socket(int sock, const char *address, uint16_t p
         return;
     }
     
-    size_t payload_size = sizeof(uint32_t) + (peer_count * (256 + sizeof(uint16_t)));
+    size_t active_count = 0;
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peers[i].active) {
+            active_count++;
+        }
+    }
+    
+    MXD_LOG_DEBUG("p2p", "GET_PEERS (socket): total peers=%zu, active peers=%zu", peer_count, active_count);
+    
+    size_t payload_size = sizeof(uint32_t) + (active_count * (256 + sizeof(uint16_t)));
     uint8_t *response = malloc(payload_size);
     if (!response) {
         MXD_LOG_ERROR("p2p", "Failed to allocate memory for PEERS response");
         return;
     }
     
-    uint32_t count = (uint32_t)peer_count;
+    uint32_t count = (uint32_t)active_count;
     memcpy(response, &count, sizeof(uint32_t));
     
     size_t offset = sizeof(uint32_t);
+    size_t serialized_count = 0;
     for (size_t i = 0; i < peer_count; i++) {
         if (peers[i].active) {
             memcpy(response + offset, peers[i].address, 256);
             offset += 256;
             memcpy(response + offset, &peers[i].port, sizeof(uint16_t));
             offset += sizeof(uint16_t);
+            serialized_count++;
+            MXD_LOG_DEBUG("p2p", "Serializing peer %zu (socket): %s:%d", serialized_count, peers[i].address, peers[i].port);
         }
     }
+    
+    MXD_LOG_DEBUG("p2p", "PEERS response (socket): count=%u, serialized=%zu, payload_size=%zu, actual_offset=%zu", 
+                 count, serialized_count, payload_size, offset);
     
     if (send_on_socket(sock, MXD_MSG_PEERS, response, offset) != 0) {
         MXD_LOG_WARN("p2p", "Failed to send PEERS response to %s:%d on persistent connection", address, peer_listening_port);
     } else {
-        MXD_LOG_INFO("p2p", "Sent %u peers to %s:%d on persistent connection", count, address, peer_listening_port);
+        MXD_LOG_INFO("p2p", "Sent %u active peers to %s:%d on persistent connection (payload: %zu bytes)", count, address, peer_listening_port, offset);
     }
     
     free(response);
@@ -535,7 +565,8 @@ static void handle_get_peers_on_socket(int sock, const char *address, uint16_t p
 
 static void handle_peers_message(const char *address, uint16_t port, const void *payload, size_t length) {
     if (length < sizeof(uint32_t)) {
-        MXD_LOG_WARN("p2p", "Invalid PEERS message from %s:%d", address, port);
+        MXD_LOG_WARN("p2p", "Invalid PEERS message from %s:%d (length=%zu, min=%zu)", 
+                    address, port, length, sizeof(uint32_t));
         return;
     }
     
@@ -543,17 +574,25 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
     memcpy(&peer_count, payload, sizeof(uint32_t));
     
     size_t expected_size = sizeof(uint32_t) + (peer_count * (256 + sizeof(uint16_t)));
+    MXD_LOG_DEBUG("p2p", "PEERS message from %s:%d: count=%u, length=%zu, expected=%zu", 
+                 address, port, peer_count, length, expected_size);
+    
     if (length < expected_size) {
-        MXD_LOG_WARN("p2p", "Truncated PEERS message from %s:%d", address, port);
+        MXD_LOG_WARN("p2p", "Truncated PEERS message from %s:%d (count=%u, length=%zu, expected=%zu)", 
+                    address, port, peer_count, length, expected_size);
         return;
     }
     
+    MXD_LOG_INFO("p2p", "Processing %u peers from %s:%d", peer_count, address, port);
+    
     size_t offset = sizeof(uint32_t);
+    size_t peers_added = 0;
     for (uint32_t i = 0; i < peer_count && i < MXD_MAX_PEERS; i++) {
-        char peer_addr[256];
+        char peer_addr[257];
         uint16_t peer_port;
         
         memcpy(peer_addr, (uint8_t*)payload + offset, 256);
+        peer_addr[256] = '\0';
         offset += 256;
         memcpy(&peer_port, (uint8_t*)payload + offset, sizeof(uint16_t));
         offset += sizeof(uint16_t);
@@ -566,8 +605,12 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
             continue;
         }
         
-        mxd_dht_add_peer(peer_addr, peer_port);
-        MXD_LOG_INFO("p2p", "Learned new peer from %s:%d -> %s:%d", address, port, peer_addr, peer_port);
+        if (mxd_dht_add_peer(peer_addr, peer_port) == 0) {
+            peers_added++;
+            MXD_LOG_INFO("p2p", "Learned new peer from %s:%d -> %s:%d", address, port, peer_addr, peer_port);
+        } else {
+            MXD_LOG_DEBUG("p2p", "Peer %s:%d already known or failed to add", peer_addr, peer_port);
+        }
         
         pthread_mutex_lock(&peer_mutex);
         int already_connected = 0;
@@ -590,6 +633,9 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
             }
         }
     }
+    
+    MXD_LOG_INFO("p2p", "Completed processing PEERS message from %s:%d: %zu peers added to DHT", 
+                address, port, peers_added);
 }
 
 static void handle_ping_message(const char *address, uint16_t port) {
