@@ -886,14 +886,19 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     active_connection_count++;
     
     pthread_t thread;
-    if (pthread_create(&thread, NULL, connection_handler, &active_connections[slot]) != 0) {
+    pthread_attr_t thread_attr;
+    pthread_attr_init(&thread_attr);
+    pthread_attr_setstacksize(&thread_attr, 512 * 1024); // 512KB stack
+    if (pthread_create(&thread, &thread_attr, connection_handler, &active_connections[slot]) != 0) {
         active_connections[slot].active = 0;
         active_connection_count--;
+        pthread_attr_destroy(&thread_attr);
         pthread_mutex_unlock(&peer_mutex);
         close(sock);
         return -1;
     }
     pthread_detach(thread);
+    pthread_attr_destroy(&thread_attr);
     
     pthread_mutex_unlock(&peer_mutex);
     
@@ -1257,12 +1262,17 @@ static void* server_thread_func(void* arg) {
         active_connections[slot].keepalive_failures = 0;
         active_connections[slot].active = 1;
         
-        if (pthread_create(&connection_threads[slot], NULL, connection_handler, &active_connections[slot]) != 0) {
+        pthread_attr_t conn_attr;
+        pthread_attr_init(&conn_attr);
+        pthread_attr_setstacksize(&conn_attr, 512 * 1024); // 512KB stack
+        if (pthread_create(&connection_threads[slot], &conn_attr, connection_handler, &active_connections[slot]) != 0) {
             MXD_LOG_ERROR("p2p", "Failed to create connection thread");
+            pthread_attr_destroy(&conn_attr);
             close(client_socket);
             active_connections[slot].active = 0;
         } else {
             pthread_detach(connection_threads[slot]);
+            pthread_attr_destroy(&conn_attr);
             active_connection_count++;
             MXD_LOG_INFO("p2p", "Accepted connection from %s:%d (slot %d)", client_ip, client_port, slot);
         }
@@ -1403,22 +1413,32 @@ int mxd_start_p2p(void) {
     }
     
     server_running = 1;
-    if (pthread_create(&server_thread, NULL, server_thread_func, NULL) != 0) {
+    pthread_attr_t server_attr;
+    pthread_attr_init(&server_attr);
+    pthread_attr_setstacksize(&server_attr, 512 * 1024); // 512KB stack
+    if (pthread_create(&server_thread, &server_attr, server_thread_func, NULL) != 0) {
         MXD_LOG_ERROR("p2p", "Failed to create server thread: %s", strerror(errno));
+        pthread_attr_destroy(&server_attr);
         close(server_socket);
         server_socket = -1;
         server_running = 0;
         return 1;
     }
+    pthread_attr_destroy(&server_attr);
     
     usleep(50000);
     
     keepalive_running = 1;
     keepalive_thread_created = 0;
-    if (pthread_create(&keepalive_thread, NULL, keepalive_thread_func, NULL) != 0) {
+    pthread_attr_t keepalive_attr;
+    pthread_attr_init(&keepalive_attr);
+    pthread_attr_setstacksize(&keepalive_attr, 512 * 1024); // 512KB stack
+    if (pthread_create(&keepalive_thread, &keepalive_attr, keepalive_thread_func, NULL) != 0) {
         MXD_LOG_ERROR("p2p", "Failed to create keepalive thread: %s", strerror(errno));
+        pthread_attr_destroy(&keepalive_attr);
         keepalive_running = 0;
     } else {
+        pthread_attr_destroy(&keepalive_attr);
         keepalive_thread_created = 1;
         MXD_LOG_INFO("p2p", "Keepalive thread started");
     }
@@ -1427,10 +1447,15 @@ int mxd_start_p2p(void) {
     peer_connector_thread_created = 0;
     if (!enable_peer_connector || strcmp(enable_peer_connector, "0") != 0) {
         peer_connector_running = 1;
-        if (pthread_create(&peer_connector_thread, NULL, peer_connector_thread_func, NULL) != 0) {
+        pthread_attr_t connector_attr;
+        pthread_attr_init(&connector_attr);
+        pthread_attr_setstacksize(&connector_attr, 512 * 1024); // 512KB stack
+        if (pthread_create(&peer_connector_thread, &connector_attr, peer_connector_thread_func, NULL) != 0) {
             MXD_LOG_ERROR("p2p", "Failed to create peer connector thread: %s", strerror(errno));
+            pthread_attr_destroy(&connector_attr);
             peer_connector_running = 0;
         } else {
+            pthread_attr_destroy(&connector_attr);
             peer_connector_thread_created = 1;
             MXD_LOG_INFO("p2p", "Peer connector thread started");
         }
