@@ -43,6 +43,10 @@ static pthread_t bootstrap_refresh_thread;
 static int refresh_thread_running = 0;
 static pthread_mutex_t bootstrap_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static pthread_t peer_discovery_thread;
+static int peer_discovery_running = 0;
+static pthread_mutex_t peer_discovery_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static int dht_initialized = 0;
 static uint16_t dht_port = 0;
 static int nat_enabled = 0;
@@ -61,6 +65,7 @@ static struct IGDdatas upnp_data;
 static mxd_config_t* global_config = NULL;
 
 static void* bootstrap_refresh_thread_func(void* arg);
+static void* peer_discovery_thread_func(void* arg);
 static char upnp_mapped = 0;
 
 void mxd_generate_node_id(uint8_t* node_id) {
@@ -321,6 +326,22 @@ int mxd_start_dht(uint16_t port) {
                 MXD_LOG_INFO("dht", "Started bootstrap refresh thread");
             }
         }
+        
+        if (!peer_discovery_running) {
+            peer_discovery_running = 1;
+            pthread_attr_t discovery_attr;
+            pthread_attr_init(&discovery_attr);
+            pthread_attr_setstacksize(&discovery_attr, 512 * 1024);
+            if (pthread_create(&peer_discovery_thread, &discovery_attr, peer_discovery_thread_func, NULL) != 0) {
+                MXD_LOG_ERROR("dht", "Failed to create peer discovery thread");
+                pthread_attr_destroy(&discovery_attr);
+                peer_discovery_running = 0;
+            } else {
+                pthread_detach(peer_discovery_thread);
+                pthread_attr_destroy(&discovery_attr);
+                MXD_LOG_INFO("dht", "Started periodic peer discovery thread");
+            }
+        }
     }
     
     return 0;
@@ -374,6 +395,57 @@ static void* bootstrap_refresh_thread_func(void* arg) {
     return NULL;
 }
 
+static void* peer_discovery_thread_func(void* arg) {
+    (void)arg;
+    
+    const int DISCOVERY_INTERVAL = 30;
+    const size_t MIN_PEER_TARGET = 3;
+    
+    MXD_LOG_INFO("dht", "Peer discovery thread started (interval: %d seconds, target: %zu peers)", 
+                DISCOVERY_INTERVAL, MIN_PEER_TARGET);
+    
+    while (peer_discovery_running) {
+        for (int i = 0; i < DISCOVERY_INTERVAL && peer_discovery_running; i++) {
+            sleep(1);
+        }
+        
+        if (!peer_discovery_running) break;
+        
+        pthread_mutex_lock(&peer_discovery_mutex);
+        
+        size_t active_peer_count = 0;
+        for (size_t i = 0; i < peer_count; i++) {
+            if (peer_list[i].active) active_peer_count++;
+        }
+        
+        if (active_peer_count < MIN_PEER_TARGET || active_peer_count <= 1) {
+            MXD_LOG_INFO("dht", "Periodic peer discovery: %zu active peers (target: %zu), requesting more peers", 
+                        active_peer_count, MIN_PEER_TARGET);
+            
+            for (size_t i = 0; i < peer_count && i < 5; i++) {
+                if (peer_list[i].active) {
+                    uint16_t my_port = dht_port;
+                    if (mxd_send_message_with_retry(peer_list[i].address, peer_list[i].port, 
+                                       MXD_MSG_GET_PEERS, &my_port, sizeof(uint16_t), 3) == 0) {
+                        MXD_LOG_INFO("dht", "Requested peers from %s:%d (my port: %d)", 
+                                   peer_list[i].address, peer_list[i].port, my_port);
+                    } else {
+                        MXD_LOG_DEBUG("dht", "Failed to request peers from %s:%d", 
+                                   peer_list[i].address, peer_list[i].port);
+                    }
+                }
+            }
+        } else {
+            MXD_LOG_DEBUG("dht", "Periodic peer discovery: %zu active peers (sufficient)", active_peer_count);
+        }
+        
+        pthread_mutex_unlock(&peer_discovery_mutex);
+    }
+    
+    MXD_LOG_INFO("dht", "Peer discovery thread stopped");
+    return NULL;
+}
+
 int mxd_stop_dht(void) {
     if (!dht_initialized) {
         return 0;
@@ -382,6 +454,11 @@ int mxd_stop_dht(void) {
     if (refresh_thread_running) {
         refresh_thread_running = 0;
         MXD_LOG_INFO("dht", "Stopping bootstrap refresh thread...");
+    }
+    
+    if (peer_discovery_running) {
+        peer_discovery_running = 0;
+        MXD_LOG_INFO("dht", "Stopping peer discovery thread...");
     }
     
     mxd_stop_p2p();

@@ -573,14 +573,22 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
     uint32_t peer_count;
     memcpy(&peer_count, payload, sizeof(uint32_t));
     
+    size_t available_entries = (length - sizeof(uint32_t)) / (256 + sizeof(uint16_t));
     size_t expected_size = sizeof(uint32_t) + (peer_count * (256 + sizeof(uint16_t)));
-    MXD_LOG_DEBUG("p2p", "PEERS message from %s:%d: count=%u, length=%zu, expected=%zu", 
-                 address, port, peer_count, length, expected_size);
     
-    if (length < expected_size) {
-        MXD_LOG_WARN("p2p", "Truncated PEERS message from %s:%d (count=%u, length=%zu, expected=%zu)", 
-                    address, port, peer_count, length, expected_size);
+    MXD_LOG_DEBUG("p2p", "PEERS message from %s:%d: count=%u, length=%zu, expected=%zu, available=%zu", 
+                 address, port, peer_count, length, expected_size, available_entries);
+    
+    if (available_entries == 0) {
+        MXD_LOG_WARN("p2p", "PEERS message from %s:%d has no peer data (length=%zu)", 
+                    address, port, length);
         return;
+    }
+    
+    if (peer_count > available_entries) {
+        MXD_LOG_WARN("p2p", "PEERS message from %s:%d: count=%u exceeds available=%zu (possible mixed version), using available count", 
+                    address, port, peer_count, available_entries);
+        peer_count = available_entries;
     }
     
     MXD_LOG_INFO("p2p", "Processing %u peers from %s:%d", peer_count, address, port);
