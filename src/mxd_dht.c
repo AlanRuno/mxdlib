@@ -25,6 +25,7 @@
 #include "mxd_crypto.h"
 #include "utils/mxd_http.h"
 #include "mxd_p2p.h"
+#include "node/memory_utils.h"
 
 static mxd_node_metrics_t node_metrics = {
     .message_success = 0,
@@ -220,7 +221,6 @@ int mxd_start_dht(uint16_t port) {
     uint8_t public_key[256];
     uint8_t private_key[128];
     
-    #include "../node/memory_utils.h"
     log_memory_usage("before_keypair_gen");
     
     if (load_or_generate_node_keypair(public_key, private_key) != 0) {
