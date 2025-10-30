@@ -18,6 +18,7 @@
 #include "../include/mxd_logging.h"
 #include "../include/mxd_monitoring.h"
 #include "metrics_display.h"
+#include "memory_utils.h"
 
 static volatile int keep_running = 1;
 static mxd_config_t current_config;
@@ -123,6 +124,7 @@ int main(int argc, char** argv) {
     mxd_init_logging(&log_config);
     
     MXD_LOG_INFO("node", "MXD Node starting...");
+    log_memory_usage("startup");
     
     char default_config_path[PATH_MAX];
     const char* config_path = NULL;
@@ -179,6 +181,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     MXD_LOG_INFO("node", "Configuration loaded successfully");
+    log_memory_usage("after_config");
     
     memset(&node_stake, 0, sizeof(node_stake));
     strncpy(node_stake.node_id, current_config.node_id, sizeof(node_stake.node_id) - 1);
@@ -199,6 +202,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     MXD_LOG_INFO("node", "Metrics initialized successfully");
+    log_memory_usage("after_metrics");
     
     MXD_LOG_INFO("node", "Initializing rapid table...");
     if (mxd_init_rapid_table(&rapid_table, 100) != 0) {
@@ -206,6 +210,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     MXD_LOG_INFO("node", "Rapid table initialized successfully");
+    log_memory_usage("after_rapid_table");
     
     // Initialize monitoring system
     MXD_LOG_INFO("node", "Initializing monitoring system on port %d...", current_config.metrics_port);
@@ -214,6 +219,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     MXD_LOG_INFO("node", "Monitoring system initialized successfully");
+    log_memory_usage("after_monitoring");
     
     // Start metrics server
     if (mxd_start_metrics_server() != 0) {
@@ -230,16 +236,19 @@ int main(int argc, char** argv) {
     }
     
     // Initialize DHT node
+    log_memory_usage("before_dht_init");
     if (mxd_init_node(&current_config) != 0) {
         MXD_LOG_ERROR("node", "Failed to initialize DHT node");
         return 1;
     }
+    log_memory_usage("after_dht_init");
     
     // Start DHT service
     if (mxd_start_dht(current_config.port) != 0) {
         MXD_LOG_ERROR("node", "Failed to start DHT service");
         return 1;
     }
+    log_memory_usage("after_dht_start");
     
     // Start metrics collector thread BEFORE UPnP to ensure display loop runs
     pthread_t collector_thread;
