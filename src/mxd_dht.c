@@ -299,7 +299,7 @@ int mxd_start_dht(uint16_t port) {
                 uint16_t my_port = dht_port;
                 if (mxd_send_message_with_retry(peer_list[i].address, peer_list[i].port, 
                                    MXD_MSG_GET_PEERS, &my_port, sizeof(uint16_t), 5) == 0) {
-                    MXD_LOG_INFO("dht", "Requested peers from bootstrap %s:%d (my port: %d)", 
+                    MXD_LOG_INFO("dht", "Requested peers from bootstrap %s:%d (advertising P2P port: %d)", 
                                peer_list[i].address, peer_list[i].port, my_port);
                 } else {
                     MXD_LOG_WARN("dht", "Failed to request peers from bootstrap %s:%d", 
@@ -427,7 +427,7 @@ static void* peer_discovery_thread_func(void* arg) {
                     uint16_t my_port = dht_port;
                     if (mxd_send_message_with_retry(peer_list[i].address, peer_list[i].port, 
                                        MXD_MSG_GET_PEERS, &my_port, sizeof(uint16_t), 3) == 0) {
-                        MXD_LOG_INFO("dht", "Requested peers from %s:%d (my port: %d)", 
+                        MXD_LOG_INFO("dht", "Requested peers from %s:%d (advertising P2P port: %d)", 
                                    peer_list[i].address, peer_list[i].port, my_port);
                     } else {
                         MXD_LOG_DEBUG("dht", "Failed to request peers from %s:%d", 
