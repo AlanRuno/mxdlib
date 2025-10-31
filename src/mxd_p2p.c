@@ -772,6 +772,13 @@ static int handle_handshake_message(const char *address, uint16_t port,
         if (create_signed_handshake(&reply_handshake, NULL, 0) == 0) {
             if (send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, &reply_handshake, sizeof(reply_handshake)) == 0) {
                 MXD_LOG_INFO("p2p", "Sent HANDSHAKE reply to %s:%d", address, port);
+                
+                uint16_t my_listen_port = p2p_port;
+                if (send_on_socket(conn->socket, MXD_MSG_GET_PEERS, &my_listen_port, sizeof(uint16_t)) == 0) {
+                    MXD_LOG_INFO("p2p", "Sent GET_PEERS to %s:%d over TCP after handshake", address, port);
+                } else {
+                    MXD_LOG_DEBUG("p2p", "Failed to send GET_PEERS to %s:%d over TCP", address, port);
+                }
             } else {
                 MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE reply to %s:%d", address, port);
             }
