@@ -767,6 +767,17 @@ static int handle_handshake_message(const char *address, uint16_t port,
         conn->connected_at = time(NULL);
         conn->last_keepalive_received = time(NULL);
         conn->keepalive_failures = 0;
+        
+        mxd_handshake_payload_t reply_handshake;
+        if (create_signed_handshake(&reply_handshake, NULL, 0) == 0) {
+            if (send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, &reply_handshake, sizeof(reply_handshake)) == 0) {
+                MXD_LOG_INFO("p2p", "Sent HANDSHAKE reply to %s:%d", address, port);
+            } else {
+                MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE reply to %s:%d", address, port);
+            }
+        } else {
+            MXD_LOG_ERROR("p2p", "Failed to create HANDSHAKE reply for %s:%d", address, port);
+        }
     }
     
     if (mxd_dht_add_peer(address, handshake->listen_port) == 0) {
