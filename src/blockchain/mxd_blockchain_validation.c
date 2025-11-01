@@ -185,4 +185,9 @@ void mxd_free_validation_chain(mxd_block_t *block) {
         block->validation_count = 0;
         block->validation_capacity = 0;
     }
+    if (block && block->rapid_table_snapshot) {
+        free(block->rapid_table_snapshot);
+        block->rapid_table_snapshot = NULL;
+        block->rapid_table_snapshot_size = 0;
+    }
 }

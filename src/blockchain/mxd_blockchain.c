@@ -26,6 +26,9 @@ int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]) {
   block->timestamp = time(NULL);
   block->difficulty = 1; // Initial difficulty
   block->nonce = 0;
+  block->rapid_table_snapshot = NULL;
+  block->rapid_table_snapshot_size = 0;
+  block->total_supply = 0.0;
 
   // Reset transaction storage
   if (transactions) {

@@ -151,8 +151,32 @@ int mxd_check_block_relay_status(const uint8_t block_hash[64]) {
 int mxd_sync_rapid_table(mxd_rapid_table_t *table) {
     if (!table) return -1;
     
-    // For testing purposes, simulate successful sync
     MXD_LOG_INFO("sync", "Synchronizing Rapid Table with network");
+    
+    uint32_t current_height = 0;
+    if (mxd_get_blockchain_height(&current_height) != 0 || current_height == 0) {
+        MXD_LOG_WARN("sync", "No blockchain data available for rapid table sync");
+        return 0;
+    }
+    
+    mxd_block_t latest_block;
+    memset(&latest_block, 0, sizeof(mxd_block_t));
+    
+    if (mxd_retrieve_block_by_height(current_height, &latest_block) != 0) {
+        MXD_LOG_ERROR("sync", "Failed to retrieve latest block for rapid table sync");
+        return -1;
+    }
+    
+    if (latest_block.rapid_table_snapshot && latest_block.rapid_table_snapshot_size > 0) {
+        if (mxd_update_rapid_table_from_block(table, &latest_block, NULL) == 0) {
+            MXD_LOG_INFO("sync", "Rapid Table synchronized from block %u", current_height);
+        } else {
+            MXD_LOG_ERROR("sync", "Failed to update rapid table from block");
+        }
+    }
+    
+    mxd_free_validation_chain(&latest_block);
+    
     return 0;
 }
 

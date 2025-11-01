@@ -261,9 +261,14 @@ int mxd_init_rapid_table(mxd_rapid_table_t *table, size_t capacity) {
     return 0;
 }
 
-int mxd_add_to_rapid_table(mxd_rapid_table_t *table, mxd_node_stake_t *node) {
+int mxd_add_to_rapid_table(mxd_rapid_table_t *table, mxd_node_stake_t *node, const char *local_node_id) {
     if (!table || !node || !table->nodes) {
         return -1;
+    }
+    
+    if (local_node_id && strcmp(node->node_id, local_node_id) == 0) {
+        MXD_LOG_DEBUG("rsc", "Skipping self-node %s from rapid table", node->node_id);
+        return 0; // Not an error, just skip
     }
     
     // Check if node is already in table
@@ -742,6 +747,15 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     if (mxd_block_has_validation_quorum(block, table)) {
         context->status = MXD_VALIDATION_COMPLETE;
         
+        if (!block->rapid_table_snapshot) {
+            uint8_t *snapshot_data = NULL;
+            uint32_t snapshot_size = 0;
+            if (mxd_serialize_rapid_table(table, &snapshot_data, &snapshot_size) == 0) {
+                block->rapid_table_snapshot = snapshot_data;
+                block->rapid_table_snapshot_size = snapshot_size;
+            }
+        }
+        
         mxd_store_block(block);
         
         return 0;
@@ -756,6 +770,15 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     if (mxd_get_next_validator(block, table, next_validator_id) != 0) {
         if (context->signature_count >= context->required_signatures) {
             context->status = MXD_VALIDATION_COMPLETE;
+            
+            if (!block->rapid_table_snapshot) {
+                uint8_t *snapshot_data = NULL;
+                uint32_t snapshot_size = 0;
+                if (mxd_serialize_rapid_table(table, &snapshot_data, &snapshot_size) == 0) {
+                    block->rapid_table_snapshot = snapshot_data;
+                    block->rapid_table_snapshot_size = snapshot_size;
+                }
+            }
             
             mxd_store_block(block);
             
@@ -804,4 +827,197 @@ int mxd_get_validator_public_key(const uint8_t validator_id[20], uint8_t *out_ke
         }
     }
     return -1;
+}
+
+int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, double total_supply, int is_genesis) {
+    if (!node) {
+        return 0;
+    }
+    
+    if (is_genesis) {
+        return 1;
+    }
+    
+    if (total_supply <= 0) {
+        return 0;
+    }
+    
+    double stake_percentage = (node->stake_amount / total_supply) * 100.0;
+    if (stake_percentage < 1.0) {
+        return 0;
+    }
+    
+    if (!node->active) {
+        return 0;
+    }
+    
+    if (node->metrics.response_count < MXD_MIN_RESPONSE_COUNT) {
+        return 0;
+    }
+    
+    if (node->metrics.avg_response_time >= MXD_MAX_RESPONSE_TIME) {
+        return 0;
+    }
+    
+    return 1;
+}
+
+int mxd_serialize_rapid_table(const mxd_rapid_table_t *table, uint8_t **out_data, uint32_t *out_size) {
+    if (!table || !out_data || !out_size) {
+        return -1;
+    }
+    
+    uint32_t node_count = table->count;
+    size_t total_size = sizeof(uint32_t);
+    
+    for (size_t i = 0; i < node_count; i++) {
+        if (table->nodes[i]) {
+            total_size += sizeof(mxd_node_stake_t);
+        }
+    }
+    
+    uint8_t *buffer = malloc(total_size);
+    if (!buffer) {
+        return -1;
+    }
+    
+    uint8_t *ptr = buffer;
+    memcpy(ptr, &node_count, sizeof(uint32_t));
+    ptr += sizeof(uint32_t);
+    
+    for (size_t i = 0; i < node_count; i++) {
+        if (table->nodes[i]) {
+            memcpy(ptr, table->nodes[i], sizeof(mxd_node_stake_t));
+            ptr += sizeof(mxd_node_stake_t);
+        }
+    }
+    
+    *out_data = buffer;
+    *out_size = total_size;
+    
+    return 0;
+}
+
+int mxd_deserialize_rapid_table(const uint8_t *data, uint32_t size, mxd_rapid_table_t *table) {
+    if (!data || size < sizeof(uint32_t) || !table) {
+        return -1;
+    }
+    
+    const uint8_t *ptr = data;
+    uint32_t node_count;
+    memcpy(&node_count, ptr, sizeof(uint32_t));
+    ptr += sizeof(uint32_t);
+    
+    if (size < sizeof(uint32_t) + (node_count * sizeof(mxd_node_stake_t))) {
+        return -1;
+    }
+    
+    if (node_count > table->capacity) {
+        return -1;
+    }
+    
+    for (uint32_t i = 0; i < node_count; i++) {
+        if (!table->nodes[i]) {
+            table->nodes[i] = malloc(sizeof(mxd_node_stake_t));
+            if (!table->nodes[i]) {
+                return -1;
+            }
+        }
+        memcpy(table->nodes[i], ptr, sizeof(mxd_node_stake_t));
+        ptr += sizeof(mxd_node_stake_t);
+    }
+    
+    table->count = node_count;
+    
+    return 0;
+}
+
+int mxd_update_rapid_table_from_block(mxd_rapid_table_t *table, const mxd_block_t *block, const char *local_node_id) {
+    if (!table || !block) {
+        return -1;
+    }
+    
+    if (!block->rapid_table_snapshot || block->rapid_table_snapshot_size == 0) {
+        return 0;
+    }
+    
+    mxd_rapid_table_t temp_table;
+    if (mxd_init_rapid_table(&temp_table, table->capacity) != 0) {
+        return -1;
+    }
+    
+    if (mxd_deserialize_rapid_table(block->rapid_table_snapshot, 
+                                    block->rapid_table_snapshot_size, 
+                                    &temp_table) != 0) {
+        mxd_free_rapid_table(&temp_table);
+        return -1;
+    }
+    
+    for (size_t i = 0; i < table->count; i++) {
+        if (table->nodes[i]) {
+            free(table->nodes[i]);
+            table->nodes[i] = NULL;
+        }
+    }
+    table->count = 0;
+    
+    for (size_t i = 0; i < temp_table.count; i++) {
+        if (temp_table.nodes[i]) {
+            if (local_node_id && strcmp(temp_table.nodes[i]->node_id, local_node_id) == 0) {
+                continue;
+            }
+            
+            if (table->count < table->capacity) {
+                if (!table->nodes[table->count]) {
+                    table->nodes[table->count] = malloc(sizeof(mxd_node_stake_t));
+                }
+                if (table->nodes[table->count]) {
+                    memcpy(table->nodes[table->count], temp_table.nodes[i], sizeof(mxd_node_stake_t));
+                    table->count++;
+                }
+            }
+        }
+    }
+    
+    mxd_free_rapid_table(&temp_table);
+    
+    return 0;
+}
+
+int mxd_rebuild_rapid_table_from_peers(mxd_rapid_table_t *table, mxd_node_stake_t *peer_nodes, 
+                                       size_t peer_count, double total_supply, 
+                                       int is_genesis, const char *local_node_id) {
+    if (!table || !peer_nodes) {
+        return -1;
+    }
+    
+    for (size_t i = 0; i < table->count; i++) {
+        if (table->nodes[i]) {
+            free(table->nodes[i]);
+            table->nodes[i] = NULL;
+        }
+    }
+    table->count = 0;
+    
+    for (size_t i = 0; i < peer_count && table->count < table->capacity; i++) {
+        if (mxd_should_add_to_rapid_table(&peer_nodes[i], total_supply, is_genesis)) {
+            if (local_node_id && strcmp(peer_nodes[i].node_id, local_node_id) == 0) {
+                continue;
+            }
+            
+            if (!table->nodes[table->count]) {
+                table->nodes[table->count] = malloc(sizeof(mxd_node_stake_t));
+            }
+            if (table->nodes[table->count]) {
+                memcpy(table->nodes[table->count], &peer_nodes[i], sizeof(mxd_node_stake_t));
+                table->count++;
+            }
+        }
+    }
+    
+    if (table->count > 0) {
+        qsort(table->nodes, table->count, sizeof(mxd_node_stake_t *), compare_nodes);
+    }
+    
+    return 0;
 }

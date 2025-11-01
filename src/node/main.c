@@ -333,7 +333,7 @@ int main(int argc, char** argv) {
                 }
             }
             if (!found) {
-                mxd_add_to_rapid_table(&rapid_table, &node_stake);
+                mxd_add_to_rapid_table(&rapid_table, &node_stake, current_config.node_id);
             }
         }
         

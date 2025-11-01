@@ -36,6 +36,9 @@ typedef struct {
     mxd_validator_signature_t *validation_chain;
     uint32_t validation_count;
     uint32_t validation_capacity;
+    uint8_t *rapid_table_snapshot;
+    uint32_t rapid_table_snapshot_size;
+    double total_supply;
 } mxd_block_t;
 
 int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]);
