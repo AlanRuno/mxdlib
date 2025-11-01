@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include <rocksdb/c.h>
 
 // Performance thresholds
@@ -133,6 +134,13 @@ static int compare_nodes(const void *a, const void *b) {
     }
 
     return 0;
+}
+
+// Compare function for node pointers (for qsort on pointer arrays)
+static int compare_node_ptrs(const void *a, const void *b) {
+    const mxd_node_stake_t *node_a = *(const mxd_node_stake_t * const *)a;
+    const mxd_node_stake_t *node_b = *(const mxd_node_stake_t * const *)b;
+    return compare_nodes(node_a, node_b);
 }
 
 // Distribute voluntary tips based on node performance
@@ -1016,7 +1024,7 @@ int mxd_rebuild_rapid_table_from_peers(mxd_rapid_table_t *table, mxd_node_stake_
     }
     
     if (table->count > 0) {
-        qsort(table->nodes, table->count, sizeof(mxd_node_stake_t *), compare_nodes);
+        qsort(table->nodes, table->count, sizeof(mxd_node_stake_t *), compare_node_ptrs);
     }
     
     return 0;
