@@ -2,6 +2,7 @@
 #include "../../include/mxd_ntp.h"
 #include "../../include/mxd_blockchain_db.h"
 #include "../../include/mxd_logging.h"
+#include "../../include/mxd_utxo.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,8 +51,8 @@ int mxd_validate_node_stake(const mxd_node_stake_t *node, double total_stake) {
     // Calculate stake percentage
     double stake_percent = (node->stake_amount / total_stake) * 100.0;
 
-    // Check minimum stake requirement (0.1%)
-    return stake_percent >= 0.1 ? 0 : -1;
+    // Check minimum stake requirement (1%)
+    return stake_percent >= 1.0 ? 0 : -1;
 }
 
 // Update node response metrics with NTP-synchronized timestamp
@@ -764,6 +765,15 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
             }
         }
         
+        if (block->total_supply == 0.0) {
+            size_t total_count = 0;
+            size_t pruned_count = 0;
+            double total_value = 0.0;
+            if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0) {
+                block->total_supply = total_value;
+            }
+        }
+        
         mxd_store_block(block);
         
         return 0;
@@ -788,10 +798,19 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
                 }
             }
             
+            if (block->total_supply == 0.0) {
+                size_t total_count = 0;
+                size_t pruned_count = 0;
+                double total_value = 0.0;
+                if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0) {
+                    block->total_supply = total_value;
+                }
+            }
+            
             mxd_store_block(block);
             
             return 0;
-        } else {
+        }else {
             context->status = MXD_VALIDATION_REJECTED;
             return -1;
         }
@@ -842,12 +861,8 @@ int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, double total_sup
         return 0;
     }
     
-    if (is_genesis) {
+    if (is_genesis || total_supply == 0.0) {
         return 1;
-    }
-    
-    if (total_supply <= 0) {
-        return 0;
     }
     
     double stake_percentage = (node->stake_amount / total_supply) * 100.0;

@@ -148,7 +148,7 @@ int mxd_check_block_relay_status(const uint8_t block_hash[64]) {
     return 0; // No, block does not have enough signatures for relay
 }
 
-int mxd_sync_rapid_table(mxd_rapid_table_t *table) {
+int mxd_sync_rapid_table(mxd_rapid_table_t *table, const char *local_node_id) {
     if (!table) return -1;
     
     MXD_LOG_INFO("sync", "Synchronizing Rapid Table with network");
@@ -168,7 +168,7 @@ int mxd_sync_rapid_table(mxd_rapid_table_t *table) {
     }
     
     if (latest_block.rapid_table_snapshot && latest_block.rapid_table_snapshot_size > 0) {
-        if (mxd_update_rapid_table_from_block(table, &latest_block, NULL) == 0) {
+        if (mxd_update_rapid_table_from_block(table, &latest_block, local_node_id) == 0) {
             MXD_LOG_INFO("sync", "Rapid Table synchronized from block %u", current_height);
         } else {
             MXD_LOG_ERROR("sync", "Failed to update rapid table from block");
