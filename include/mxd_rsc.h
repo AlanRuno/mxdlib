@@ -98,17 +98,15 @@ int mxd_get_next_validator(const mxd_block_t *block, const mxd_rapid_table_t *ta
 int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *context,
                                 const mxd_rapid_table_t *table);
 
-int mxd_serialize_rapid_table(const mxd_rapid_table_t *table, uint8_t **out_data, uint32_t *out_size);
+int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *block, 
+                                const char *local_node_id);
 
-int mxd_deserialize_rapid_table(const uint8_t *data, uint32_t size, mxd_rapid_table_t *table);
-
-int mxd_update_rapid_table_from_block(mxd_rapid_table_t *table, const mxd_block_t *block, const char *local_node_id);
+int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time);
 
 int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, double total_supply, int is_genesis);
 
-int mxd_rebuild_rapid_table_from_peers(mxd_rapid_table_t *table, mxd_node_stake_t *peer_nodes, 
-                                       size_t peer_count, double total_supply, 
-                                       int is_genesis, const char *local_node_id);
+int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t from_height, 
+                                            uint32_t to_height, const char *local_node_id);
 
 #ifdef __cplusplus
 }
