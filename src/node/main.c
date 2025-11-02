@@ -17,8 +17,15 @@
 #include "../include/mxd_blockchain.h"
 #include "../include/mxd_logging.h"
 #include "../include/mxd_monitoring.h"
+#include "../include/mxd_address.h"
+#include "../include/mxd_crypto.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
+
+extern void mxd_genesis_message_handler(const char *address, uint16_t port,
+                                        mxd_message_type_t type,
+                                        const void *payload,
+                                        size_t payload_length);
 
 static volatile int keep_running = 1;
 static mxd_config_t current_config;
@@ -26,6 +33,8 @@ static mxd_node_metrics_t node_metrics;
 static mxd_node_stake_t node_stake;
 static mxd_rapid_table_t rapid_table;
 static pthread_mutex_t metrics_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int genesis_initialized = 0;
+static uint64_t last_genesis_announce = 0;
 
 void handle_signal(int signum) {
     MXD_LOG_INFO("node", "Received signal %d, terminating node %s...", 
@@ -301,6 +310,33 @@ int main(int argc, char** argv) {
         }
     }
     
+    mxd_set_message_handler(mxd_genesis_message_handler);
+    MXD_LOG_INFO("node", "Genesis message handler registered");
+    
+    uint8_t node_pubkey[256] = {0};
+    uint8_t node_privkey[128] = {0};
+    uint8_t node_address[20] = {0};
+    
+    if (mxd_get_node_keys(node_pubkey, node_privkey) == 0) {
+        char address_str[42] = {0};
+        if (mxd_generate_address(node_pubkey, address_str, sizeof(address_str)) == 0) {
+            if (mxd_hash160((const uint8_t*)address_str, strlen(address_str), node_address) == 0) {
+                if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey) == 0) {
+                    genesis_initialized = 1;
+                    MXD_LOG_INFO("node", "Genesis coordination initialized with node address: %s", address_str);
+                } else {
+                    MXD_LOG_WARN("node", "Failed to initialize genesis coordination");
+                }
+            } else {
+                MXD_LOG_WARN("node", "Failed to hash node address");
+            }
+        } else {
+            MXD_LOG_WARN("node", "Failed to generate node address from public key");
+        }
+    } else {
+        MXD_LOG_WARN("node", "Failed to retrieve node keys from P2P");
+    }
+    
     MXD_LOG_INFO("node", "Node started successfully, entering display loop");
     
     // Main display loop
@@ -337,9 +373,24 @@ int main(int argc, char** argv) {
             }
         }
         
-        if (blockchain_height == 0 && rapid_table.count >= 3) {
-            mxd_try_create_genesis_block(&rapid_table, NULL, NULL, NULL);
+        pthread_mutex_unlock(&metrics_mutex);
+        
+        mxd_get_blockchain_height(&blockchain_height);
+        
+        if (genesis_initialized && blockchain_height == 0) {
+            uint64_t current_time = time(NULL);
+            
+            if (current_time - last_genesis_announce >= 3) {
+                mxd_broadcast_genesis_announce();
+                last_genesis_announce = current_time;
+            }
+            
+            if (mxd_get_pending_genesis_count() >= 3) {
+                mxd_try_coordinate_genesis_block();
+            }
         }
+        
+        pthread_mutex_lock(&metrics_mutex);
         
         snapshot_count = rapid_table.count < 100 ? rapid_table.count : 100;
         for (size_t i = 0; i < snapshot_count; i++) {
