@@ -1,5 +1,7 @@
 #include "../../include/mxd_blockchain.h"
 #include "../../include/mxd_crypto.h"
+#include "../../include/mxd_rsc.h"
+#include "../../include/mxd_utxo.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
