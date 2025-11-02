@@ -108,6 +108,9 @@ int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, double total_sup
 int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t from_height, 
                                             uint32_t to_height, const char *local_node_id);
 
+int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_address,
+                                  const uint8_t *private_key, const uint8_t *public_key);
+
 #ifdef __cplusplus
 }
 #endif

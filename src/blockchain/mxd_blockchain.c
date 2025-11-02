@@ -290,7 +290,7 @@ int mxd_block_has_membership_quorum(const mxd_block_t *block, size_t rapid_table
   }
   
   if (rapid_table_size == 0) {
-    return 1; // Genesis case - any membership entries are valid
+    return block->rapid_membership_count >= 3 ? 1 : 0;
   }
   
   // Calculate 2/3 threshold
