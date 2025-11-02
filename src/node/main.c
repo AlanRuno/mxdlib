@@ -337,6 +337,10 @@ int main(int argc, char** argv) {
             }
         }
         
+        if (blockchain_height == 0 && rapid_table.count >= 3) {
+            mxd_try_create_genesis_block(&rapid_table, NULL, NULL, NULL);
+        }
+        
         snapshot_count = rapid_table.count < 100 ? rapid_table.count : 100;
         for (size_t i = 0; i < snapshot_count; i++) {
             if (rapid_table.nodes[i]) {

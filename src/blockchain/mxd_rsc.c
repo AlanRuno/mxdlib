@@ -275,9 +275,17 @@ int mxd_add_to_rapid_table(mxd_rapid_table_t *table, mxd_node_stake_t *node, con
         return -1;
     }
     
-    if (local_node_id && strcmp(node->node_id, local_node_id) == 0) {
-        MXD_LOG_DEBUG("rsc", "Skipping self-node %s from rapid table", node->node_id);
+    // Check if we're in genesis mode (network height is 0)
+    uint32_t blockchain_height = 0;
+    int is_genesis = (mxd_get_blockchain_height(&blockchain_height) != 0 || blockchain_height == 0);
+    
+    if (!is_genesis && local_node_id && strcmp(node->node_id, local_node_id) == 0) {
+        MXD_LOG_DEBUG("rsc", "Skipping self-node %s from rapid table (non-genesis mode)", node->node_id);
         return 0; // Not an error, just skip
+    }
+    
+    if (is_genesis && local_node_id && strcmp(node->node_id, local_node_id) == 0) {
+        MXD_LOG_INFO("rsc", "Adding self-node %s to rapid table (genesis mode)", node->node_id);
     }
     
     // Check if node is already in table
@@ -993,7 +1001,7 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
         memset(&block, 0, sizeof(mxd_block_t));
         
         if (mxd_retrieve_block_by_height(height, &block) != 0) {
-            continue; // Skip missing blocks
+            continue;
         }
         
         mxd_apply_membership_deltas(table, &block, local_node_id);
@@ -1007,4 +1015,69 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
     }
     
     return 0;
+}
+
+int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_address,
+                                  const uint8_t *private_key, const uint8_t *public_key) {
+    if (!table) {
+        return -1;
+    }
+    
+    uint32_t blockchain_height = 0;
+    if (mxd_get_blockchain_height(&blockchain_height) == 0 && blockchain_height > 0) {
+        return 0;
+    }
+    
+    if (table->count < 3) {
+        return 0;
+    }
+    
+    static int genesis_creation_attempted = 0;
+    if (genesis_creation_attempted) {
+        return 0;
+    }
+    genesis_creation_attempted = 1;
+    
+    MXD_LOG_INFO("rsc", "Attempting to create genesis block with %zu validators in rapid table", table->count);
+    
+    mxd_block_t genesis_block;
+    uint8_t prev_hash[64] = {0};
+    
+    if (mxd_init_block(&genesis_block, prev_hash) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to initialize genesis block");
+        genesis_creation_attempted = 0;
+        return -1;
+    }
+    
+    genesis_block.height = 0;
+    genesis_block.total_supply = 0.0;
+    
+    if (table->nodes[0]) {
+        memcpy(genesis_block.proposer_id, table->nodes[0]->node_id, 20);
+    }
+    
+    if (mxd_freeze_transaction_set(&genesis_block) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to freeze genesis block transaction set");
+        genesis_creation_attempted = 0;
+        return -1;
+    }
+    
+    if (mxd_calculate_block_hash(&genesis_block, genesis_block.block_hash) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to calculate genesis block hash");
+        genesis_creation_attempted = 0;
+        return -1;
+    }
+    
+    if (mxd_store_block(&genesis_block) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to store genesis block");
+        genesis_creation_attempted = 0;
+        return -1;
+    }
+    
+    MXD_LOG_INFO("rsc", "Genesis block created successfully with %zu validators in rapid table",
+                 table->count);
+    
+    mxd_free_validation_chain(&genesis_block);
+    
+    return 1;
 }
