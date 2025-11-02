@@ -904,7 +904,7 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
             char node_id_str[41];
             // Convert address bytes to hex string for comparison
             for (int j = 0; j < 20; j++) {
-                sprintf(node_id_str + (j * 2), "%02x", entry->node_address[j]);
+                snprintf(node_id_str + (j * 2), 3, "%02x", entry->node_address[j]);
             }
             node_id_str[40] = '\0';
             
