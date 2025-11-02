@@ -108,6 +108,36 @@ int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, double total_sup
 int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t from_height, 
                                             uint32_t to_height, const char *local_node_id);
 
+typedef struct {
+    uint8_t node_address[20];
+    uint8_t public_key[256];
+    uint64_t timestamp;
+    uint8_t signature[4096];
+    uint16_t signature_length;
+} mxd_genesis_member_t;
+
+int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey);
+
+void mxd_cleanup_genesis_coordination(void);
+
+int mxd_broadcast_genesis_announce(void);
+
+int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *public_key, 
+                                 uint64_t timestamp, const uint8_t *signature, uint16_t signature_length);
+
+int mxd_get_pending_genesis_count(void);
+
+int mxd_try_coordinate_genesis_block(void);
+
+int mxd_send_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest, 
+                                   const uint8_t *proposer_id, uint32_t height);
+
+int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest,
+                                     const uint8_t *proposer_id, uint32_t height);
+
+int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *membership_digest,
+                                      const uint8_t *signature, uint16_t signature_length);
+
 int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_address,
                                   const uint8_t *private_key, const uint8_t *public_key);
 

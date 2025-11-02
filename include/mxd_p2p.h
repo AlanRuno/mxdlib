@@ -48,11 +48,14 @@ typedef enum {
   MXD_MSG_BLOCKS = 6,
   MXD_MSG_GET_TRANSACTIONS = 7,
   MXD_MSG_TRANSACTIONS = 8,
-  MXD_MSG_BLOCK_VALIDATION = 9,     // Block validation chain message
-  MXD_MSG_VALIDATION_SIGNATURE = 10, // Single validation signature
-  MXD_MSG_GET_VALIDATION_CHAIN = 11, // Request validation chain for block
-  MXD_MSG_VALIDATION_CHAIN = 12,     // Complete validation chain response
-  MXD_MSG_RAPID_TABLE_UPDATE = 13    // Rapid Table update message
+  MXD_MSG_BLOCK_VALIDATION = 9,
+  MXD_MSG_VALIDATION_SIGNATURE = 10,
+  MXD_MSG_GET_VALIDATION_CHAIN = 11,
+  MXD_MSG_VALIDATION_CHAIN = 12,
+  MXD_MSG_RAPID_TABLE_UPDATE = 13,
+  MXD_MSG_GENESIS_ANNOUNCE = 14,
+  MXD_MSG_GENESIS_SIGN_REQUEST = 15,
+  MXD_MSG_GENESIS_SIGN_RESPONSE = 16
 } mxd_message_type_t;
 
 // Message header

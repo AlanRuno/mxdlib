@@ -117,6 +117,7 @@ add_library(mxd SHARED
     src/mxd_p2p.c
     src/mxd_p2p_validation.c
     src/mxd_p2p_peer.c
+    src/mxd_genesis_handler.c
     src/mxd_get_utxo.c
     src/mxd_rocksdb_globals.c
     src/mxd_smart_contracts.c
