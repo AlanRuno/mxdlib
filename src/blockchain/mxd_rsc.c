@@ -3,6 +3,8 @@
 #include "../../include/mxd_blockchain_db.h"
 #include "../../include/mxd_logging.h"
 #include "../../include/mxd_utxo.h"
+#include "../../include/mxd_crypto.h"
+#include "../../include/mxd_p2p.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1017,9 +1019,289 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
     return 0;
 }
 
-int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_address,
-                                  const uint8_t *private_key, const uint8_t *public_key) {
-    if (!table) {
+typedef struct {
+    uint8_t node_address[20];
+    uint8_t signature[4096];
+    uint16_t signature_length;
+    int received;
+} mxd_genesis_signature_t;
+
+static mxd_genesis_member_t *pending_genesis_members = NULL;
+static size_t pending_genesis_count = 0;
+static size_t pending_genesis_capacity = 0;
+static uint8_t local_genesis_address[20] = {0};
+static uint8_t local_genesis_pubkey[256] = {0};
+static uint8_t local_genesis_privkey[4096] = {0};
+static int genesis_coordination_initialized = 0;
+static mxd_genesis_signature_t collected_signatures[10];
+static size_t collected_signature_count = 0;
+static uint8_t pending_genesis_digest[64] = {0};
+static int genesis_sign_request_sent = 0;
+
+int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey) {
+    if (!local_address || !local_pubkey || !local_privkey) {
+        return -1;
+    }
+    
+    memcpy(local_genesis_address, local_address, 20);
+    memcpy(local_genesis_pubkey, local_pubkey, 256);
+    memcpy(local_genesis_privkey, local_privkey, 4096);
+    
+    pending_genesis_capacity = 10;
+    pending_genesis_members = calloc(pending_genesis_capacity, sizeof(mxd_genesis_member_t));
+    if (!pending_genesis_members) {
+        return -1;
+    }
+    
+    genesis_coordination_initialized = 1;
+    MXD_LOG_INFO("rsc", "Genesis coordination initialized");
+    return 0;
+}
+
+void mxd_cleanup_genesis_coordination(void) {
+    if (pending_genesis_members) {
+        free(pending_genesis_members);
+        pending_genesis_members = NULL;
+    }
+    pending_genesis_count = 0;
+    pending_genesis_capacity = 0;
+    genesis_coordination_initialized = 0;
+}
+
+int mxd_broadcast_genesis_announce(void) {
+    if (!genesis_coordination_initialized) {
+        return -1;
+    }
+    
+    uint64_t current_time;
+    if (mxd_get_network_time(&current_time) != 0) {
+        current_time = time(NULL);
+    }
+    
+    uint8_t announce_payload[20 + 256 + 8];
+    memcpy(announce_payload, local_genesis_address, 20);
+    memcpy(announce_payload + 20, local_genesis_pubkey, 256);
+    memcpy(announce_payload + 276, &current_time, 8);
+    
+    uint8_t signature[4096];
+    size_t signature_len = sizeof(signature);
+    if (mxd_dilithium_sign(signature, &signature_len, announce_payload, sizeof(announce_payload), local_genesis_privkey) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to sign genesis announce");
+        return -1;
+    }
+    
+    uint8_t message[20 + 256 + 8 + 2 + 4096];
+    size_t offset = 0;
+    memcpy(message + offset, local_genesis_address, 20);
+    offset += 20;
+    memcpy(message + offset, local_genesis_pubkey, 256);
+    offset += 256;
+    memcpy(message + offset, &current_time, 8);
+    offset += 8;
+    uint16_t sig_len = (uint16_t)signature_len;
+    memcpy(message + offset, &sig_len, 2);
+    offset += 2;
+    memcpy(message + offset, signature, signature_len);
+    offset += signature_len;
+    
+    if (mxd_broadcast_message(MXD_MSG_GENESIS_ANNOUNCE, message, offset) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to broadcast genesis announce");
+        return -1;
+    }
+    
+    MXD_LOG_INFO("rsc", "Broadcast genesis announce");
+    return 0;
+}
+
+int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *public_key, 
+                                 uint64_t timestamp, const uint8_t *signature, uint16_t signature_length) {
+    if (!genesis_coordination_initialized || !node_address || !public_key || !signature) {
+        return -1;
+    }
+    
+    uint64_t current_time;
+    if (mxd_get_network_time(&current_time) != 0) {
+        current_time = time(NULL);
+    }
+    
+    if (timestamp > current_time + 60 || timestamp < current_time - 60) {
+        MXD_LOG_WARN("rsc", "Genesis announce timestamp drift too large");
+        return -1;
+    }
+    
+    uint8_t announce_payload[20 + 256 + 8];
+    memcpy(announce_payload, node_address, 20);
+    memcpy(announce_payload + 20, public_key, 256);
+    memcpy(announce_payload + 276, &timestamp, 8);
+    
+    if (mxd_dilithium_verify(signature, signature_length, announce_payload, sizeof(announce_payload), public_key) != 0) {
+        MXD_LOG_WARN("rsc", "Invalid genesis announce signature");
+        return -1;
+    }
+    
+    for (size_t i = 0; i < pending_genesis_count; i++) {
+        if (memcmp(pending_genesis_members[i].node_address, node_address, 20) == 0) {
+            MXD_LOG_DEBUG("rsc", "Genesis member already registered");
+            return 0;
+        }
+    }
+    
+    if (pending_genesis_count >= pending_genesis_capacity) {
+        size_t new_capacity = pending_genesis_capacity * 2;
+        mxd_genesis_member_t *new_members = realloc(pending_genesis_members, new_capacity * sizeof(mxd_genesis_member_t));
+        if (!new_members) {
+            return -1;
+        }
+        pending_genesis_members = new_members;
+        pending_genesis_capacity = new_capacity;
+    }
+    
+    mxd_genesis_member_t *member = &pending_genesis_members[pending_genesis_count];
+    memcpy(member->node_address, node_address, 20);
+    memcpy(member->public_key, public_key, 256);
+    member->timestamp = timestamp;
+    memcpy(member->signature, signature, signature_length);
+    member->signature_length = signature_length;
+    pending_genesis_count++;
+    
+    if (mxd_test_register_validator_pubkey(node_address, public_key, 256) != 0) {
+        MXD_LOG_WARN("rsc", "Failed to register validator pubkey for genesis member");
+    }
+    
+    MXD_LOG_INFO("rsc", "Registered genesis member (%zu/%d)", pending_genesis_count, 3);
+    return 0;
+}
+
+int mxd_get_pending_genesis_count(void) {
+    return (int)pending_genesis_count;
+}
+
+static int compare_addresses(const void *a, const void *b) {
+    return memcmp(a, b, 20);
+}
+
+int mxd_send_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest, 
+                                   const uint8_t *proposer_id, uint32_t height) {
+    uint8_t message[20 + 64 + 20 + 4];
+    size_t offset = 0;
+    
+    memcpy(message + offset, target_address, 20);
+    offset += 20;
+    memcpy(message + offset, membership_digest, 64);
+    offset += 64;
+    memcpy(message + offset, proposer_id, 20);
+    offset += 20;
+    memcpy(message + offset, &height, 4);
+    offset += 4;
+    
+    if (mxd_broadcast_message(MXD_MSG_GENESIS_SIGN_REQUEST, message, offset) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to send genesis sign request");
+        return -1;
+    }
+    
+    return 0;
+}
+
+int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest,
+                                     const uint8_t *proposer_id, uint32_t height) {
+    if (!genesis_coordination_initialized) {
+        return -1;
+    }
+    
+    if (memcmp(target_address, local_genesis_address, 20) != 0) {
+        MXD_LOG_DEBUG("rsc", "Genesis sign request not for this node");
+        return 0;
+    }
+    
+    if (height != 0) {
+        MXD_LOG_WARN("rsc", "Genesis sign request for non-zero height");
+        return -1;
+    }
+    
+    static int already_signed_genesis = 0;
+    if (already_signed_genesis) {
+        MXD_LOG_WARN("rsc", "Already signed genesis block");
+        return -1;
+    }
+    
+    uint8_t signature[4096];
+    size_t signature_len = sizeof(signature);
+    if (mxd_dilithium_sign(signature, &signature_len, membership_digest, 64, local_genesis_privkey) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to sign membership digest");
+        return -1;
+    }
+    
+    already_signed_genesis = 1;
+    
+    uint8_t response[20 + 64 + 2 + 4096];
+    size_t offset = 0;
+    memcpy(response + offset, local_genesis_address, 20);
+    offset += 20;
+    memcpy(response + offset, membership_digest, 64);
+    offset += 64;
+    uint16_t sig_len = (uint16_t)signature_len;
+    memcpy(response + offset, &sig_len, 2);
+    offset += 2;
+    memcpy(response + offset, signature, signature_len);
+    offset += signature_len;
+    
+    if (mxd_broadcast_message(MXD_MSG_GENESIS_SIGN_RESPONSE, response, offset) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to send genesis sign response");
+        return -1;
+    }
+    
+    MXD_LOG_INFO("rsc", "Sent genesis signature response");
+    return 0;
+}
+
+int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *membership_digest,
+                                      const uint8_t *signature, uint16_t signature_length) {
+    if (!genesis_coordination_initialized) {
+        return -1;
+    }
+    
+    if (memcmp(membership_digest, pending_genesis_digest, 64) != 0) {
+        MXD_LOG_WARN("rsc", "Genesis sign response digest mismatch");
+        return -1;
+    }
+    
+    for (size_t i = 0; i < collected_signature_count; i++) {
+        if (memcmp(collected_signatures[i].node_address, signer_address, 20) == 0) {
+            MXD_LOG_DEBUG("rsc", "Already have signature from this node");
+            return 0;
+        }
+    }
+    
+    uint8_t signer_pubkey[256];
+    size_t pubkey_len = sizeof(signer_pubkey);
+    if (mxd_get_validator_public_key(signer_address, signer_pubkey, sizeof(signer_pubkey), &pubkey_len) != 0) {
+        MXD_LOG_WARN("rsc", "Failed to get public key for signer");
+        return -1;
+    }
+    
+    if (mxd_dilithium_verify(signature, signature_length, membership_digest, 64, signer_pubkey) != 0) {
+        MXD_LOG_WARN("rsc", "Invalid genesis signature");
+        return -1;
+    }
+    
+    if (collected_signature_count >= 10) {
+        MXD_LOG_WARN("rsc", "Too many collected signatures");
+        return -1;
+    }
+    
+    mxd_genesis_signature_t *sig = &collected_signatures[collected_signature_count];
+    memcpy(sig->node_address, signer_address, 20);
+    memcpy(sig->signature, signature, signature_length);
+    sig->signature_length = signature_length;
+    sig->received = 1;
+    collected_signature_count++;
+    
+    MXD_LOG_INFO("rsc", "Collected genesis signature (%zu/3)", collected_signature_count);
+    return 0;
+}
+
+int mxd_try_coordinate_genesis_block(void) {
+    if (!genesis_coordination_initialized) {
         return -1;
     }
     
@@ -1028,7 +1310,80 @@ int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_a
         return 0;
     }
     
-    if (table->count < 3) {
+    if (pending_genesis_count < 3) {
+        return 0;
+    }
+    
+    uint8_t addresses[10][20];
+    size_t addr_count = 0;
+    
+    for (size_t i = 0; i < pending_genesis_count && addr_count < 10; i++) {
+        memcpy(addresses[addr_count], pending_genesis_members[i].node_address, 20);
+        addr_count++;
+    }
+    
+    qsort(addresses, addr_count, 20, compare_addresses);
+    
+    if (memcmp(local_genesis_address, addresses[0], 20) != 0) {
+        return 0;
+    }
+    
+    if (!genesis_sign_request_sent) {
+        MXD_LOG_INFO("rsc", "This node is the designated proposer for genesis block");
+        
+        mxd_block_t genesis_block;
+        uint8_t prev_hash[64] = {0};
+        
+        if (mxd_init_block(&genesis_block, prev_hash) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to initialize genesis block");
+            return -1;
+        }
+        
+        genesis_block.height = 0;
+        genesis_block.total_supply = 0.0;
+        memcpy(genesis_block.proposer_id, local_genesis_address, 20);
+        
+        if (mxd_freeze_transaction_set(&genesis_block) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to freeze genesis block transaction set");
+            mxd_free_validation_chain(&genesis_block);
+            return -1;
+        }
+        
+        if (mxd_calculate_membership_digest(&genesis_block, pending_genesis_digest) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to calculate membership digest");
+            mxd_free_validation_chain(&genesis_block);
+            return -1;
+        }
+        
+        mxd_free_validation_chain(&genesis_block);
+        
+        uint8_t self_signature[4096];
+        size_t self_sig_len = sizeof(self_signature);
+        if (mxd_dilithium_sign(self_signature, &self_sig_len, pending_genesis_digest, 64, local_genesis_privkey) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to sign own membership");
+            return -1;
+        }
+        
+        mxd_genesis_signature_t *self_sig = &collected_signatures[collected_signature_count];
+        memcpy(self_sig->node_address, local_genesis_address, 20);
+        memcpy(self_sig->signature, self_signature, self_sig_len);
+        self_sig->signature_length = (uint16_t)self_sig_len;
+        self_sig->received = 1;
+        collected_signature_count++;
+        
+        for (size_t i = 0; i < pending_genesis_count && i < 3; i++) {
+            if (memcmp(pending_genesis_members[i].node_address, local_genesis_address, 20) != 0) {
+                mxd_send_genesis_sign_request(pending_genesis_members[i].node_address, 
+                                              pending_genesis_digest, local_genesis_address, 0);
+            }
+        }
+        
+        genesis_sign_request_sent = 1;
+        MXD_LOG_INFO("rsc", "Sent genesis sign requests to peers");
+        return 0;
+    }
+    
+    if (collected_signature_count < 3) {
         return 0;
     }
     
@@ -1038,7 +1393,7 @@ int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_a
     }
     genesis_creation_attempted = 1;
     
-    MXD_LOG_INFO("rsc", "Attempting to create genesis block with %zu validators in rapid table", table->count);
+    MXD_LOG_INFO("rsc", "Have %zu signatures, creating genesis block", collected_signature_count);
     
     mxd_block_t genesis_block;
     uint8_t prev_hash[64] = {0};
@@ -1051,13 +1406,32 @@ int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_a
     
     genesis_block.height = 0;
     genesis_block.total_supply = 0.0;
-    
-    if (table->nodes[0]) {
-        memcpy(genesis_block.proposer_id, table->nodes[0]->node_id, 20);
-    }
+    memcpy(genesis_block.proposer_id, local_genesis_address, 20);
     
     if (mxd_freeze_transaction_set(&genesis_block) != 0) {
         MXD_LOG_ERROR("rsc", "Failed to freeze genesis block transaction set");
+        genesis_creation_attempted = 0;
+        return -1;
+    }
+    
+    uint64_t current_time;
+    if (mxd_get_network_time(&current_time) != 0) {
+        current_time = time(NULL);
+    }
+    
+    for (size_t i = 0; i < collected_signature_count && i < 3; i++) {
+        mxd_genesis_signature_t *sig = &collected_signatures[i];
+        
+        if (mxd_append_membership_entry(&genesis_block, sig->node_address, sig->signature, 
+                                        sig->signature_length, current_time) != 0) {
+            MXD_LOG_WARN("rsc", "Failed to append membership entry for signature %zu", i);
+            continue;
+        }
+    }
+    
+    if (!mxd_block_has_membership_quorum(&genesis_block, 0)) {
+        MXD_LOG_ERROR("rsc", "Genesis block does not have quorum (%u/3 validators)",
+                     genesis_block.rapid_membership_count);
         genesis_creation_attempted = 0;
         return -1;
     }
@@ -1074,10 +1448,15 @@ int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_a
         return -1;
     }
     
-    MXD_LOG_INFO("rsc", "Genesis block created successfully with %zu validators in rapid table",
-                 table->count);
+    MXD_LOG_INFO("rsc", "Genesis block created successfully with %u validators",
+                 genesis_block.rapid_membership_count);
     
     mxd_free_validation_chain(&genesis_block);
     
     return 1;
+}
+
+int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_address,
+                                  const uint8_t *private_key, const uint8_t *public_key) {
+    return mxd_try_coordinate_genesis_block();
 }
