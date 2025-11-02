@@ -2023,3 +2023,20 @@ int mxd_get_unified_peers(mxd_peer_info_t* peer_info, size_t* count) {
     
     return 0;
 }
+
+int mxd_get_node_keys(uint8_t *public_key_out, uint8_t *private_key_out) {
+    if (!p2p_initialized) {
+        MXD_LOG_ERROR("p2p", "P2P not initialized, cannot retrieve node keys");
+        return -1;
+    }
+    
+    if (public_key_out) {
+        memcpy(public_key_out, node_public_key, 256);
+    }
+    
+    if (private_key_out) {
+        memcpy(private_key_out, node_private_key, 128);
+    }
+    
+    return 0;
+}

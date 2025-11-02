@@ -17,6 +17,8 @@
 #include "../include/mxd_blockchain.h"
 #include "../include/mxd_logging.h"
 #include "../include/mxd_monitoring.h"
+#include "../include/mxd_address.h"
+#include "../include/mxd_crypto.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
 
@@ -311,16 +313,28 @@ int main(int argc, char** argv) {
     mxd_set_message_handler(mxd_genesis_message_handler);
     MXD_LOG_INFO("node", "Genesis message handler registered");
     
-    uint8_t placeholder_address[20] = {0};
-    uint8_t placeholder_pubkey[256] = {0};
-    uint8_t placeholder_privkey[4096] = {0};
-    strncpy((char*)placeholder_address, current_config.node_id, 20);
+    uint8_t node_pubkey[256] = {0};
+    uint8_t node_privkey[128] = {0};
+    uint8_t node_address[20] = {0};
     
-    if (mxd_init_genesis_coordination(placeholder_address, placeholder_pubkey, placeholder_privkey) == 0) {
-        genesis_initialized = 1;
-        MXD_LOG_INFO("node", "Genesis coordination initialized (placeholder keys)");
+    if (mxd_get_node_keys(node_pubkey, node_privkey) == 0) {
+        char address_str[42] = {0};
+        if (mxd_generate_address(node_pubkey, address_str, sizeof(address_str)) == 0) {
+            if (mxd_hash160((const uint8_t*)address_str, strlen(address_str), node_address) == 0) {
+                if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey) == 0) {
+                    genesis_initialized = 1;
+                    MXD_LOG_INFO("node", "Genesis coordination initialized with node address: %s", address_str);
+                } else {
+                    MXD_LOG_WARN("node", "Failed to initialize genesis coordination");
+                }
+            } else {
+                MXD_LOG_WARN("node", "Failed to hash node address");
+            }
+        } else {
+            MXD_LOG_WARN("node", "Failed to generate node address from public key");
+        }
     } else {
-        MXD_LOG_WARN("node", "Failed to initialize genesis coordination");
+        MXD_LOG_WARN("node", "Failed to retrieve node keys from P2P");
     }
     
     MXD_LOG_INFO("node", "Node started successfully, entering display loop");

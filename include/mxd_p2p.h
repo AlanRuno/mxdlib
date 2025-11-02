@@ -183,6 +183,9 @@ int mxd_get_peer_connections(mxd_peer_info_t* peer_info, size_t* count);
 // Get unified peer list (all peers we've communicated with)
 int mxd_get_unified_peers(mxd_peer_info_t* peer_info, size_t* count);
 
+// Get node's public and private keys
+int mxd_get_node_keys(uint8_t *public_key_out, uint8_t *private_key_out);
+
 #ifdef __cplusplus
 }
 #endif
