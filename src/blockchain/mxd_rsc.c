@@ -1187,6 +1187,56 @@ int mxd_get_pending_genesis_count(void) {
     return (int)pending_genesis_count;
 }
 
+int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char *local_node_id) {
+    if (!genesis_coordination_initialized || !table) {
+        return -1;
+    }
+    
+    for (size_t i = 0; i < pending_genesis_count; i++) {
+        mxd_genesis_member_t *member = &pending_genesis_members[i];
+        
+        // Convert node address to hex string for node_id
+        char node_id_hex[41] = {0};
+        for (int j = 0; j < 20; j++) {
+            snprintf(node_id_hex + (j * 2), 3, "%02x", member->node_address[j]);
+        }
+        
+        // Check if already in rapid table
+        int found = 0;
+        for (size_t j = 0; j < table->count; j++) {
+            if (table->nodes[j] && strcmp(table->nodes[j]->node_id, node_id_hex) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        
+        if (!found) {
+            mxd_node_stake_t *node = malloc(sizeof(mxd_node_stake_t));
+            if (!node) {
+                continue;
+            }
+            
+            memset(node, 0, sizeof(mxd_node_stake_t));
+            strncpy(node->node_id, node_id_hex, sizeof(node->node_id) - 1);
+            memcpy(node->public_key, member->public_key, 256);
+            node->stake_amount = 0.0;  // Genesis mode, no stake required
+            node->active = 1;
+            node->in_rapid_table = 1;
+            
+            // Initialize metrics
+            mxd_init_node_metrics(&node->metrics);
+            
+            if (mxd_add_to_rapid_table(table, node, local_node_id) == 0) {
+                MXD_LOG_INFO("rsc", "Added pre-genesis member %s to rapid table", node_id_hex);
+            } else {
+                free(node);
+            }
+        }
+    }
+    
+    return 0;
+}
+
 static int compare_addresses(const void *a, const void *b) {
     return memcmp(a, b, 20);
 }

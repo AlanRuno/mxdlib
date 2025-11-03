@@ -127,6 +127,8 @@ int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *publ
 
 int mxd_get_pending_genesis_count(void);
 
+int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char *local_node_id);
+
 int mxd_try_coordinate_genesis_block(void);
 
 int mxd_rebuild_rapid_table_after_genesis(mxd_rapid_table_t *table, const char *local_node_id);
