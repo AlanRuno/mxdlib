@@ -129,7 +129,9 @@ int mxd_get_pending_genesis_count(void);
 
 int mxd_try_coordinate_genesis_block(void);
 
-int mxd_send_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest, 
+int mxd_rebuild_rapid_table_after_genesis(mxd_rapid_table_t *table, const char *local_node_id);
+
+int mxd_send_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest,
                                    const uint8_t *proposer_id, uint32_t height);
 
 int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest,
