@@ -318,20 +318,19 @@ int main(int argc, char** argv) {
     uint8_t node_address[20] = {0};
     
     if (mxd_get_node_keys(node_pubkey, node_privkey) == 0) {
-        char address_str[42] = {0};
-        if (mxd_generate_address(node_pubkey, address_str, sizeof(address_str)) == 0) {
-            if (mxd_hash160((const uint8_t*)address_str, strlen(address_str), node_address) == 0) {
-                if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey) == 0) {
-                    genesis_initialized = 1;
-                    MXD_LOG_INFO("node", "Genesis coordination initialized with node address: %s", address_str);
-                } else {
-                    MXD_LOG_WARN("node", "Failed to initialize genesis coordination");
-                }
+        if (mxd_hash160(node_pubkey, 256, node_address) == 0) {
+            char address_str[42] = {0};
+            if (mxd_generate_address(node_pubkey, address_str, sizeof(address_str)) == 0) {
+                MXD_LOG_INFO("node", "Genesis coordination initialized with node address: %s", address_str);
+            }
+            
+            if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey) == 0) {
+                genesis_initialized = 1;
             } else {
-                MXD_LOG_WARN("node", "Failed to hash node address");
+                MXD_LOG_WARN("node", "Failed to initialize genesis coordination");
             }
         } else {
-            MXD_LOG_WARN("node", "Failed to generate node address from public key");
+            MXD_LOG_WARN("node", "Failed to derive node address from public key");
         }
     } else {
         MXD_LOG_WARN("node", "Failed to retrieve node keys from P2P");
@@ -377,6 +376,9 @@ int main(int argc, char** argv) {
         
         mxd_get_blockchain_height(&blockchain_height);
         
+        static uint32_t last_blockchain_height = 0;
+        static int rapid_table_rebuilt = 0;
+        
         if (genesis_initialized && blockchain_height == 0) {
             uint64_t current_time = time(NULL);
             
@@ -389,6 +391,19 @@ int main(int argc, char** argv) {
                 mxd_try_coordinate_genesis_block();
             }
         }
+        
+        if (genesis_initialized && !rapid_table_rebuilt && blockchain_height > 0 && last_blockchain_height == 0) {
+            pthread_mutex_lock(&metrics_mutex);
+            if (mxd_rebuild_rapid_table_after_genesis(&rapid_table, current_config.node_id) == 0) {
+                MXD_LOG_INFO("node", "Rapid table rebuilt from genesis block, now has %zu nodes", rapid_table.count);
+                rapid_table_rebuilt = 1;
+            } else {
+                MXD_LOG_WARN("node", "Failed to rebuild rapid table from genesis block");
+            }
+            pthread_mutex_unlock(&metrics_mutex);
+        }
+        
+        last_blockchain_height = blockchain_height;
         
         pthread_mutex_lock(&metrics_mutex);
         

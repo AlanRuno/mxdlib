@@ -1119,6 +1119,17 @@ int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *publ
         return -1;
     }
     
+    uint8_t derived_address[20];
+    if (mxd_hash160(public_key, 256, derived_address) != 0) {
+        MXD_LOG_WARN("rsc", "Failed to derive address from public key");
+        return -1;
+    }
+    
+    if (memcmp(node_address, derived_address, 20) != 0) {
+        MXD_LOG_WARN("rsc", "Node address does not match hash160(public_key)");
+        return -1;
+    }
+    
     uint64_t current_time;
     if (mxd_get_network_time(&current_time) != 0) {
         current_time = time(NULL);
@@ -1454,6 +1465,20 @@ int mxd_try_coordinate_genesis_block(void) {
     mxd_free_validation_chain(&genesis_block);
     
     return 1;
+}
+
+int mxd_rebuild_rapid_table_after_genesis(mxd_rapid_table_t *table, const char *local_node_id) {
+    if (!table) {
+        return -1;
+    }
+    
+    uint32_t blockchain_height = 0;
+    if (mxd_get_blockchain_height(&blockchain_height) != 0 || blockchain_height == 0) {
+        return -1;
+    }
+    
+    MXD_LOG_INFO("rsc", "Rebuilding rapid table from genesis block");
+    return mxd_rebuild_rapid_table_from_blockchain(table, 0, blockchain_height, local_node_id);
 }
 
 int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_address,
