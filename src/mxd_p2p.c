@@ -189,7 +189,7 @@ static int parse_wire_header(const uint8_t *buffer, mxd_message_header_t *header
         return -1;
     }
     
-    if (type > MXD_MSG_RAPID_TABLE_UPDATE) {
+    if (type > MXD_MSG_MAX) {
         return -1;
     }
     
@@ -370,8 +370,8 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
     }
     
     // Validate message type
-    if (header->type > MXD_MSG_RAPID_TABLE_UPDATE) {
-        MXD_LOG_WARN("p2p", "Invalid message type %d", header->type);
+    if (header->type > MXD_MSG_MAX) {
+        MXD_LOG_WARN("p2p", "Invalid message type %d (max: %d)", header->type, MXD_MSG_MAX);
         return -1;
     }
     
@@ -1852,7 +1852,9 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
         return 0;
     }
 
-    if (payload_length > MXD_MAX_MESSAGE_SIZE || type > MXD_MSG_RAPID_TABLE_UPDATE) {
+    if (payload_length > MXD_MAX_MESSAGE_SIZE || type > MXD_MSG_MAX) {
+        MXD_LOG_ERROR("p2p", "Invalid broadcast: payload_length=%zu (max: %d), type=%d (max: %d)", 
+                     payload_length, MXD_MAX_MESSAGE_SIZE, type, MXD_MSG_MAX);
         return -1;
     }
 

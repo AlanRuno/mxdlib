@@ -81,12 +81,12 @@ int test_p2p_networking(void) {
     TEST_ASSERT(mxd_broadcast_message(MXD_MSG_PEERS, test_msg, msg_len) == 0, "Valid message accepted");
     
     // Test all message types
-    for (mxd_message_type_t type = MXD_MSG_HANDSHAKE; type <= MXD_MSG_TRANSACTIONS; type++) {
+    for (mxd_message_type_t type = MXD_MSG_HANDSHAKE; type <= MXD_MSG_MAX; type++) {
         TEST_ASSERT(mxd_broadcast_message(type, test_msg, msg_len) == 0, "Message type valid");
     }
     
     // Test invalid message type
-    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_TRANSACTIONS + 1, test_msg, msg_len) != 0, "Invalid message type rejected");
+    TEST_ASSERT(mxd_broadcast_message(MXD_MSG_MAX + 1, test_msg, msg_len) != 0, "Invalid message type rejected");
     
     // Test rate limiting
     mxd_reset_rate_limit();
