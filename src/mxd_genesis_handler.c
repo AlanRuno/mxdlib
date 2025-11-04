@@ -7,7 +7,7 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
                                   mxd_message_type_t type,
                                   const void *payload,
                                   size_t payload_length) {
-    MXD_LOG_DEBUG("genesis", "Genesis handler invoked: type=%d len=%zu from %s:%u", 
+    MXD_LOG_INFO("genesis", "Genesis handler invoked: type=%d len=%zu from %s:%u", 
                  type, payload_length, address, port);
     switch (type) {
         case MXD_MSG_GENESIS_ANNOUNCE: {

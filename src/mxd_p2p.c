@@ -829,7 +829,7 @@ static int handle_incoming_message(const char *address, uint16_t port,
             break;
         default:
             if (message_handler) {
-                MXD_LOG_DEBUG("p2p", "Dispatching to handler: type=%d len=%u from %s:%u", 
+                MXD_LOG_INFO("p2p", "Dispatching to handler: type=%d len=%u from %s:%u", 
                              header->type, header->length, address, port);
                 message_handler(address, port, header->type, payload, header->length);
             } else {
