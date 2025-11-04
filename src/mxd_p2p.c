@@ -230,17 +230,23 @@ static int send_on_socket(int sock, mxd_message_type_t type, const void* payload
         return -1;
     }
     
+    MXD_LOG_INFO("p2p", "Sending message: type=%d, payload_length=%zu", type, payload_length);
+    
     mxd_wire_header_t wire_header;
     header_to_wire(&header, &wire_header);
     
     if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to write header: type=%d, errno=%d (%s)", type, errno, strerror(errno));
         return -1;
     }
     
     if (write_n(sock, payload, payload_length) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to write payload: type=%d, length=%zu, errno=%d (%s)", 
+                    type, payload_length, errno, strerror(errno));
         return -1;
     }
     
+    MXD_LOG_INFO("p2p", "Successfully sent message: type=%d, payload_length=%zu", type, payload_length);
     return 0;
 }
 
@@ -829,7 +835,7 @@ static int handle_incoming_message(const char *address, uint16_t port,
             break;
         default:
             if (message_handler) {
-                MXD_LOG_DEBUG("p2p", "Dispatching to handler: type=%d len=%u from %s:%u", 
+                MXD_LOG_INFO("p2p", "Dispatching to handler: type=%d len=%u from %s:%u", 
                              header->type, header->length, address, port);
                 message_handler(address, port, header->type, payload, header->length);
             } else {
@@ -1243,17 +1249,25 @@ static void* connection_handler(void* arg) {
             break;
         }
         
+        MXD_LOG_INFO("p2p", "Parsed header from %s:%d: type=%d, length=%u", 
+                    conn->address, conn->port, header.type, header.length);
+        
         uint8_t *payload = malloc(header.length);
         if (!payload) {
             MXD_LOG_ERROR("p2p", "Failed to allocate %u bytes for message", header.length);
             break;
         }
         
-        if (read_n(conn->socket, payload, header.length) != 0) {
-            MXD_LOG_WARN("p2p", "Error reading payload from %s:%d", conn->address, conn->port);
+        int payload_read_result = read_n(conn->socket, payload, header.length);
+        if (payload_read_result != 0) {
+            MXD_LOG_WARN("p2p", "Error reading payload from %s:%d: expected=%u bytes, result=%d, errno=%d (%s)", 
+                        conn->address, conn->port, header.length, payload_read_result, errno, strerror(errno));
             free(payload);
             break;
         }
+        
+        MXD_LOG_INFO("p2p", "Successfully read payload from %s:%d: type=%d, length=%u", 
+                    conn->address, conn->port, header.type, header.length);
         
         if (header.type == MXD_MSG_GET_PEERS) {
             handle_get_peers_on_socket(conn->socket, conn->address, conn->port, payload, header.length);

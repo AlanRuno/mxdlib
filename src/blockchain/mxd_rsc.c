@@ -1090,6 +1090,8 @@ int mxd_broadcast_genesis_announce(void) {
         return -1;
     }
     
+    MXD_LOG_INFO("rsc", "Generated genesis announce signature: sig_len=%zu", signature_len);
+    
     uint8_t message[20 + 256 + 8 + 2 + 4096];
     size_t offset = 0;
     memcpy(message + offset, local_genesis_address, 20);
@@ -1104,12 +1106,15 @@ int mxd_broadcast_genesis_announce(void) {
     memcpy(message + offset, signature, signature_len);
     offset += signature_len;
     
+    MXD_LOG_INFO("rsc", "Constructed genesis announce message: total_size=%zu (addr=20, pubkey=256, time=8, sig_len_field=2, sig=%zu)", 
+                offset, signature_len);
+    
     if (mxd_broadcast_message(MXD_MSG_GENESIS_ANNOUNCE, message, offset) != 0) {
         MXD_LOG_ERROR("rsc", "Failed to broadcast genesis announce");
         return -1;
     }
     
-    MXD_LOG_INFO("rsc", "Broadcast genesis announce");
+    MXD_LOG_INFO("rsc", "Broadcast genesis announce: message_size=%zu", offset);
     return 0;
 }
 
@@ -1125,7 +1130,7 @@ int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *publ
     for (int i = 0; i < 20; i++) {
         snprintf(addr_hex + (i * 2), 3, "%02x", node_address[i]);
     }
-    MXD_LOG_DEBUG("rsc", "Processing genesis announce from address: %s, timestamp=%lu, sig_len=%u", 
+    MXD_LOG_INFO("rsc", "Processing genesis announce from address: %s, timestamp=%lu, sig_len=%u", 
                  addr_hex, timestamp, signature_length);
     
     uint8_t derived_address[20];
@@ -1154,19 +1159,19 @@ int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *publ
         MXD_LOG_WARN("rsc", "Genesis announce timestamp drift too large: drift=%ld seconds (max=60)", drift);
         return -1;
     }
-    MXD_LOG_DEBUG("rsc", "Timestamp validation passed: drift=%ld seconds", drift);
+    MXD_LOG_INFO("rsc", "Timestamp validation passed: drift=%ld seconds", drift);
     
     uint8_t announce_payload[20 + 256 + 8];
     memcpy(announce_payload, node_address, 20);
     memcpy(announce_payload + 20, public_key, 256);
     memcpy(announce_payload + 276, &timestamp, 8);
     
-    MXD_LOG_DEBUG("rsc", "Verifying signature: payload_size=%zu, sig_len=%u", sizeof(announce_payload), signature_length);
+    MXD_LOG_INFO("rsc", "Verifying signature: payload_size=%zu, sig_len=%u", sizeof(announce_payload), signature_length);
     if (mxd_dilithium_verify(signature, signature_length, announce_payload, sizeof(announce_payload), public_key) != 0) {
         MXD_LOG_WARN("rsc", "Invalid genesis announce signature from %s", addr_hex);
         return -1;
     }
-    MXD_LOG_DEBUG("rsc", "Signature verification passed for %s", addr_hex);
+    MXD_LOG_INFO("rsc", "Signature verification passed for %s", addr_hex);
     
     for (size_t i = 0; i < pending_genesis_count; i++) {
         if (memcmp(pending_genesis_members[i].node_address, node_address, 20) == 0) {
