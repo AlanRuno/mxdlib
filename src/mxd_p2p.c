@@ -739,6 +739,24 @@ static int handle_handshake_message(const char *address, uint16_t port,
     
     const mxd_handshake_payload_t *handshake = (const mxd_handshake_payload_t *)payload;
     
+    if (handshake->protocol_version != 2) {
+        MXD_LOG_WARN("p2p", "Incompatible protocol version %u from %s:%d (expected v2)", 
+                   handshake->protocol_version, address, port);
+        return -1;
+    }
+    
+    if (handshake->algo_id != MXD_SIGALG_ED25519 && handshake->algo_id != MXD_SIGALG_DILITHIUM5) {
+        MXD_LOG_WARN("p2p", "Invalid algorithm ID %u from %s:%d", handshake->algo_id, address, port);
+        return -1;
+    }
+    
+    size_t expected_pubkey_len = mxd_sig_pubkey_len(handshake->algo_id);
+    if (handshake->public_key_length != expected_pubkey_len) {
+        MXD_LOG_WARN("p2p", "Invalid pubkey length %u for algo %u from %s:%d (expected %zu)", 
+                   handshake->public_key_length, handshake->algo_id, address, port, expected_pubkey_len);
+        return -1;
+    }
+    
     if (strcmp(handshake->node_id, node_config.node_id) == 0) {
         MXD_LOG_INFO("p2p", "Rejecting self-connection from %s:%d (node_id: %s)", 
                    address, port, handshake->node_id);
@@ -757,20 +775,20 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    uint8_t message_to_verify[288];
+    uint8_t message_to_verify[32 + 256];
     memcpy(message_to_verify, handshake->challenge, 32);
     memcpy(message_to_verify + 32, handshake->node_id, 256);
     
-    if (mxd_dilithium_verify(handshake->signature, handshake->signature_length, 
-                             message_to_verify, 288, handshake->public_key) != 0) {
-        MXD_LOG_WARN("p2p", "Signature verification failed for %s:%d (node_id: %s)", 
-                   address, port, handshake->node_id);
+    if (mxd_sig_verify(handshake->algo_id, handshake->signature, handshake->signature_length, 
+                       message_to_verify, 288, handshake->public_key) != 0) {
+        MXD_LOG_WARN("p2p", "Signature verification failed for %s:%d (node_id: %s, algo: %s)", 
+                   address, port, handshake->node_id, mxd_sig_alg_name(handshake->algo_id));
         return -1;
     }
     
-    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u) - signature verified", 
+    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u, algo: %s) - signature verified", 
                address, port, handshake->node_id, handshake->protocol_version, 
-               handshake->listen_port);
+               handshake->listen_port, mxd_sig_alg_name(handshake->algo_id));
     
     if (conn) {
         strncpy(conn->address, address, sizeof(conn->address) - 1);
