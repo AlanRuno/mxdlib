@@ -5,6 +5,7 @@
 #include "../../include/mxd_utxo.h"
 #include "../../include/mxd_crypto.h"
 #include "../../include/mxd_p2p.h"
+#include "../../include/mxd_endian.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +25,7 @@
 #define MXD_MIN_RELAY_SIGNATURES 3     // Minimum signatures required for relay (X=3)
 #define MXD_VALIDATION_EXPIRY 5        // Validation signatures expire after 5 blocks
 #define MXD_BLACKLIST_DURATION 100     // Default blacklist duration (in blocks)
-#define MXD_MAX_TIMESTAMP_DRIFT 60     // Maximum timestamp drift allowed (in seconds)
+#define MXD_MAX_TIMESTAMP_DRIFT_MS 60000ULL  // Maximum timestamp drift allowed (in milliseconds)
 
 #include "../../include/mxd_rocksdb_globals.h"
 
@@ -193,10 +194,7 @@ int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, double to
         return -1;
     }
 
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        return -1;
-    }
+    uint64_t current_time = mxd_now_ms();
 
     // Update node activity status and calculate ranks
     for (size_t i = 0; i < node_count; i++) {
@@ -263,11 +261,7 @@ int mxd_init_rapid_table(mxd_rapid_table_t *table, size_t capacity) {
     table->count = 0;
     table->capacity = capacity;
     
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
-    }
-    table->last_update = current_time;
+    table->last_update = mxd_now_ms();
     
     return 0;
 }
@@ -307,12 +301,7 @@ int mxd_add_to_rapid_table(mxd_rapid_table_t *table, mxd_node_stake_t *node, con
     node->rapid_table_position = table->count;
     table->count++;
     
-    // Update table timestamp
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
-    }
-    table->last_update = current_time;
+    table->last_update = mxd_now_ms();
     
     return 0;
 }
@@ -349,12 +338,7 @@ int mxd_remove_from_rapid_table(mxd_rapid_table_t *table, const char *node_id) {
     table->nodes[table->count - 1] = NULL;
     table->count--;
     
-    // Update table timestamp
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
-    }
-    table->last_update = current_time;
+    table->last_update = mxd_now_ms();
     
     return 0;
 }
@@ -406,13 +390,10 @@ int mxd_init_validation_context(mxd_validation_context_t *context, const mxd_blo
     // Calculate required signatures (50% of Rapid Table)
     context->required_signatures = (table->count + 1) / 2;
     
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
-    }
+    uint64_t current_time = mxd_now_ms();
     context->start_time = current_time;
     
-    context->expiry_time = current_time + (5 * 60);
+    context->expiry_time = current_time + (5 * 60 * 1000);
     
     return 0;
 }
@@ -424,12 +405,9 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
         return -1;
     }
     
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
-    }
+    uint64_t current_time_ms = mxd_now_ms();
     
-    if (labs((int64_t)timestamp - (int64_t)current_time) > MXD_MAX_TIMESTAMP_DRIFT) {
+    if (llabs((int64_t)timestamp - (int64_t)current_time_ms) > (int64_t)MXD_MAX_TIMESTAMP_DRIFT_MS) {
         return -1;
     }
     
@@ -749,10 +727,7 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     }
     
     // Check if validation has expired
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
-    }
+    uint64_t current_time = mxd_now_ms();
     
     if (current_time > context->expiry_time) {
         context->status = MXD_VALIDATION_EXPIRED;
@@ -1073,15 +1048,13 @@ int mxd_broadcast_genesis_announce(void) {
         return -1;
     }
     
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
-    }
+    uint64_t current_time_ms = mxd_now_ms();
+    uint64_t current_time_net = mxd_htonll(current_time_ms);
     
     uint8_t announce_payload[20 + 256 + 8];
     memcpy(announce_payload, local_genesis_address, 20);
     memcpy(announce_payload + 20, local_genesis_pubkey, 256);
-    memcpy(announce_payload + 276, &current_time, 8);
+    memcpy(announce_payload + 276, &current_time_net, 8);
     
     uint8_t signature[4096];
     size_t signature_len = sizeof(signature);
@@ -1090,7 +1063,7 @@ int mxd_broadcast_genesis_announce(void) {
         return -1;
     }
     
-    MXD_LOG_INFO("rsc", "Generated genesis announce signature: sig_len=%zu", signature_len);
+    MXD_LOG_INFO("rsc", "Generated genesis announce signature: sig_len=%zu, timestamp_ms=%lu", signature_len, current_time_ms);
     
     uint8_t message[20 + 256 + 8 + 2 + 4096];
     size_t offset = 0;
@@ -1098,10 +1071,10 @@ int mxd_broadcast_genesis_announce(void) {
     offset += 20;
     memcpy(message + offset, local_genesis_pubkey, 256);
     offset += 256;
-    memcpy(message + offset, &current_time, 8);
+    memcpy(message + offset, &current_time_net, 8);
     offset += 8;
-    uint16_t sig_len = (uint16_t)signature_len;
-    memcpy(message + offset, &sig_len, 2);
+    uint16_t sig_len_net = htons((uint16_t)signature_len);
+    memcpy(message + offset, &sig_len_net, 2);
     offset += 2;
     memcpy(message + offset, signature, signature_len);
     offset += signature_len;
@@ -1149,22 +1122,21 @@ int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *publ
         return -1;
     }
     
-    uint64_t current_time;
-    if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
-    }
+    uint64_t current_time_ms = mxd_now_ms();
     
-    int64_t drift = (int64_t)timestamp - (int64_t)current_time;
-    if (timestamp > current_time + 60 || timestamp < current_time - 60) {
-        MXD_LOG_WARN("rsc", "Genesis announce timestamp drift too large: drift=%ld seconds (max=60)", drift);
+    int64_t drift_ms = llabs((int64_t)timestamp - (int64_t)current_time_ms);
+    if (drift_ms > (int64_t)MXD_MAX_TIMESTAMP_DRIFT_MS) {
+        MXD_LOG_WARN("rsc", "Genesis announce timestamp drift too large: drift=%ld ms (max=%llu ms)", 
+                     drift_ms, MXD_MAX_TIMESTAMP_DRIFT_MS);
         return -1;
     }
-    MXD_LOG_INFO("rsc", "Timestamp validation passed: drift=%ld seconds", drift);
+    MXD_LOG_INFO("rsc", "Timestamp validation passed: drift=%ld ms", drift_ms);
     
+    uint64_t timestamp_net = mxd_htonll(timestamp);
     uint8_t announce_payload[20 + 256 + 8];
     memcpy(announce_payload, node_address, 20);
     memcpy(announce_payload + 20, public_key, 256);
-    memcpy(announce_payload + 276, &timestamp, 8);
+    memcpy(announce_payload + 276, &timestamp_net, 8);
     
     MXD_LOG_INFO("rsc", "Verifying signature: payload_size=%zu, sig_len=%u", sizeof(announce_payload), signature_length);
     if (mxd_dilithium_verify(signature, signature_length, announce_payload, sizeof(announce_payload), public_key) != 0) {

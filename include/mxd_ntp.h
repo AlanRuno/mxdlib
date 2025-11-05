@@ -24,6 +24,9 @@ int mxd_sync_time(mxd_ntp_info_t *info);
 // Get current network time
 int mxd_get_network_time(uint64_t *timestamp);
 
+// Get current time in milliseconds (with fallback)
+uint64_t mxd_now_ms(void);
+
 #ifdef __cplusplus
 }
 #endif

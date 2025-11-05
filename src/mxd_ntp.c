@@ -99,8 +99,13 @@ int mxd_sync_time(mxd_ntp_info_t *info) {
         uint32_t delay = (uint32_t)(recv_time - send_time);
         
         // Convert NTP timestamp to milliseconds (NTP epoch starts at 1900)
-        uint64_t ntp_time = ntohl(packet.trans_ts >> 32);
-        ntp_time = (ntp_time - 2208988800ULL) * 1000; // Convert to Unix epoch
+        uint32_t ntp_secs = ntohl((uint32_t)(packet.trans_ts >> 32));
+        uint32_t ntp_frac = ntohl((uint32_t)(packet.trans_ts & 0xFFFFFFFF));
+        
+        // Convert to Unix epoch milliseconds
+        uint64_t unix_secs = (uint64_t)ntp_secs - 2208988800ULL;
+        uint64_t frac_ms = ((uint64_t)ntp_frac * 1000ULL) / 4294967296ULL;
+        uint64_t ntp_time = unix_secs * 1000ULL + frac_ms;
         
         // Update network time offset
         network_time_offset = ntp_time - recv_time;
@@ -136,4 +141,13 @@ int mxd_get_network_time(uint64_t *timestamp) {
 
     *timestamp = get_current_time_ms() + network_time_offset;
     return 0;
+}
+
+// Get current time in milliseconds with fallback
+uint64_t mxd_now_ms(void) {
+    uint64_t timestamp;
+    if (mxd_get_network_time(&timestamp) == 0) {
+        return timestamp;
+    }
+    return (uint64_t)time(NULL) * 1000ULL;
 }
