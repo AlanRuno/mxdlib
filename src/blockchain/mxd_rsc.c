@@ -1005,8 +1005,8 @@ static mxd_genesis_member_t *pending_genesis_members = NULL;
 static size_t pending_genesis_count = 0;
 static size_t pending_genesis_capacity = 0;
 static uint8_t local_genesis_address[20] = {0};
-static uint8_t local_genesis_pubkey[256] = {0};
-static uint8_t local_genesis_privkey[4096] = {0};
+static uint8_t local_genesis_pubkey[MXD_PUBKEY_LEN] = {0};
+static uint8_t local_genesis_privkey[MXD_PRIVKEY_LEN] = {0};
 static int genesis_coordination_initialized = 0;
 static mxd_genesis_signature_t collected_signatures[10];
 static size_t collected_signature_count = 0;
@@ -1019,8 +1019,8 @@ int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *l
     }
     
     memcpy(local_genesis_address, local_address, 20);
-    memcpy(local_genesis_pubkey, local_pubkey, 256);
-    memcpy(local_genesis_privkey, local_privkey, 4096);
+    memcpy(local_genesis_pubkey, local_pubkey, MXD_PUBKEY_LEN);
+    memcpy(local_genesis_privkey, local_privkey, MXD_PRIVKEY_LEN);
     
     pending_genesis_capacity = 10;
     pending_genesis_members = calloc(pending_genesis_capacity, sizeof(mxd_genesis_member_t));
@@ -1051,10 +1051,10 @@ int mxd_broadcast_genesis_announce(void) {
     uint64_t current_time_ms = mxd_now_ms();
     uint64_t current_time_net = mxd_htonll(current_time_ms);
     
-    uint8_t announce_payload[20 + 256 + 8];
+    uint8_t announce_payload[20 + MXD_PUBKEY_LEN + 8];
     memcpy(announce_payload, local_genesis_address, 20);
-    memcpy(announce_payload + 20, local_genesis_pubkey, 256);
-    memcpy(announce_payload + 276, &current_time_net, 8);
+    memcpy(announce_payload + 20, local_genesis_pubkey, MXD_PUBKEY_LEN);
+    memcpy(announce_payload + 20 + MXD_PUBKEY_LEN, &current_time_net, 8);
     
     uint8_t signature[4096];
     size_t signature_len = sizeof(signature);
@@ -1065,12 +1065,12 @@ int mxd_broadcast_genesis_announce(void) {
     
     MXD_LOG_INFO("rsc", "Generated genesis announce signature: sig_len=%zu, timestamp_ms=%lu", signature_len, current_time_ms);
     
-    uint8_t message[20 + 256 + 8 + 2 + 4096];
+    uint8_t message[20 + MXD_PUBKEY_LEN + 8 + 2 + MXD_SIG_MAX_LEN];
     size_t offset = 0;
     memcpy(message + offset, local_genesis_address, 20);
     offset += 20;
-    memcpy(message + offset, local_genesis_pubkey, 256);
-    offset += 256;
+    memcpy(message + offset, local_genesis_pubkey, MXD_PUBKEY_LEN);
+    offset += MXD_PUBKEY_LEN;
     memcpy(message + offset, &current_time_net, 8);
     offset += 8;
     uint16_t sig_len_net = htons((uint16_t)signature_len);
@@ -1107,7 +1107,7 @@ int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *publ
                  addr_hex, timestamp, signature_length);
     
     uint8_t derived_address[20];
-    if (mxd_hash160(public_key, 256, derived_address) != 0) {
+    if (mxd_hash160(public_key, MXD_PUBKEY_LEN, derived_address) != 0) {
         MXD_LOG_WARN("rsc", "Failed to derive address from public key");
         return -1;
     }
@@ -1133,10 +1133,10 @@ int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *publ
     MXD_LOG_INFO("rsc", "Timestamp validation passed: drift=%ld ms", drift_ms);
     
     uint64_t timestamp_net = mxd_htonll(timestamp);
-    uint8_t announce_payload[20 + 256 + 8];
+    uint8_t announce_payload[20 + MXD_PUBKEY_LEN + 8];
     memcpy(announce_payload, node_address, 20);
-    memcpy(announce_payload + 20, public_key, 256);
-    memcpy(announce_payload + 276, &timestamp_net, 8);
+    memcpy(announce_payload + 20, public_key, MXD_PUBKEY_LEN);
+    memcpy(announce_payload + 20 + MXD_PUBKEY_LEN, &timestamp_net, 8);
     
     MXD_LOG_INFO("rsc", "Verifying signature: payload_size=%zu, sig_len=%u", sizeof(announce_payload), signature_length);
     if (mxd_dilithium_verify(signature, signature_length, announce_payload, sizeof(announce_payload), public_key) != 0) {
@@ -1164,13 +1164,13 @@ int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *publ
     
     mxd_genesis_member_t *member = &pending_genesis_members[pending_genesis_count];
     memcpy(member->node_address, node_address, 20);
-    memcpy(member->public_key, public_key, 256);
+    memcpy(member->public_key, public_key, MXD_PUBKEY_LEN);
     member->timestamp = timestamp;
     memcpy(member->signature, signature, signature_length);
     member->signature_length = signature_length;
     pending_genesis_count++;
     
-    if (mxd_test_register_validator_pubkey(node_address, public_key, 256) != 0) {
+    if (mxd_test_register_validator_pubkey(node_address, public_key, MXD_PUBKEY_LEN) != 0) {
         MXD_LOG_WARN("rsc", "Failed to register validator pubkey for genesis member");
     }
     

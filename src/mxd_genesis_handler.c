@@ -12,7 +12,7 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
                  type, payload_length, address, port);
     switch (type) {
         case MXD_MSG_GENESIS_ANNOUNCE: {
-            if (payload_length < 20 + 256 + 8 + 2) {
+            if (payload_length < 20 + MXD_PUBKEY_LEN + 8 + 2) {
                 MXD_LOG_WARN("genesis", "Invalid GENESIS_ANNOUNCE message size");
                 return;
             }
@@ -23,7 +23,7 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
             const uint8_t *node_address = data + offset;
             offset += 20;
             const uint8_t *public_key = data + offset;
-            offset += 256;
+            offset += MXD_PUBKEY_LEN;
             uint64_t timestamp_net;
             memcpy(&timestamp_net, data + offset, 8);
             uint64_t timestamp = mxd_ntohll(timestamp_net);

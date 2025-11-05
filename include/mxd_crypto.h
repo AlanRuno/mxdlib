@@ -8,6 +8,16 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef MXD_PQC_DILITHIUM
+#define MXD_PUBKEY_LEN 2592
+#define MXD_PRIVKEY_LEN 4864
+#define MXD_SIG_MAX_LEN 4595
+#else
+#define MXD_PUBKEY_LEN 32
+#define MXD_PRIVKEY_LEN 64
+#define MXD_SIG_MAX_LEN 64
+#endif
+
 // SHA-512 hashing
 int mxd_sha512(const uint8_t *input, size_t length, uint8_t output[64]);
 
