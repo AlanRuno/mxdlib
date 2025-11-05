@@ -12,7 +12,7 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
                  type, payload_length, address, port);
     switch (type) {
         case MXD_MSG_GENESIS_ANNOUNCE: {
-            if (payload_length < 20 + MXD_PUBKEY_LEN + 8 + 2) {
+            if (payload_length < 20 + 1 + 8 + 2) {
                 MXD_LOG_WARN("genesis", "Invalid GENESIS_ANNOUNCE message size");
                 return;
             }
@@ -22,8 +22,17 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
             
             const uint8_t *node_address = data + offset;
             offset += 20;
+            
+            uint8_t algo_id = MXD_SIGALG_ED25519;
+            size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
+            
+            if (payload_length < 20 + pubkey_len + 8 + 2) {
+                MXD_LOG_WARN("genesis", "Invalid GENESIS_ANNOUNCE message size for algo %u", algo_id);
+                return;
+            }
+            
             const uint8_t *public_key = data + offset;
-            offset += MXD_PUBKEY_LEN;
+            offset += pubkey_len;
             uint64_t timestamp_net;
             memcpy(&timestamp_net, data + offset, 8);
             uint64_t timestamp = mxd_ntohll(timestamp_net);
@@ -40,7 +49,7 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
             
             const uint8_t *signature = data + offset;
             
-            mxd_handle_genesis_announce(node_address, public_key, timestamp, signature, sig_len);
+            mxd_handle_genesis_announce(algo_id, node_address, public_key, pubkey_len, timestamp, signature, sig_len);
             break;
         }
         

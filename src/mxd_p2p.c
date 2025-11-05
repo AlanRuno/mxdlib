@@ -32,8 +32,9 @@ static pthread_mutex_t manual_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static int p2p_initialized = 0;
 static uint16_t p2p_port = 0;
-static uint8_t node_public_key[MXD_PUBKEY_LEN] = {0};
-static uint8_t node_private_key[MXD_PRIVKEY_LEN] = {0};
+static uint8_t node_algo_id = MXD_SIGALG_ED25519;
+static uint8_t node_public_key[MXD_PUBKEY_MAX_LEN] = {0};
+static uint8_t node_private_key[MXD_PRIVKEY_MAX_LEN] = {0};
 static mxd_config_t node_config;
 static uint64_t last_message_time = 0;
 static size_t messages_this_second = 0;
@@ -2055,12 +2056,15 @@ int mxd_get_node_keys(uint8_t *public_key_out, uint8_t *private_key_out) {
         return -1;
     }
     
+    size_t pubkey_len = mxd_sig_pubkey_len(node_algo_id);
+    size_t privkey_len = mxd_sig_privkey_len(node_algo_id);
+    
     if (public_key_out) {
-        memcpy(public_key_out, node_public_key, MXD_PUBKEY_LEN);
+        memcpy(public_key_out, node_public_key, pubkey_len);
     }
     
     if (private_key_out) {
-        memcpy(private_key_out, node_private_key, MXD_PRIVKEY_LEN);
+        memcpy(private_key_out, node_private_key, privkey_len);
     }
     
     return 0;

@@ -313,15 +313,18 @@ int main(int argc, char** argv) {
     mxd_set_message_handler(mxd_genesis_message_handler);
     MXD_LOG_INFO("node", "Genesis message handler registered");
     
-    uint8_t node_pubkey[MXD_PUBKEY_LEN] = {0};
-    uint8_t node_privkey[MXD_PRIVKEY_LEN] = {0};
+    uint8_t algo_id = MXD_SIGALG_ED25519;
+    uint8_t node_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
+    uint8_t node_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
     uint8_t node_address[20] = {0};
     
     if (mxd_get_node_keys(node_pubkey, node_privkey) == 0) {
-        if (mxd_hash160(node_pubkey, MXD_PUBKEY_LEN, node_address) == 0) {
+        size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
+        if (mxd_derive_address(algo_id, node_pubkey, pubkey_len, node_address) == 0) {
             char address_str[42] = {0};
             if (mxd_generate_address(node_pubkey, address_str, sizeof(address_str)) == 0) {
-                MXD_LOG_INFO("node", "Genesis coordination initialized with node address: %s", address_str);
+                MXD_LOG_INFO("node", "Genesis coordination initialized with node address: %s (algo=%s)", 
+                             address_str, mxd_sig_alg_name(algo_id));
             }
             
             if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey) == 0) {
