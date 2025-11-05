@@ -1855,6 +1855,10 @@ int mxd_send_message(const char* address, uint16_t port,
         return -1;
     }
     
+    shutdown(sock, SHUT_WR);
+    
+    usleep(50000);  // 50ms
+    
     close(sock);
     
     update_unified_peer_sent(address, port);
