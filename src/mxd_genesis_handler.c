@@ -1,6 +1,7 @@
 #include "../include/mxd_rsc.h"
 #include "../include/mxd_p2p.h"
 #include "../include/mxd_logging.h"
+#include "../include/mxd_endian.h"
 #include <string.h>
 
 void mxd_genesis_message_handler(const char *address, uint16_t port,
@@ -23,11 +24,13 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
             offset += 20;
             const uint8_t *public_key = data + offset;
             offset += 256;
-            uint64_t timestamp;
-            memcpy(&timestamp, data + offset, 8);
+            uint64_t timestamp_net;
+            memcpy(&timestamp_net, data + offset, 8);
+            uint64_t timestamp = mxd_ntohll(timestamp_net);
             offset += 8;
-            uint16_t sig_len;
-            memcpy(&sig_len, data + offset, 2);
+            uint16_t sig_len_net;
+            memcpy(&sig_len_net, data + offset, 2);
+            uint16_t sig_len = ntohs(sig_len_net);
             offset += 2;
             
             if (offset + sig_len > payload_length) {
