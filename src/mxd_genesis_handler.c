@@ -12,42 +12,66 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
                  type, payload_length, address, port);
     switch (type) {
         case MXD_MSG_GENESIS_ANNOUNCE: {
-            if (payload_length < 20 + 1 + 8 + 2) {
-                MXD_LOG_WARN("genesis", "Invalid GENESIS_ANNOUNCE message size");
+            if (payload_length < 1 + 20 + 2 + 8 + 2) {
+                MXD_LOG_WARN("genesis", "Invalid GENESIS_ANNOUNCE message size: %zu (min: %zu)", 
+                             payload_length, (size_t)(1 + 20 + 2 + 8 + 2));
                 return;
             }
             
             const uint8_t *data = (const uint8_t *)payload;
             size_t offset = 0;
             
+            uint8_t algo_id = data[offset];
+            offset += 1;
+            
+            if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
+                MXD_LOG_WARN("genesis", "Invalid algorithm ID: %u", algo_id);
+                return;
+            }
+            
             const uint8_t *node_address = data + offset;
             offset += 20;
             
-            uint8_t algo_id = MXD_SIGALG_ED25519;
-            size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
+            uint16_t pubkey_len_net;
+            memcpy(&pubkey_len_net, data + offset, 2);
+            uint16_t pubkey_len = ntohs(pubkey_len_net);
+            offset += 2;
             
-            if (payload_length < 20 + pubkey_len + 8 + 2) {
+            size_t expected_pubkey_len = mxd_sig_pubkey_len(algo_id);
+            if (pubkey_len != expected_pubkey_len) {
+                MXD_LOG_WARN("genesis", "Invalid pubkey length %u for algo %u (expected %zu)", 
+                             pubkey_len, algo_id, expected_pubkey_len);
+                return;
+            }
+            
+            if (payload_length < offset + pubkey_len + 8 + 2) {
                 MXD_LOG_WARN("genesis", "Invalid GENESIS_ANNOUNCE message size for algo %u", algo_id);
                 return;
             }
             
             const uint8_t *public_key = data + offset;
             offset += pubkey_len;
+            
             uint64_t timestamp_net;
             memcpy(&timestamp_net, data + offset, 8);
             uint64_t timestamp = mxd_ntohll(timestamp_net);
             offset += 8;
+            
             uint16_t sig_len_net;
             memcpy(&sig_len_net, data + offset, 2);
             uint16_t sig_len = ntohs(sig_len_net);
             offset += 2;
             
             if (offset + sig_len > payload_length) {
-                MXD_LOG_WARN("genesis", "Invalid GENESIS_ANNOUNCE signature length");
+                MXD_LOG_WARN("genesis", "Invalid GENESIS_ANNOUNCE signature length: %u (remaining: %zu)", 
+                             sig_len, payload_length - offset);
                 return;
             }
             
             const uint8_t *signature = data + offset;
+            
+            MXD_LOG_INFO("genesis", "Parsed genesis announce: algo=%u, pubkey_len=%u, timestamp=%lu, sig_len=%u",
+                         algo_id, pubkey_len, timestamp, sig_len);
             
             mxd_handle_genesis_announce(algo_id, node_address, public_key, pubkey_len, timestamp, signature, sig_len);
             break;

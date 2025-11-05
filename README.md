@@ -21,7 +21,11 @@ MXD (Mexican Denarius) represents a groundbreaking advancement in digital financ
 ### 💫 Technical Innovation
 - **Consensus Mechanism**: Utilizes network communication speed metrics for efficient block validation
 - **Transaction Model**: UTXO-based system with voluntary tip structure
-- **Security**: Hybrid cryptographic implementation — Ed25519 (default) with Dilithium post-quantum signatures available via MXD_PQC_DILITHIUM build option
+- **Security**: Hybrid cryptographic system supporting both Ed25519 and Dilithium5 simultaneously on the same network
+  - Runtime algorithm selection via `algo_id` field in addresses and messages
+  - Ed25519: 32-byte public keys, 64-byte signatures (default, production-ready)
+  - Dilithium5: 2592-byte public keys, 4595-byte signatures (post-quantum secure)
+  - Address format: `HASH160(algo_id || pubkey)` prevents cross-algorithm collisions
 - **Network Efficiency**: Optimized P2P communication with DHT-based node discovery
 
 ## 🚀 Features
@@ -29,9 +33,13 @@ MXD (Mexican Denarius) represents a groundbreaking advancement in digital financ
 ### 🔐 Core Cryptographic Features
 - SHA-512 & RIPEMD-160 hashing (ISO/IEC 10118-3)
 - Argon2 key derivation (ISO/IEC 11889)
-- Digital signatures: Ed25519 (default); Crystals Dilithium available via MXD_PQC_DILITHIUM=ON (ISO/IEC 18033-3)
+- **Hybrid Digital Signatures**: Runtime algorithm selection supporting multiple signature schemes simultaneously
+  - **Ed25519** (default): 32-byte public keys, 64-byte private keys, 64-byte signatures
+  - **Dilithium5** (post-quantum): 2592-byte public keys, 4864-byte private keys, 4595-byte signatures
+  - Algorithm identification via `algo_id` field (1=Ed25519, 2=Dilithium5)
+  - Unified API: `mxd_sig_keygen()`, `mxd_sig_sign()`, `mxd_sig_verify()` dispatch to appropriate backend
 - Elliptic curve cryptography (secp256k1) for robust transaction security
-- Base58Check address encoding
+- Base58Check address encoding with algorithm-aware derivation
 
 ### 💎 Blockchain & Consensus
 - Advanced Rapid Stake Consensus (RSC) with Validation Chain Protocol
@@ -114,10 +122,14 @@ The node can be started with or without a configuration file:
 The default configuration file (`default_config.json`) is automatically loaded from the same directory as the executable if no configuration file is specified.
 
 ### 🔐 Cryptographic Implementation Status:
-- **Default**: Ed25519 signatures via libsodium (production ready)
-- **Post-Quantum**: Dilithium signatures implemented and available with `-DMXD_PQC_DILITHIUM=ON`
-- **Build Configuration**: CMake defaults to Ed25519; Dilithium requires explicit enablement
-- **API Compatibility**: Both signature schemes use unified `mxd_dilithium_*` API interface
+- **Hybrid System**: Both Ed25519 and Dilithium5 supported simultaneously on the same network
+- **Default Algorithm**: Ed25519 signatures via libsodium (production ready)
+- **Post-Quantum**: Dilithium5 signatures available (requires `-DMXD_PQC_DILITHIUM=ON` at build time)
+- **Runtime Selection**: Nodes can use different algorithms; `algo_id` field identifies which algorithm each address uses
+- **Wire Protocol**: Self-describing messages include `algo_id` and length fields for variable-size keys/signatures
+- **Address Derivation**: `HASH160(algo_id || pubkey)` prevents cross-algorithm address collisions
+- **API**: Unified `mxd_sig_*` functions dispatch to appropriate backend based on `algo_id`
+- **Breaking Change**: Address format changed in v2 protocol; requires coordinated network reset
 
 ### Prerequisites
 
@@ -230,10 +242,22 @@ Note: Some tests require network connectivity for P2P simulations
 ### Generate MXD Address
 ```c
 #include <mxd_address.h>
+#include <mxd_crypto.h>
 
-char address[42];
-uint8_t public_key[256];
-mxd_generate_address(public_key, address, sizeof(address));
+// Generate Ed25519 keypair (default)
+uint8_t algo_id = MXD_SIGALG_ED25519;
+uint8_t public_key[MXD_PUBKEY_MAX_LEN];
+uint8_t private_key[MXD_PRIVKEY_MAX_LEN];
+mxd_sig_keygen(algo_id, public_key, private_key);
+
+// Derive address (includes algo_id to prevent collisions)
+uint8_t address[20];
+size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
+mxd_derive_address(algo_id, public_key, pubkey_len, address);
+
+// Generate Base58Check address string
+char address_str[42];
+mxd_generate_address(public_key, address_str, sizeof(address_str));
 ```
 
 ### Create Transaction

@@ -1074,21 +1074,33 @@ int mxd_broadcast_genesis_announce(void) {
     MXD_LOG_INFO("rsc", "Generated genesis announce signature: algo=%s, sig_len=%zu, timestamp_ms=%lu", 
                  mxd_sig_alg_name(local_genesis_algo_id), signature_len, current_time_ms);
     
-    uint8_t message[20 + MXD_PUBKEY_MAX_LEN + 8 + 2 + MXD_SIG_MAX_LEN];
+    uint8_t message[1 + 20 + 2 + MXD_PUBKEY_MAX_LEN + 8 + 2 + MXD_SIG_MAX_LEN];
     size_t offset = 0;
+    
+    message[offset] = local_genesis_algo_id;
+    offset += 1;
+    
     memcpy(message + offset, local_genesis_address, 20);
     offset += 20;
+    
+    uint16_t pubkey_len_net = htons((uint16_t)pubkey_len);
+    memcpy(message + offset, &pubkey_len_net, 2);
+    offset += 2;
+    
     memcpy(message + offset, local_genesis_pubkey, pubkey_len);
     offset += pubkey_len;
+    
     memcpy(message + offset, &current_time_net, 8);
     offset += 8;
+    
     uint16_t sig_len_net = htons((uint16_t)signature_len);
     memcpy(message + offset, &sig_len_net, 2);
     offset += 2;
+    
     memcpy(message + offset, signature, signature_len);
     offset += signature_len;
     
-    MXD_LOG_INFO("rsc", "Constructed genesis announce message: total_size=%zu (addr=20, pubkey=%zu, time=8, sig_len_field=2, sig=%zu)", 
+    MXD_LOG_INFO("rsc", "Constructed genesis announce message: total_size=%zu (algo=1, addr=20, pubkey_len=2, pubkey=%zu, time=8, sig_len=2, sig=%zu)", 
                 offset, pubkey_len, signature_len);
     
     if (mxd_broadcast_message(MXD_MSG_GENESIS_ANNOUNCE, message, offset) != 0) {
