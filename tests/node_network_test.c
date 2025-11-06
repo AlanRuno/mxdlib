@@ -56,7 +56,7 @@ static void test_node_network(void) {
     usleep(500000);
     
     uint64_t start_time = get_current_time_ms();
-    TEST_ASSERT(mxd_init_p2p(TEST_PORT_2, public_key, private_key) == 0, "Node P2P initialization");
+    TEST_ASSERT(test_init_p2p_ed25519(TEST_PORT_2, public_key, private_key) == 0, "Node P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "Node P2P startup");
     uint64_t end_time = get_current_time_ms();
     uint64_t init_latency = end_time - start_time;

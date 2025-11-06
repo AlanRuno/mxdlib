@@ -325,7 +325,7 @@ int main(void) {
 
   // Initialize required systems
   TEST_ASSERT(mxd_init_ntp() == 0, "NTP initialization");
-  TEST_ASSERT(mxd_init_p2p(12345, test_pub_key, test_priv_key) == 0, "P2P initialization");
+  TEST_ASSERT(test_init_p2p_ed25519(12345, test_pub_key, test_priv_key) == 0, "P2P initialization");
   TEST_ASSERT(mxd_init_transaction_validation() == 0,
               "Transaction validation initialization");
 

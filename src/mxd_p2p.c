@@ -764,9 +764,15 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    char derived_address[64];
-    if (mxd_generate_address(handshake->public_key, derived_address, sizeof(derived_address)) != 0) {
+    uint8_t addr_hash[20];
+    if (mxd_derive_address(handshake->algo_id, handshake->public_key, handshake->public_key_length, addr_hash) != 0) {
         MXD_LOG_WARN("p2p", "Failed to derive address from public key for %s:%d", address, port);
+        return -1;
+    }
+    
+    char derived_address[64];
+    if (base58_encode(addr_hash, 20, derived_address, sizeof(derived_address)) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to encode address to Base58 for %s:%d", address, port);
         return -1;
     }
     
