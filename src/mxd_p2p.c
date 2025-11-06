@@ -713,12 +713,19 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
         }
     }
     
-    uint8_t message_to_sign[32 + 256];
+    uint8_t addr20[20];
+    if (mxd_derive_address(node_algo_id, node_public_key, pubkey_len, addr20) != 0) {
+        MXD_LOG_ERROR("p2p", "Failed to derive address for handshake signing");
+        return -1;
+    }
+    
+    uint8_t message_to_sign[32 + 1 + 20];
     memcpy(message_to_sign, handshake->challenge, 32);
-    memcpy(message_to_sign + 32, handshake->node_id, 256);
+    message_to_sign[32] = node_algo_id;
+    memcpy(message_to_sign + 33, addr20, 20);
     
     size_t sig_len = 0;
-    if (mxd_sig_sign(node_algo_id, handshake->signature, &sig_len, message_to_sign, 288, node_private_key) != 0) {
+    if (mxd_sig_sign(node_algo_id, handshake->signature, &sig_len, message_to_sign, 53, node_private_key) != 0) {
         MXD_LOG_ERROR("p2p", "Failed to sign handshake");
         return -1;
     }
@@ -764,9 +771,15 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    char derived_address[64];
-    if (mxd_generate_address(handshake->public_key, derived_address, sizeof(derived_address)) != 0) {
+    uint8_t addr20[20];
+    if (mxd_derive_address(handshake->algo_id, handshake->public_key, handshake->public_key_length, addr20) != 0) {
         MXD_LOG_WARN("p2p", "Failed to derive address from public key for %s:%d", address, port);
+        return -1;
+    }
+    
+    char derived_address[64];
+    if (base58_encode(addr20, 20, derived_address, sizeof(derived_address)) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to encode address to Base58 for %s:%d", address, port);
         return -1;
     }
     
@@ -776,12 +789,13 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    uint8_t message_to_verify[32 + 256];
+    uint8_t message_to_verify[32 + 1 + 20];
     memcpy(message_to_verify, handshake->challenge, 32);
-    memcpy(message_to_verify + 32, handshake->node_id, 256);
+    message_to_verify[32] = handshake->algo_id;
+    memcpy(message_to_verify + 33, addr20, 20);
     
     if (mxd_sig_verify(handshake->algo_id, handshake->signature, handshake->signature_length, 
-                       message_to_verify, 288, handshake->public_key) != 0) {
+                       message_to_verify, 53, handshake->public_key) != 0) {
         MXD_LOG_WARN("p2p", "Signature verification failed for %s:%d (node_id: %s, algo: %s)", 
                    address, port, handshake->node_id, mxd_sig_alg_name(handshake->algo_id));
         return -1;

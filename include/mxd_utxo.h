@@ -9,16 +9,15 @@ extern "C" {
 #include <stdint.h>
 #include <rocksdb/c.h>
 
-// UTXO entry structure
+// UTXO entry structure (v2 - uses address20)
 typedef struct {
   uint8_t tx_hash[64];          // Transaction hash
   uint32_t output_index;        // Output index in transaction
-  uint8_t owner_key[256];       // Owner's public key
+  uint8_t owner_key[20];        // Owner's address (HASH160(algo_id || pubkey))
   double amount;                // Amount of coins
   uint32_t required_signatures; // Number of required signatures (multi-sig)
-  uint8_t *cosigner_keys;       // Array of cosigner public keys
+  uint8_t *cosigner_keys;       // Array of cosigner addresses (20 bytes each)
   uint32_t cosigner_count;      // Number of cosigners
-  uint8_t pubkey_hash[20];      // Hash of owner's public key for indexing
   uint8_t is_spent;             // Flag indicating if UTXO is spent
 } mxd_utxo_t;
 
@@ -39,12 +38,12 @@ int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
 int mxd_get_utxo(const uint8_t tx_hash[64], uint32_t output_index,
                  mxd_utxo_t *utxo);
 
-// Get total balance for a public key
-double mxd_get_balance(const uint8_t public_key[256]);
+// Get total balance for an address (v2 - uses address20)
+double mxd_get_balance(const uint8_t address[20]);
 
-// Verify UTXO exists and is spendable
+// Verify UTXO exists and is spendable (v2 - uses address20)
 int mxd_verify_utxo(const uint8_t tx_hash[64], uint32_t output_index,
-                    const uint8_t public_key[256]);
+                    const uint8_t address[20]);
 
 // Create multi-signature UTXO
 int mxd_create_multisig_utxo(mxd_utxo_t *utxo, const uint8_t *cosigner_keys,

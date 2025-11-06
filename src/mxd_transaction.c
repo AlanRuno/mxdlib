@@ -35,27 +35,27 @@ int mxd_create_transaction(mxd_transaction_t *tx) {
   }
 
   memset(tx, 0, sizeof(mxd_transaction_t));
-  tx->version = 1; // Current version
+  tx->version = 2;
   tx->inputs = NULL;
   tx->outputs = NULL;
   tx->input_count = 0;
   tx->output_count = 0;
   tx->voluntary_tip = 0.0;
   tx->timestamp = time(NULL);
-  tx->is_coinbase = 0; // Default to regular transaction
+  tx->is_coinbase = 0;
 
   return 0;
 }
 
-// Add input to transaction
+// Add input to transaction (v2 - algo-aware)
 int mxd_add_tx_input(mxd_transaction_t *tx, const uint8_t prev_tx_hash[64],
-                     uint32_t output_index, const uint8_t public_key[256]) {
+                     uint32_t output_index, uint8_t algo_id,
+                     const uint8_t *public_key, size_t pubkey_len) {
   if (!tx || !prev_tx_hash || !public_key ||
       tx->input_count >= MXD_MAX_TX_INPUTS) {
     return -1;
   }
 
-  // Allocate or reallocate inputs array
   mxd_tx_input_t *new_inputs =
       realloc(tx->inputs, (tx->input_count + 1) * sizeof(mxd_tx_input_t));
   if (!new_inputs) {
@@ -63,33 +63,39 @@ int mxd_add_tx_input(mxd_transaction_t *tx, const uint8_t prev_tx_hash[64],
   }
   tx->inputs = new_inputs;
 
-  // Initialize new input
   mxd_tx_input_t *input = &tx->inputs[tx->input_count];
+  memset(input, 0, sizeof(mxd_tx_input_t));
   memcpy(input->prev_tx_hash, prev_tx_hash, 64);
   input->output_index = output_index;
-  memcpy(input->public_key, public_key, 256);
-  memset(input->signature, 0, 256); // Clear signature
-  input->amount = 0.0; // Will be populated during UTXO verification
+  input->algo_id = algo_id;
+  input->public_key_length = (uint16_t)pubkey_len;
+  
+  input->public_key = malloc(pubkey_len);
+  if (!input->public_key) {
+    return -1;
+  }
+  memcpy(input->public_key, public_key, pubkey_len);
+  
+  input->signature = NULL;
+  input->signature_length = 0;
+  input->amount = 0.0;
 
-  // Verify UTXO exists and get amount
   if (mxd_verify_tx_input_utxo(input, &input->amount) != 0) {
     MXD_LOG_WARN("transaction", "UTXO not found or insufficient funds for input %u", tx->input_count);
-    // Don't fail here, will be caught during full validation
   }
 
   tx->input_count++;
   return 0;
 }
 
-// Add output to transaction
-int mxd_add_tx_output(mxd_transaction_t *tx, const uint8_t recipient_key[256],
+// Add output to transaction (v2 - uses address20)
+int mxd_add_tx_output(mxd_transaction_t *tx, const uint8_t recipient_addr[20],
                       double amount) {
-  if (!tx || !recipient_key || amount <= 0 ||
+  if (!tx || !recipient_addr || amount <= 0 ||
       tx->output_count >= MXD_MAX_TX_OUTPUTS) {
     return -1;
   }
 
-  // Allocate or reallocate outputs array
   mxd_tx_output_t *new_outputs =
       realloc(tx->outputs, (tx->output_count + 1) * sizeof(mxd_tx_output_t));
   if (!new_outputs) {
@@ -97,16 +103,9 @@ int mxd_add_tx_output(mxd_transaction_t *tx, const uint8_t recipient_key[256],
   }
   tx->outputs = new_outputs;
 
-  // Initialize new output
   mxd_tx_output_t *output = &tx->outputs[tx->output_count];
-  memcpy(output->recipient_key, recipient_key, 256);
+  memcpy(output->recipient_addr, recipient_addr, 20);
   output->amount = amount;
-  
-  // Calculate public key hash for indexing
-  if (mxd_calculate_pubkey_hash(recipient_key, output->pubkey_hash) != 0) {
-    MXD_LOG_WARN("transaction", "Failed to calculate public key hash for output %u", tx->output_count);
-    // Don't fail here, will be caught during full validation
-  }
 
   tx->output_count++;
   return 0;
@@ -156,8 +155,8 @@ int mxd_calculate_tx_hash(const mxd_transaction_t *tx, uint8_t hash[64]) {
 
   // Serialize outputs
   for (uint32_t i = 0; i < tx->output_count; i++) {
-    memcpy(buffer + offset, tx->outputs[i].recipient_key, 256);
-    offset += 256;
+    memcpy(buffer + offset, tx->outputs[i].recipient_addr, 20);
+    offset += 20;
     memcpy(buffer + offset, &tx->outputs[i].amount, sizeof(double));
     offset += sizeof(double);
   }
@@ -176,44 +175,60 @@ int mxd_calculate_tx_hash(const mxd_transaction_t *tx, uint8_t hash[64]) {
 
 // Sign transaction input
 int mxd_sign_tx_input(mxd_transaction_t *tx, uint32_t input_index,
-                      const uint8_t private_key[128]) {
+                      uint8_t algo_id, const uint8_t *private_key) {
   if (!tx || !private_key || input_index >= tx->input_count) {
     return -1;
   }
 
-  // Calculate transaction hash
   uint8_t tx_hash[64];
   if (mxd_calculate_tx_hash(tx, tx_hash) != 0) {
     return -1;
   }
 
-  // Sign the transaction hash
-  size_t signature_length = 256;
-  return mxd_dilithium_sign(tx->inputs[input_index].signature,
-                            &signature_length, tx_hash, 64, private_key);
+  mxd_tx_input_t *input = &tx->inputs[input_index];
+  size_t sig_len = mxd_sig_signature_len(algo_id);
+  
+  if (input->signature) {
+    free(input->signature);
+  }
+  input->signature = malloc(sig_len);
+  if (!input->signature) {
+    return -1;
+  }
+
+  size_t actual_sig_len = sig_len;
+  if (mxd_sig_sign(algo_id, input->signature, &actual_sig_len, tx_hash, 64, private_key) != 0) {
+    free(input->signature);
+    input->signature = NULL;
+    return -1;
+  }
+  
+  input->signature_length = (uint16_t)actual_sig_len;
+  return 0;
 }
 
-// Verify transaction input signature
 int mxd_verify_tx_input(const mxd_transaction_t *tx, uint32_t input_index) {
   if (!tx || input_index >= tx->input_count) {
     return -1;
   }
 
-  // Calculate transaction hash
   uint8_t tx_hash[64];
   if (mxd_calculate_tx_hash(tx, tx_hash) != 0) {
     return -1;
   }
 
-  // Verify the signature
-  return mxd_dilithium_verify(tx->inputs[input_index].signature, 256, tx_hash,
-                              64, tx->inputs[input_index].public_key);
+  const mxd_tx_input_t *input = &tx->inputs[input_index];
+  if (!input->signature || input->signature_length == 0) {
+    return -1;
+  }
+
+  return mxd_sig_verify(input->algo_id, input->signature, input->signature_length,
+                        tx_hash, 64, input->public_key);
 }
 
-// Validate entire transaction
 int mxd_validate_transaction(const mxd_transaction_t *tx) {
   MXD_LOG_DEBUG("transaction", "Transaction validation - initialized: %d", validation_initialized);
-  if (!validation_initialized || !tx || tx->version != 1 || 
+  if (!validation_initialized || !tx || tx->version != 2 || 
       (tx->input_count == 0 && !tx->is_coinbase) ||
       tx->input_count > MXD_MAX_TX_INPUTS || tx->output_count == 0 ||
       tx->output_count > MXD_MAX_TX_OUTPUTS || tx->voluntary_tip < 0) {
@@ -338,9 +353,14 @@ int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, double *amount) {
     return -1;
   }
   
-  // Verify public key matches
-  if (memcmp(utxo.owner_key, input->public_key, 256) != 0) {
-    MXD_LOG_ERROR("transaction", "UTXO owner key mismatch");
+  uint8_t input_addr[20];
+  if (mxd_derive_address(input->algo_id, input->public_key, input->public_key_length, input_addr) != 0) {
+    MXD_LOG_ERROR("transaction", "Failed to derive address from input public key");
+    return -1;
+  }
+  
+  if (memcmp(utxo.owner_key, input_addr, 20) != 0) {
+    MXD_LOG_ERROR("transaction", "UTXO owner address mismatch");
     return -1;
   }
   
@@ -349,21 +369,6 @@ int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, double *amount) {
   return 0;
 }
 
-// Calculate public key hash for indexing
-int mxd_calculate_pubkey_hash(const uint8_t public_key[256], uint8_t pubkey_hash[20]) {
-  if (!public_key || !pubkey_hash) {
-    return -1;
-  }
-  
-  // Calculate SHA-256 of public key
-  uint8_t sha256_hash[32];
-  if (mxd_sha256(public_key, 256, sha256_hash) != 0) {
-    return -1;
-  }
-  
-  // Calculate RIPEMD-160 of SHA-256 hash
-  return mxd_ripemd160(sha256_hash, 32, pubkey_hash);
-}
 
 int mxd_apply_transaction_to_utxo(const mxd_transaction_t *tx) {
   if (!tx) {
@@ -400,17 +405,15 @@ int mxd_create_utxos_from_tx(const mxd_transaction_t *tx, const uint8_t tx_hash[
     return -1;
   }
   
-  // Create UTXO for each output
   for (uint32_t i = 0; i < tx->output_count; i++) {
     mxd_utxo_t utxo;
     memcpy(utxo.tx_hash, tx_hash, 64);
     utxo.output_index = i;
     utxo.amount = tx->outputs[i].amount;
-    memcpy(utxo.owner_key, tx->outputs[i].recipient_key, 256);
-    utxo.required_signatures = 1; // Default to single signature
+    memcpy(utxo.owner_key, tx->outputs[i].recipient_addr, 20);
+    utxo.required_signatures = 1;
     utxo.cosigner_keys = NULL;
     utxo.cosigner_count = 0;
-    memcpy(utxo.pubkey_hash, tx->outputs[i].pubkey_hash, 20);
     utxo.is_spent = 0;
     
     if (mxd_add_utxo(&utxo) != 0) {
@@ -438,33 +441,35 @@ int mxd_mark_tx_inputs_spent(const mxd_transaction_t *tx) {
   return 0;
 }
 
-// Create a coinbase transaction (for block rewards)
-int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipient_key[256],
+int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipient_addr[20],
                                    double reward_amount) {
-  if (!tx || !recipient_key || reward_amount <= 0) {
+  if (!tx || !recipient_addr || reward_amount <= 0) {
     return -1;
   }
   
-  // Initialize transaction
   if (mxd_create_transaction(tx) != 0) {
     return -1;
   }
   
-  // Set as coinbase transaction
   tx->is_coinbase = 1;
   
-  // Add output for reward
-  if (mxd_add_tx_output(tx, recipient_key, reward_amount) != 0) {
+  if (mxd_add_tx_output(tx, recipient_addr, reward_amount) != 0) {
     return -1;
   }
   
-  // Calculate transaction hash
   return mxd_calculate_tx_hash(tx, tx->tx_hash);
 }
 
-// Free transaction resources
 void mxd_free_transaction(mxd_transaction_t *tx) {
   if (tx) {
+    for (uint32_t i = 0; i < tx->input_count; i++) {
+      if (tx->inputs[i].public_key) {
+        free(tx->inputs[i].public_key);
+      }
+      if (tx->inputs[i].signature) {
+        free(tx->inputs[i].signature);
+      }
+    }
     free(tx->inputs);
     free(tx->outputs);
     memset(tx, 0, sizeof(mxd_transaction_t));
