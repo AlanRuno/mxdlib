@@ -83,20 +83,21 @@ int mxd_generate_keypair(const uint8_t property_key[64],
     return -1;
   }
 
-  // First derive the private key using Argon2
-  const mxd_secrets_t *secrets = mxd_get_secrets();
-  if (!secrets) {
-    return -1;
-  }
-  uint8_t salt16[16] = {0};
-  memcpy(salt16, secrets->crypto_salt, sizeof(salt16));
+  uint8_t ed25519_pub[32];
+  uint8_t ed25519_priv[64];
   
-  if (mxd_argon2_lowmem((const char *)property_key, salt16, private_key, 128) != 0) {
+  if (mxd_sig_keygen(MXD_SIGALG_ED25519, ed25519_pub, ed25519_priv) != 0) {
     return -1;
   }
-
-  // Generate Dilithium keypair
-  return mxd_dilithium_keygen(public_key, private_key);
+  
+  memset(public_key, 0, 256);
+  memset(private_key, 0, 128);
+  memcpy(public_key, ed25519_pub, 32);
+  memcpy(private_key, ed25519_priv, 64);
+  
+  MXD_LOG_WARN("address", "mxd_generate_keypair() is deprecated - use mxd_sig_keygen() instead");
+  
+  return 0;
 }
 
 int mxd_address_to_string_v2(uint8_t algo_id, const uint8_t *public_key, size_t pubkey_len, 
