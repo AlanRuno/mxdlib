@@ -32,8 +32,9 @@ static pthread_mutex_t manual_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static int p2p_initialized = 0;
 static uint16_t p2p_port = 0;
-static uint8_t node_public_key[256] = {0};
-static uint8_t node_private_key[128] = {0};
+static uint8_t node_algo_id = MXD_SIGALG_ED25519;
+static uint8_t node_public_key[MXD_PUBKEY_MAX_LEN] = {0};
+static uint8_t node_private_key[MXD_PRIVKEY_MAX_LEN] = {0};
 static mxd_config_t node_config;
 static uint64_t last_message_time = 0;
 static size_t messages_this_second = 0;
@@ -98,13 +99,15 @@ typedef struct {
 } __attribute__((packed)) mxd_wire_header_t;
 
 typedef struct {
-    char node_id[256];        // Node identifier (wallet address)
-    uint32_t protocol_version; // Protocol version
-    uint16_t listen_port;      // Listening port
-    uint8_t public_key[256];   // Dilithium public key
-    uint8_t challenge[32];     // Random challenge nonce
-    uint16_t signature_length; // Length of signature
-    uint8_t signature[5000];   // Signature (max Dilithium5 size ~4595 bytes)
+    char node_id[256];                      // Node identifier (wallet address)
+    uint32_t protocol_version;              // Protocol version (now v2 for hybrid crypto)
+    uint16_t listen_port;                   // Listening port
+    uint8_t algo_id;                        // Algorithm ID (1=Ed25519, 2=Dilithium5)
+    uint16_t public_key_length;             // Length of public key
+    uint8_t public_key[MXD_PUBKEY_MAX_LEN]; // Public key (variable size)
+    uint8_t challenge[32];                  // Random challenge nonce
+    uint16_t signature_length;              // Length of signature
+    uint8_t signature[MXD_SIG_MAX_LEN];     // Signature (variable size)
 } mxd_handshake_payload_t;
 
 static void* connection_handler(void* arg);
@@ -692,10 +695,13 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
     
     strncpy(handshake->node_id, node_config.node_id, sizeof(handshake->node_id) - 1);
     handshake->node_id[sizeof(handshake->node_id) - 1] = '\0';
-    handshake->protocol_version = 1;
+    handshake->protocol_version = 2;
     handshake->listen_port = p2p_port;
     
-    memcpy(handshake->public_key, node_public_key, 256);
+    handshake->algo_id = node_algo_id;
+    size_t pubkey_len = mxd_sig_pubkey_len(node_algo_id);
+    handshake->public_key_length = (uint16_t)pubkey_len;
+    memcpy(handshake->public_key, node_public_key, pubkey_len);
     
     if (challenge && challenge_len > 0) {
         memcpy(handshake->challenge, challenge, challenge_len < 32 ? challenge_len : 32);
@@ -706,19 +712,20 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
         }
     }
     
-    uint8_t message_to_sign[288];
+    uint8_t message_to_sign[32 + 256];
     memcpy(message_to_sign, handshake->challenge, 32);
     memcpy(message_to_sign + 32, handshake->node_id, 256);
     
     size_t sig_len = 0;
-    if (mxd_dilithium_sign(handshake->signature, &sig_len, message_to_sign, 288, node_private_key) != 0) {
+    if (mxd_sig_sign(node_algo_id, handshake->signature, &sig_len, message_to_sign, 288, node_private_key) != 0) {
         MXD_LOG_ERROR("p2p", "Failed to sign handshake");
         return -1;
     }
     
     handshake->signature_length = (uint16_t)sig_len;
     
-    MXD_LOG_DEBUG("p2p", "Created signed handshake with signature length %u", handshake->signature_length);
+    MXD_LOG_DEBUG("p2p", "Created signed handshake: algo=%s, pubkey_len=%u, sig_len=%u", 
+                  mxd_sig_alg_name(node_algo_id), handshake->public_key_length, handshake->signature_length);
     return 0;
 }
 
@@ -731,6 +738,24 @@ static int handle_handshake_message(const char *address, uint16_t port,
     }
     
     const mxd_handshake_payload_t *handshake = (const mxd_handshake_payload_t *)payload;
+    
+    if (handshake->protocol_version != 2) {
+        MXD_LOG_WARN("p2p", "Incompatible protocol version %u from %s:%d (expected v2)", 
+                   handshake->protocol_version, address, port);
+        return -1;
+    }
+    
+    if (handshake->algo_id != MXD_SIGALG_ED25519 && handshake->algo_id != MXD_SIGALG_DILITHIUM5) {
+        MXD_LOG_WARN("p2p", "Invalid algorithm ID %u from %s:%d", handshake->algo_id, address, port);
+        return -1;
+    }
+    
+    size_t expected_pubkey_len = mxd_sig_pubkey_len(handshake->algo_id);
+    if (handshake->public_key_length != expected_pubkey_len) {
+        MXD_LOG_WARN("p2p", "Invalid pubkey length %u for algo %u from %s:%d (expected %zu)", 
+                   handshake->public_key_length, handshake->algo_id, address, port, expected_pubkey_len);
+        return -1;
+    }
     
     if (strcmp(handshake->node_id, node_config.node_id) == 0) {
         MXD_LOG_INFO("p2p", "Rejecting self-connection from %s:%d (node_id: %s)", 
@@ -750,20 +775,20 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    uint8_t message_to_verify[288];
+    uint8_t message_to_verify[32 + 256];
     memcpy(message_to_verify, handshake->challenge, 32);
     memcpy(message_to_verify + 32, handshake->node_id, 256);
     
-    if (mxd_dilithium_verify(handshake->signature, handshake->signature_length, 
-                             message_to_verify, 288, handshake->public_key) != 0) {
-        MXD_LOG_WARN("p2p", "Signature verification failed for %s:%d (node_id: %s)", 
-                   address, port, handshake->node_id);
+    if (mxd_sig_verify(handshake->algo_id, handshake->signature, handshake->signature_length, 
+                       message_to_verify, 288, handshake->public_key) != 0) {
+        MXD_LOG_WARN("p2p", "Signature verification failed for %s:%d (node_id: %s, algo: %s)", 
+                   address, port, handshake->node_id, mxd_sig_alg_name(handshake->algo_id));
         return -1;
     }
     
-    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u) - signature verified", 
+    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u, algo: %s) - signature verified", 
                address, port, handshake->node_id, handshake->protocol_version, 
-               handshake->listen_port);
+               handshake->listen_port, mxd_sig_alg_name(handshake->algo_id));
     
     if (conn) {
         strncpy(conn->address, address, sizeof(conn->address) - 1);
@@ -2055,12 +2080,15 @@ int mxd_get_node_keys(uint8_t *public_key_out, uint8_t *private_key_out) {
         return -1;
     }
     
+    size_t pubkey_len = mxd_sig_pubkey_len(node_algo_id);
+    size_t privkey_len = mxd_sig_privkey_len(node_algo_id);
+    
     if (public_key_out) {
-        memcpy(public_key_out, node_public_key, 256);
+        memcpy(public_key_out, node_public_key, pubkey_len);
     }
     
     if (private_key_out) {
-        memcpy(private_key_out, node_private_key, 128);
+        memcpy(private_key_out, node_private_key, privkey_len);
     }
     
     return 0;

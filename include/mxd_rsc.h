@@ -7,6 +7,7 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
+#include "mxd_crypto.h"
 #include "mxd_blockchain.h"
 #include "mxd_blockchain_db.h"
 #include "common/mxd_metrics_types.h"
@@ -110,9 +111,10 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
 
 typedef struct {
     uint8_t node_address[20];
-    uint8_t public_key[256];
+    uint8_t algo_id;
+    uint8_t public_key[MXD_PUBKEY_MAX_LEN];
     uint64_t timestamp;
-    uint8_t signature[4096];
+    uint8_t signature[MXD_SIG_MAX_LEN];
     uint16_t signature_length;
 } mxd_genesis_member_t;
 
@@ -122,8 +124,8 @@ void mxd_cleanup_genesis_coordination(void);
 
 int mxd_broadcast_genesis_announce(void);
 
-int mxd_handle_genesis_announce(const uint8_t *node_address, const uint8_t *public_key, 
-                                 uint64_t timestamp, const uint8_t *signature, uint16_t signature_length);
+int mxd_handle_genesis_announce(uint8_t algo_id, const uint8_t *node_address, const uint8_t *public_key, 
+                                 size_t pubkey_len, uint64_t timestamp, const uint8_t *signature, uint16_t signature_length);
 
 int mxd_get_pending_genesis_count(void);
 
