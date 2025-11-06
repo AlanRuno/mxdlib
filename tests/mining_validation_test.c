@@ -55,8 +55,8 @@ static void test_mining_validation(void) {
   // Create test transactions and keys
   mxd_transaction_t transactions[TEST_TRANSACTIONS];
   uint8_t recipient_key[256] = {0};
-  uint8_t private_key[128] = {0};
-  uint8_t public_key[256] = {0};
+  uint8_t private_key[64] = {0};
+  uint8_t public_key[32] = {0};
   uint8_t prev_hash[64] = {0};
 
   // Generate valid keys for testing
@@ -78,7 +78,7 @@ static void test_mining_validation(void) {
 
   TEST_ASSERT(mxd_create_transaction(&genesis_tx) == 0,
               "Genesis transaction creation");
-  TEST_ASSERT(mxd_add_tx_output(&genesis_tx, public_key, 1000.0) == 0,
+  TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&genesis_tx, public_key, 1000.0) == 0,
               "Genesis output addition");
   TEST_ASSERT(mxd_calculate_tx_hash(&genesis_tx, genesis_hash) == 0,
               "Genesis hash calculation");
@@ -99,15 +99,15 @@ static void test_mining_validation(void) {
     // Create and setup transaction with valid UTXO
     TEST_ASSERT(mxd_create_transaction(&transactions[i]) == 0,
                 "Transaction creation");
-    TEST_ASSERT(mxd_add_tx_input(&transactions[i], genesis_tx.tx_hash, 0,
+    TEST_ASSERT(test_add_tx_input_ed25519(&transactions[i], genesis_tx.tx_hash, 0,
                                  public_key) == 0,
                 "Input addition");
-    TEST_ASSERT(mxd_add_tx_output(&transactions[i], recipient_key, 10.0) == 0,
+    TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&transactions[i], recipient_key, 10.0) == 0,
                 "Output addition");
 
     // Set timestamp and sign
     transactions[i].timestamp = get_current_time_ms();
-    TEST_ASSERT(mxd_sign_tx_input(&transactions[i], 0, private_key) == 0,
+    TEST_ASSERT(test_sign_tx_input_ed25519(&transactions[i], 0, private_key) == 0,
                 "Input signing");
 
     // Validate through node chain with latency tracking
@@ -325,7 +325,7 @@ int main(void) {
 
   // Initialize required systems
   TEST_ASSERT(mxd_init_ntp() == 0, "NTP initialization");
-  TEST_ASSERT(mxd_init_p2p(12345, test_pub_key, test_priv_key) == 0, "P2P initialization");
+  TEST_ASSERT(test_init_p2p_ed25519(12345, test_pub_key, test_priv_key) == 0, "P2P initialization");
   TEST_ASSERT(mxd_init_transaction_validation() == 0,
               "Transaction validation initialization");
 

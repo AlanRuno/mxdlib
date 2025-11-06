@@ -131,10 +131,10 @@ static void test_validation_chain_persistence(void) {
 static void test_validation_chain_propagation(void) {
     TEST_START("Validation Chain Propagation");
     
-    uint8_t public_key_1[256] = {0};
-    uint8_t public_key_2[256] = {0};
-    uint8_t private_key_1[128] = {0};
-    uint8_t private_key_2[128] = {0};
+    uint8_t public_key_1[32] = {0};
+    uint8_t public_key_2[32] = {0};
+    uint8_t private_key_1[64] = {0};
+    uint8_t private_key_2[64] = {0};
     for (int i = 0; i < 256; i++) {
         public_key_1[i] = i % 256;
         public_key_2[i] = (i + 32) % 256;
@@ -144,10 +144,10 @@ static void test_validation_chain_propagation(void) {
         private_key_2[i] = (i * 2 + 1) % 256;
     }
     
-    TEST_ASSERT(mxd_init_p2p(TEST_PORT_1, public_key_1, private_key_1) == 0, "Node 1 P2P initialization");
+    TEST_ASSERT(test_init_p2p_ed25519(TEST_PORT_1, public_key_1, private_key_1) == 0, "Node 1 P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "Node 1 P2P startup");
     
-    TEST_ASSERT(mxd_init_p2p(TEST_PORT_2, public_key_2, private_key_2) == 0, "Node 2 P2P initialization");
+    TEST_ASSERT(test_init_p2p_ed25519(TEST_PORT_2, public_key_2, private_key_2) == 0, "Node 2 P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "Node 2 P2P startup");
     
     TEST_ASSERT(mxd_add_peer("127.0.0.1", TEST_PORT_1) == 0, "Node connection");
@@ -181,7 +181,7 @@ static void test_validation_chain_propagation(void) {
                 "Block relay by validation count");
     
     mxd_stop_p2p();  // Stop second node
-    mxd_init_p2p(TEST_PORT_1, public_key_1, private_key_1);  // Switch back to first node
+    test_init_p2p_ed25519(TEST_PORT_1, public_key_1, private_key_1);  // Switch back to first node
     mxd_stop_p2p();  // Stop first node
     
     TEST_END("Validation Chain Propagation");
@@ -282,15 +282,15 @@ static void test_validation_chain_sync(void) {
     TEST_ASSERT(mxd_store_block(&block) == 0, 
                 "Block storage with validation chain");
     
-    uint8_t public_key[256] = {0};
-    uint8_t private_key[128] = {0};
+    uint8_t public_key[32] = {0};
+    uint8_t private_key[64] = {0};
     for (int i = 0; i < 256; i++) {
         public_key[i] = i % 256;
     }
     for (int i = 0; i < 128; i++) {
         private_key[i] = (i * 2) % 256;
     }
-    TEST_ASSERT(mxd_init_p2p(TEST_PORT_3, public_key, private_key) == 0, "P2P initialization");
+    TEST_ASSERT(test_init_p2p_ed25519(TEST_PORT_3, public_key, private_key) == 0, "P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "P2P startup");
     
     uint64_t start_time = get_current_time_ms();

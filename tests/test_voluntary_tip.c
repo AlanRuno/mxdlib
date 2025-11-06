@@ -41,16 +41,15 @@ static void test_transaction_validation_with_tip(void) {
     
     // Add a sample input
     uint8_t prev_hash[64] = {0};
-    uint8_t pub_key[256] = {0};
-    assert(mxd_add_tx_input(&tx, prev_hash, 0, pub_key) == 0);
+    uint8_t pub_key[32] = {0};
+    assert(test_add_tx_input_ed25519(&tx, prev_hash, 0, pub_key) == 0);
     
     // Add a sample output
-    uint8_t recipient_key[256] = {0};
-    assert(mxd_add_tx_output(&tx, recipient_key, 1.0) == 0);
+    uint8_t recipient_key[32] = {0};
+    assert(test_add_tx_output_to_pubkey_ed25519(&tx, recipient_key, 1.0) == 0);
     
     // Test with valid tip
     assert(mxd_set_voluntary_tip(&tx, 0.5) == 0);
-    // Note: Full validation will fail due to missing signatures and UTXO verification
     
     // Test with zero tip
     assert(mxd_set_voluntary_tip(&tx, 0.0) == 0);
@@ -71,10 +70,10 @@ static void test_transaction_serialization_with_tip(void) {
     
     // Set up transaction data
     uint8_t prev_hash[64] = {0};
-    uint8_t pub_key[256] = {0};
-    uint8_t recipient_key[256] = {0};
-    assert(mxd_add_tx_input(&tx, prev_hash, 0, pub_key) == 0);
-    assert(mxd_add_tx_output(&tx, recipient_key, 1.0) == 0);
+    uint8_t pub_key[32] = {0};
+    uint8_t recipient_key[32] = {0};
+    assert(test_add_tx_input_ed25519(&tx, prev_hash, 0, pub_key) == 0);
+    assert(test_add_tx_output_to_pubkey_ed25519(&tx, recipient_key, 1.0) == 0);
     assert(mxd_set_voluntary_tip(&tx, 0.5) == 0);
     
     // Calculate hash

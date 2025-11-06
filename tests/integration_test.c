@@ -90,7 +90,7 @@ static void test_node_lifecycle(void) {
     uint64_t start_time = get_current_time_ms();
     for (size_t i = 0; i < TEST_NODE_COUNT; i++) {
         uint16_t port = 12345 + i;
-        TEST_ASSERT(mxd_init_p2p(port, nodes[i].public_key, node_private_keys[i]) == 0,
+        TEST_ASSERT(test_init_p2p_ed25519(port, nodes[i].public_key, node_private_keys[i]) == 0,
                    "P2P initialization");
         TEST_ASSERT(mxd_start_p2p() == 0, "P2P startup");
         
@@ -120,7 +120,7 @@ static void test_node_lifecycle(void) {
     // Create genesis transaction
     TEST_ASSERT(mxd_create_transaction(&genesis_tx) == 0,
                "Genesis transaction creation");
-    TEST_ASSERT(mxd_add_tx_output(&genesis_tx, nodes[0].public_key, 1000.0) == 0,
+    TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&genesis_tx, nodes[0].public_key, 1000.0) == 0,
                "Genesis output addition");
     TEST_ASSERT(mxd_calculate_tx_hash(&genesis_tx, genesis_hash) == 0,
                "Genesis hash calculation");
@@ -131,8 +131,7 @@ static void test_node_lifecycle(void) {
     memcpy(genesis_utxo.tx_hash, genesis_hash, 64);
     genesis_utxo.output_index = 0;
     genesis_utxo.amount = 1000.0;
-    memcpy(genesis_utxo.owner_key, nodes[0].public_key, 256);
-    mxd_hash160(nodes[0].public_key, 256, genesis_utxo.pubkey_hash);
+    mxd_derive_address(MXD_SIGALG_ED25519, nodes[0].public_key, 32, genesis_utxo.owner_key);
     genesis_utxo.is_spent = 0;
     genesis_utxo.cosigner_count = 0;
     genesis_utxo.cosigner_keys = NULL;
@@ -152,7 +151,7 @@ static void test_node_lifecycle(void) {
                    "Transaction creation");
         
         // Add input from previous transaction
-        TEST_ASSERT(mxd_add_tx_input(&transactions[i], prev_tx_hash, prev_output_index,
+        TEST_ASSERT(test_add_tx_input_ed25519(&transactions[i], prev_tx_hash, prev_output_index,
                    nodes[0].public_key) == 0, "Input addition");
         
         if (i == 0) {
@@ -170,13 +169,13 @@ static void test_node_lifecycle(void) {
                           (remaining_amount - 2.0) : 10.0;
         
         size_t recipient_idx = (i + 1) % TEST_NODE_COUNT;
-        TEST_ASSERT(mxd_add_tx_output(&transactions[i], nodes[recipient_idx].public_key,
+        TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&transactions[i], nodes[recipient_idx].public_key,
                    tx_amount) == 0, "Output addition");
         
         // Add change output if not the last transaction
         if (i < TEST_TRANSACTIONS - 1) {
             double change_amount = remaining_amount - tx_amount - 1.0; // 1.0 for fee
-            TEST_ASSERT(mxd_add_tx_output(&transactions[i], nodes[0].public_key,
+            TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&transactions[i], nodes[0].public_key,
                        change_amount) == 0, "Change output addition");
             prev_output_index = 1; // Change output is at index 1
             remaining_amount = change_amount;
@@ -185,7 +184,7 @@ static void test_node_lifecycle(void) {
         }
         
         transactions[i].timestamp = get_current_time_ms();
-        TEST_ASSERT(mxd_sign_tx_input(&transactions[i], 0, node_private_keys[0]) == 0,
+        TEST_ASSERT(test_sign_tx_input_ed25519(&transactions[i], 0, node_private_keys[0]) == 0,
                    "Transaction signing");
         TEST_ASSERT(mxd_set_voluntary_tip(&transactions[i], 1.0) == 0,
                    "Voluntary tip setting");

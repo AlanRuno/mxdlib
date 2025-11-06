@@ -12,8 +12,8 @@ static void test_node_setup(void) {
     // Generate address
     char passphrase[256];
     uint8_t property_key[64];
-    uint8_t public_key[256];
-    uint8_t private_key[128];
+    uint8_t public_key[32];
+    uint8_t private_key[64];
     char address[42];
     
     TEST_ASSERT(mxd_generate_passphrase(passphrase, sizeof(passphrase)) == 0,
@@ -35,7 +35,7 @@ static void test_node_setup(void) {
     
     // Initialize P2P with latency tracking
     uint64_t start_time = get_current_time_ms();
-    TEST_ASSERT(mxd_init_p2p(config.port, public_key, private_key) == 0, "P2P initialization");
+    TEST_ASSERT(test_init_p2p_ed25519(config.port, public_key, private_key) == 0, "P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "P2P startup");
     uint64_t end_time = get_current_time_ms();
     uint64_t latency = end_time - start_time;

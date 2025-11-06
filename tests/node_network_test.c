@@ -17,12 +17,12 @@
 static void test_node_network(void) {
     TEST_START("Node Network Test");
     
-    uint8_t public_key[256] = {0};
-    uint8_t private_key[128] = {0};
-    for (int i = 0; i < 256; i++) {
+    uint8_t public_key[32] = {0};
+    uint8_t private_key[64] = {0};
+    for (int i = 0; i < 32; i++) {
         public_key[i] = i % 256;
     }
-    for (int i = 0; i < 128; i++) {
+    for (int i = 0; i < 64; i++) {
         private_key[i] = (i * 2) % 256;
     }
     
@@ -56,7 +56,7 @@ static void test_node_network(void) {
     usleep(500000);
     
     uint64_t start_time = get_current_time_ms();
-    TEST_ASSERT(mxd_init_p2p(TEST_PORT_2, public_key, private_key) == 0, "Node P2P initialization");
+    TEST_ASSERT(test_init_p2p_ed25519(TEST_PORT_2, public_key, private_key) == 0, "Node P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "Node P2P startup");
     uint64_t end_time = get_current_time_ms();
     uint64_t init_latency = end_time - start_time;
