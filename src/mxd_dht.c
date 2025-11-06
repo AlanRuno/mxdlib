@@ -145,72 +145,87 @@ int mxd_init_dht(const uint8_t* public_key) {
     return 0;
 }
 
-static int load_or_generate_node_keypair(uint8_t public_key[256], uint8_t private_key[128]) {
-    const char* pubkey_file = "data/node_pubkey.bin";
-    const char* privkey_file = "data/node_privkey.bin";
+static int load_or_generate_node_keypair(uint8_t *algo_id, uint8_t *public_key, uint8_t *private_key) {
+    const char* keyfile_v2 = "data/node_keys.v2";
+    const char* legacy_pubkey = "data/node_pubkey.bin";
+    const char* legacy_privkey = "data/node_privkey.bin";
     
     mkdir("data", 0755);
     
-    FILE* f = fopen(pubkey_file, "rb");
+    FILE* f = fopen(keyfile_v2, "rb");
     if (f) {
-        size_t read = fread(public_key, 1, 256, f);
-        fclose(f);
-        if (read == 256) {
-            f = fopen(privkey_file, "rb");
-            if (f) {
-                read = fread(private_key, 1, 128, f);
-                fclose(f);
-                if (read == 128) {
-                    MXD_LOG_INFO("dht", "Loaded persistent node keypair from data/");
+        char magic[4];
+        uint8_t version;
+        uint16_t pubkey_len_net, privkey_len_net;
+        
+        if (fread(magic, 1, 4, f) == 4 && memcmp(magic, "MXDK", 4) == 0 &&
+            fread(&version, 1, 1, f) == 1 && version == 2 &&
+            fread(algo_id, 1, 1, f) == 1 &&
+            fread(&pubkey_len_net, 1, 2, f) == 2 &&
+            fread(&privkey_len_net, 1, 2, f) == 2) {
+            
+            uint16_t pubkey_len = ntohs(pubkey_len_net);
+            uint16_t privkey_len = ntohs(privkey_len_net);
+            
+            size_t expected_pubkey_len = mxd_sig_pubkey_len(*algo_id);
+            size_t expected_privkey_len = mxd_sig_privkey_len(*algo_id);
+            
+            if (pubkey_len == expected_pubkey_len && privkey_len == expected_privkey_len) {
+                if (fread(public_key, 1, pubkey_len, f) == pubkey_len &&
+                    fread(private_key, 1, privkey_len, f) == privkey_len) {
+                    fclose(f);
+                    MXD_LOG_INFO("dht", "Loaded v2 node keypair: algo=%s, pubkey_len=%u, privkey_len=%u",
+                                 mxd_sig_alg_name(*algo_id), pubkey_len, privkey_len);
                     return 0;
                 }
             }
         }
-        MXD_LOG_WARN("dht", "Node keypair files corrupted, regenerating");
+        fclose(f);
+        MXD_LOG_WARN("dht", "V2 keyfile corrupted, regenerating");
     }
     
-    uint8_t property_key[64];
-    if (RAND_bytes(property_key, 64) != 1) {
-        MXD_LOG_ERROR("dht", "Failed to generate random property key");
+    f = fopen(legacy_pubkey, "rb");
+    if (f) {
+        fclose(f);
+        MXD_LOG_WARN("dht", "Legacy keyfiles detected (node_pubkey.bin/node_privkey.bin)");
+        MXD_LOG_WARN("dht", "These are incompatible with v2 protocol (wrong sizes, no algo_id)");
+        MXD_LOG_WARN("dht", "Delete data/node_pubkey.bin and data/node_privkey.bin to regenerate v2 keys");
+        MXD_LOG_WARN("dht", "Generating new v2 keypair (legacy files will be ignored)");
+    }
+    
+    *algo_id = MXD_SIGALG_ED25519;
+    
+    if (mxd_sig_keygen(*algo_id, public_key, private_key) != 0) {
+        MXD_LOG_ERROR("dht", "Failed to generate keypair for algo %s", mxd_sig_alg_name(*algo_id));
         return -1;
     }
     
-    if (mxd_generate_keypair(property_key, public_key, private_key) != 0) {
-        MXD_LOG_ERROR("dht", "Failed to generate Dilithium keypair");
-        return -1;
-    }
+    size_t pubkey_len = mxd_sig_pubkey_len(*algo_id);
+    size_t privkey_len = mxd_sig_privkey_len(*algo_id);
     
-    f = fopen(pubkey_file, "wb");
+    f = fopen(keyfile_v2, "wb");
     if (!f) {
-        MXD_LOG_WARN("dht", "Failed to persist public key to %s: %s", pubkey_file, strerror(errno));
+        MXD_LOG_WARN("dht", "Failed to persist keys to %s: %s", keyfile_v2, strerror(errno));
         MXD_LOG_INFO("dht", "Generated ephemeral node keypair (not persisted)");
         return 0;
     }
     
-    size_t written = fwrite(public_key, 1, 256, f);
+    fwrite("MXDK", 1, 4, f);
+    uint8_t version = 2;
+    fwrite(&version, 1, 1, f);
+    fwrite(algo_id, 1, 1, f);
+    uint16_t pubkey_len_net = htons((uint16_t)pubkey_len);
+    uint16_t privkey_len_net = htons((uint16_t)privkey_len);
+    fwrite(&pubkey_len_net, 1, 2, f);
+    fwrite(&privkey_len_net, 1, 2, f);
+    fwrite(public_key, 1, pubkey_len, f);
+    fwrite(private_key, 1, privkey_len, f);
     fclose(f);
-    chmod(pubkey_file, 0644);
+    chmod(keyfile_v2, 0600);
     
-    if (written != 256) {
-        MXD_LOG_WARN("dht", "Failed to write complete public key");
-        return 0;
-    }
-    
-    f = fopen(privkey_file, "wb");
-    if (!f) {
-        MXD_LOG_WARN("dht", "Failed to persist private key to %s: %s", privkey_file, strerror(errno));
-        return 0;
-    }
-    
-    written = fwrite(private_key, 1, 128, f);
-    fclose(f);
-    chmod(privkey_file, 0600);
-    
-    if (written == 128) {
-        MXD_LOG_INFO("dht", "Generated and persisted new Dilithium keypair to data/");
-    } else {
-        MXD_LOG_WARN("dht", "Failed to write complete private key");
-    }
+    MXD_LOG_INFO("dht", "Generated and persisted v2 keypair: algo=%s, pubkey_len=%zu, privkey_len=%zu",
+                 mxd_sig_alg_name(*algo_id), pubkey_len, privkey_len);
+    MXD_LOG_INFO("dht", "To regenerate keys: rm data/node_keys.v2 && restart node");
     
     return 0;
 }
@@ -223,19 +238,20 @@ int mxd_start_dht(uint16_t port) {
     
     dht_port = port;
     
-    uint8_t public_key[256];
-    uint8_t private_key[128];
+    uint8_t algo_id;
+    uint8_t public_key[MXD_PUBKEY_MAX_LEN];
+    uint8_t private_key[MXD_PRIVKEY_MAX_LEN];
     
     log_memory_usage("before_keypair_gen");
     
-    if (load_or_generate_node_keypair(public_key, private_key) != 0) {
+    if (load_or_generate_node_keypair(&algo_id, public_key, private_key) != 0) {
         MXD_LOG_ERROR("dht", "Failed to load or generate node keypair");
         return 1;
     }
     
     log_memory_usage("after_keypair_gen");
     
-    if (mxd_init_p2p(port, public_key, private_key) != 0) {
+    if (mxd_init_p2p(port, algo_id, public_key, private_key) != 0) {
         MXD_LOG_ERROR("dht", "Failed to initialize P2P on port %d", port);
         return 1;
     }
