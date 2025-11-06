@@ -20,6 +20,7 @@
 #include "mxd_logging.h"
 #include "mxd_secrets.h"
 #include "mxd_address.h"
+#include "base58.h"
 
 static struct {
     char address[256];
@@ -1438,7 +1439,7 @@ static void derive_node_id(char* node_id_buf, size_t buf_size, const uint8_t* pu
     }
 }
 
-int mxd_init_p2p(uint16_t port, const uint8_t* public_key, const uint8_t* private_key) {
+int mxd_init_p2p(uint16_t port, uint8_t algo_id, const uint8_t* public_key, const uint8_t* private_key) {
     if (mxd_init_secrets(NULL) != 0) {
         MXD_LOG_WARN("p2p", "Secrets initialization failed, using defaults");
     }
@@ -1466,13 +1467,29 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key, const uint8_t* privat
     tx_this_second = 0;
     
     p2p_port = port;
-    memcpy(node_public_key, public_key, 256);
-    memcpy(node_private_key, private_key, 128);
+    node_algo_id = algo_id;
+    size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
+    size_t privkey_len = mxd_sig_privkey_len(algo_id);
+    memcpy(node_public_key, public_key, pubkey_len);
+    memcpy(node_private_key, private_key, privkey_len);
     
     memset(&node_config, 0, sizeof(node_config));
     node_config.port = port;
     
-    derive_node_id(node_config.node_id, sizeof(node_config.node_id), public_key, port);
+    uint8_t address[20];
+    if (mxd_derive_address(algo_id, public_key, pubkey_len, address) == 0) {
+        if (base58_encode(address, 20, node_config.node_id, sizeof(node_config.node_id)) == 0) {
+            MXD_LOG_INFO("p2p", "Derived node_id from wallet address (algo: %s): %s", 
+                         mxd_sig_alg_name(algo_id), node_config.node_id);
+        } else {
+            MXD_LOG_ERROR("p2p", "Failed to encode address to Base58");
+            snprintf(node_config.node_id, sizeof(node_config.node_id), "mx_error");
+        }
+    } else {
+        MXD_LOG_ERROR("p2p", "Failed to derive address from public key");
+        snprintf(node_config.node_id, sizeof(node_config.node_id), "mx_error");
+    }
+    
     snprintf(node_config.data_dir, sizeof(node_config.data_dir), "data");
     
     memset(active_connections, 0, sizeof(active_connections));
@@ -1482,7 +1499,8 @@ int mxd_init_p2p(uint16_t port, const uint8_t* public_key, const uint8_t* privat
     manual_peer_count = 0;
     
     p2p_initialized = 1;
-    MXD_LOG_INFO("p2p", "P2P initialized on port %d with node_id: %s", port, node_config.node_id);
+    MXD_LOG_INFO("p2p", "P2P initialized on port %d with node_id: %s (algo: %s)", 
+                 port, node_config.node_id, mxd_sig_alg_name(algo_id));
     return 0;
 }
 
