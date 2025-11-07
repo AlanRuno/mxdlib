@@ -32,6 +32,7 @@ static void test_node_lifecycle(void) {
     // Initialize test nodes
     mxd_node_stake_t nodes[TEST_NODE_COUNT];
     static uint8_t node_private_keys[TEST_NODE_COUNT][64];  // Ed25519 private key size
+    static uint8_t node_public_keys[TEST_NODE_COUNT][32];   // Ed25519 public key size
     double total_stake = 0.0;
     uint32_t error_count = 0;
     mxd_transaction_t transactions[TEST_TRANSACTIONS];
@@ -60,14 +61,15 @@ static void test_node_lifecycle(void) {
                     "Address generation");
         TEST_ASSERT(mxd_validate_address(address) == 0, "Address validation");
         
-        // Store private key and initialize node configuration
+        // Store private and public keys, initialize node configuration
         memcpy(node_private_keys[i], private_key, sizeof(private_key));
+        memcpy(node_public_keys[i], public_key, sizeof(public_key));
         memset(&nodes[i], 0, sizeof(mxd_node_stake_t));
         
-        // Initialize node ID and keys first
+        // Initialize node ID and address first
         snprintf(nodes[i].node_id, sizeof(nodes[i].node_id), "node-%zu", i);
         nodes[i].stake_amount = 100.0 + (i * 10.0);  // Significant stakes
-        memcpy(nodes[i].public_key, public_key, 32);  // Copy only Ed25519 public key size
+        mxd_derive_address(MXD_SIGALG_ED25519, public_key, 32, nodes[i].node_address);
         
         // Initialize metrics
         TEST_ASSERT(mxd_init_node_metrics(&nodes[i].metrics) == 0,
@@ -90,7 +92,7 @@ static void test_node_lifecycle(void) {
     uint64_t start_time = get_current_time_ms();
     for (size_t i = 0; i < TEST_NODE_COUNT; i++) {
         uint16_t port = 12345 + i;
-        TEST_ASSERT(test_init_p2p_ed25519(port, nodes[i].public_key, node_private_keys[i]) == 0,
+        TEST_ASSERT(test_init_p2p_ed25519(port, node_public_keys[i], node_private_keys[i]) == 0,
                    "P2P initialization");
         TEST_ASSERT(mxd_start_p2p() == 0, "P2P startup");
         
@@ -120,7 +122,7 @@ static void test_node_lifecycle(void) {
     // Create genesis transaction
     TEST_ASSERT(mxd_create_transaction(&genesis_tx) == 0,
                "Genesis transaction creation");
-    TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&genesis_tx, nodes[0].public_key, 1000.0) == 0,
+    TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&genesis_tx, node_public_keys[0], 1000.0) == 0,
                "Genesis output addition");
     TEST_ASSERT(mxd_calculate_tx_hash(&genesis_tx, genesis_hash) == 0,
                "Genesis hash calculation");
@@ -131,7 +133,7 @@ static void test_node_lifecycle(void) {
     memcpy(genesis_utxo.tx_hash, genesis_hash, 64);
     genesis_utxo.output_index = 0;
     genesis_utxo.amount = 1000.0;
-    mxd_derive_address(MXD_SIGALG_ED25519, nodes[0].public_key, 32, genesis_utxo.owner_key);
+    mxd_derive_address(MXD_SIGALG_ED25519, node_public_keys[0], 32, genesis_utxo.owner_key);
     genesis_utxo.is_spent = 0;
     genesis_utxo.cosigner_count = 0;
     genesis_utxo.cosigner_keys = NULL;
@@ -152,7 +154,7 @@ static void test_node_lifecycle(void) {
         
         // Add input from previous transaction
         TEST_ASSERT(test_add_tx_input_ed25519(&transactions[i], prev_tx_hash, prev_output_index,
-                   nodes[0].public_key) == 0, "Input addition");
+                   node_public_keys[0]) == 0, "Input addition");
         
         if (i == 0) {
             transactions[i].inputs[0].amount = 1000.0;
@@ -169,13 +171,13 @@ static void test_node_lifecycle(void) {
                           (remaining_amount - 2.0) : 10.0;
         
         size_t recipient_idx = (i + 1) % TEST_NODE_COUNT;
-        TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&transactions[i], nodes[recipient_idx].public_key,
+        TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&transactions[i], node_public_keys[recipient_idx],
                    tx_amount) == 0, "Output addition");
         
         // Add change output if not the last transaction
         if (i < TEST_TRANSACTIONS - 1) {
             double change_amount = remaining_amount - tx_amount - 1.0; // 1.0 for fee
-            TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&transactions[i], nodes[0].public_key,
+            TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&transactions[i], node_public_keys[0],
                        change_amount) == 0, "Change output addition");
             prev_output_index = 1; // Change output is at index 1
             remaining_amount = change_amount;
