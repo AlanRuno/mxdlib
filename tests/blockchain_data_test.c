@@ -30,7 +30,7 @@ static void test_blockchain_data_retrieval(void) {
     }
     
     // Start first node
-    TEST_ASSERT(mxd_init_p2p(TEST_PORT_1, public_key_1, private_key_1) == 0, "Node 1 P2P initialization");
+    TEST_ASSERT(test_init_p2p_ed25519(TEST_PORT_1, public_key_1, private_key_1) == 0, "Node 1 P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "Node 1 P2P startup");
     
     // Create and add test blocks to first node
@@ -49,7 +49,7 @@ static void test_blockchain_data_retrieval(void) {
     
     // Start second node and test data retrieval
     uint64_t start_time = get_current_time_ms();
-    TEST_ASSERT(mxd_init_p2p(TEST_PORT_2, public_key_2, private_key_2) == 0, "Node 2 P2P initialization");
+    TEST_ASSERT(test_init_p2p_ed25519(TEST_PORT_2, public_key_2, private_key_2) == 0, "Node 2 P2P initialization");
     TEST_ASSERT(mxd_start_p2p() == 0, "Node 2 P2P startup");
     uint64_t end_time = get_current_time_ms();
     uint64_t init_latency = end_time - start_time;
@@ -97,7 +97,7 @@ static void test_blockchain_data_retrieval(void) {
     
     // Cleanup
     mxd_stop_p2p();  // Stop second node
-    mxd_init_p2p(TEST_PORT_1, public_key_1, private_key_1);  // Switch back to first node
+    test_init_p2p_ed25519(TEST_PORT_1, public_key_1, private_key_1);  // Switch back to first node
     mxd_stop_p2p();  // Stop first node
     
     TEST_END("Blockchain Data Retrieval Test");

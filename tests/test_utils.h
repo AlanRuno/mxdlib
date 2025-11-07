@@ -87,4 +87,12 @@ static uint64_t get_current_time_ms(void) {
     assert(count <= max); \
 } while(0)
 
+// Test helper for P2P initialization with default Ed25519 algorithm
+#include "mxd_p2p.h"
+#include "mxd_crypto.h"
+
+static inline int test_init_p2p_ed25519(uint16_t port, const uint8_t *public_key, const uint8_t *private_key) {
+    return mxd_init_p2p(port, MXD_SIGALG_ED25519, public_key, private_key);
+}
+
 #endif

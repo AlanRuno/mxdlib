@@ -39,7 +39,7 @@ int test_p2p_networking(void) {
     TEST_VALUE("Port", "%d", 12345);
     TEST_ARRAY("Public key", public_key, 32);
     
-    TEST_ASSERT(mxd_init_p2p(12345, public_key, private_key) == 0, "P2P initialization successful");
+    TEST_ASSERT(test_init_p2p_ed25519(12345, public_key, private_key) == 0, "P2P initialization successful");
     TEST_ASSERT(mxd_start_p2p() == 0, "P2P networking started");
     TEST_END("P2P Initialization");
 
