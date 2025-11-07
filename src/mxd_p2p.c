@@ -792,7 +792,7 @@ static int handle_handshake_message(const char *address, uint16_t port,
     uint8_t message_to_verify[32 + 1 + 20];
     memcpy(message_to_verify, handshake->challenge, 32);
     message_to_verify[32] = handshake->algo_id;
-    memcpy(message_to_verify + 33, addr20, 20);
+    memcpy(message_to_verify + 33, addr_hash, 20);
     
     if (mxd_sig_verify(handshake->algo_id, handshake->signature, handshake->signature_length, 
                        message_to_verify, 53, handshake->public_key) != 0) {
