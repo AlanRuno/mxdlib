@@ -78,22 +78,15 @@ int mxd_derive_property_key(const char *passphrase, const char *pin,
 }
 
 int mxd_generate_keypair(const uint8_t property_key[64],
-                         uint8_t public_key[256], uint8_t private_key[128]) {
+                         uint8_t public_key[32], uint8_t private_key[64]) {
   if (!property_key || !public_key || !private_key) {
     return -1;
   }
 
-  uint8_t ed25519_pub[32];
-  uint8_t ed25519_priv[64];
-  
-  if (mxd_sig_keygen(MXD_SIGALG_ED25519, ed25519_pub, ed25519_priv) != 0) {
+  // Generate Ed25519 keypair directly into output buffers
+  if (mxd_sig_keygen(MXD_SIGALG_ED25519, public_key, private_key) != 0) {
     return -1;
   }
-  
-  memset(public_key, 0, 256);
-  memset(private_key, 0, 128);
-  memcpy(public_key, ed25519_pub, 32);
-  memcpy(private_key, ed25519_priv, 64);
   
   MXD_LOG_WARN("address", "mxd_generate_keypair() is deprecated - use mxd_sig_keygen() instead");
   
