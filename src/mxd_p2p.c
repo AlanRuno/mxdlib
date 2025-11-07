@@ -82,6 +82,7 @@ static pthread_mutex_t unified_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define MXD_KEEPALIVE_INTERVAL 30
 #define MXD_KEEPALIVE_TIMEOUT 90
 #define MXD_MAX_KEEPALIVE_FAILURES 3
+#define MXD_PROTOCOL_VERSION 2
 
 static pthread_t keepalive_thread;
 static volatile int keepalive_running = 0;
@@ -93,8 +94,9 @@ static int peer_connector_thread_created = 0;
 
 typedef struct {
     uint32_t magic;      // Network byte order
+    uint8_t version;     // Protocol version
     uint8_t type;        // Fixed size instead of enum
-    uint8_t reserved[3]; // Padding for alignment
+    uint8_t reserved[2]; // Padding for alignment
     uint32_t length;     // Network byte order
     uint8_t checksum[64]; // SHA-512 checksum
 } __attribute__((packed)) mxd_wire_header_t;
@@ -167,10 +169,10 @@ static int write_n(int sock, const void *buffer, size_t n) {
 
 static void header_to_wire(const mxd_message_header_t *header, mxd_wire_header_t *wire) {
     wire->magic = htonl(header->magic);
+    wire->version = MXD_PROTOCOL_VERSION;
     wire->type = (uint8_t)header->type;
     wire->reserved[0] = 0;
     wire->reserved[1] = 0;
-    wire->reserved[2] = 0;
     wire->length = htonl(header->length);
     memcpy(wire->checksum, header->checksum, 64);
 }
@@ -186,10 +188,16 @@ static int parse_wire_header(const uint8_t *buffer, mxd_message_header_t *header
     mxd_wire_header_t *wire = (mxd_wire_header_t*)buffer;
     
     uint32_t magic = ntohl(wire->magic);
+    uint8_t version = wire->version;
     uint8_t type = wire->type;
     uint32_t length = ntohl(wire->length);
     
     if (magic != expected_magic) {
+        return -1;
+    }
+    
+    if (version != MXD_PROTOCOL_VERSION) {
+        MXD_LOG_WARN("p2p", "Protocol version mismatch: expected %u, got %u", MXD_PROTOCOL_VERSION, version);
         return -1;
     }
     
@@ -201,7 +209,7 @@ static int parse_wire_header(const uint8_t *buffer, mxd_message_header_t *header
         return -1;
     }
     
-    if (wire->reserved[0] != 0 || wire->reserved[1] != 0 || wire->reserved[2] != 0) {
+    if (wire->reserved[0] != 0 || wire->reserved[1] != 0) {
         return -1;
     }
     
