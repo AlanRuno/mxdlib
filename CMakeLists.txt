@@ -177,7 +177,7 @@ target_include_directories(mxd PUBLIC
 pkg_check_modules(LIBOQS REQUIRED liboqs)
 target_compile_definitions(mxd PRIVATE MXD_PQC_DILITHIUM=1)
 target_include_directories(mxd PRIVATE ${LIBOQS_INCLUDE_DIRS})
-target_link_libraries(mxd PRIVATE ${LIBOQS_LIBRARIES})
+target_link_libraries(mxd ${LIBOQS_LIBRARIES})
 
 
 # Install rules
