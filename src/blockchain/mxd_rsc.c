@@ -1360,7 +1360,7 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
         }
     }
     
-    uint8_t signer_pubkey[256];
+    uint8_t signer_pubkey[MXD_PUBKEY_MAX_LEN];
     size_t pubkey_len = sizeof(signer_pubkey);
     if (mxd_get_validator_public_key(signer_address, signer_pubkey, sizeof(signer_pubkey), &pubkey_len) != 0) {
         MXD_LOG_WARN("rsc", "Failed to get public key for signer");
