@@ -9,11 +9,9 @@ extern "C" {
 #include <stdint.h>
 #include <time.h>
 
-#ifdef MXD_PQC_DILITHIUM
-#define MXD_SIGNATURE_MAX 3400
-#else
-#define MXD_SIGNATURE_MAX 128
-#endif
+// MXD_SIGNATURE_MAX must accommodate Dilithium5 signatures (4595 bytes)
+// for hybrid cryptography support (Ed25519 + Dilithium5)
+#define MXD_SIGNATURE_MAX 4595
 
 typedef struct {
     uint8_t validator_id[20];
