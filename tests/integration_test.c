@@ -57,7 +57,7 @@ static void test_node_lifecycle(void) {
                     "Property key derivation");
         TEST_ASSERT(mxd_generate_keypair(property_key, public_key, private_key) == 0,
                     "Keypair generation");
-        TEST_ASSERT(mxd_generate_address(public_key, address, sizeof(address)) == 0,
+        TEST_ASSERT(mxd_address_to_string_v2(MXD_SIGALG_ED25519, public_key, 32, address, sizeof(address)) == 0,
                     "Address generation");
         TEST_ASSERT(mxd_validate_address(address) == 0, "Address validation");
         

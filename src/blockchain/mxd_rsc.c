@@ -1195,7 +1195,7 @@ int mxd_handle_genesis_announce(uint8_t algo_id, const uint8_t *node_address, co
     mxd_genesis_member_t *member = &pending_genesis_members[pending_genesis_count];
     memcpy(member->node_address, node_address, 20);
     member->algo_id = algo_id;
-    memcpy(member->public_key, public_key, pubkey_len);  // Store full pubkey in genesis member
+    memcpy(member->public_key, public_key, pubkey_len);
     member->timestamp = timestamp;
     memcpy(member->signature, signature, signature_length);
     member->signature_length = signature_length;
@@ -1244,8 +1244,8 @@ int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char
             
             memset(node, 0, sizeof(mxd_node_stake_t));
             strncpy(node->node_id, node_id_hex, sizeof(node->node_id) - 1);
-            memcpy(node->node_address, member->node_address, 20);  // Copy 20-byte address
-            node->stake_amount = 0.0;  // Genesis mode, no stake required
+            memcpy(node->node_address, member->node_address, 20);
+            node->stake_amount = 0.0;
             node->active = 1;
             node->in_rapid_table = 1;
             
