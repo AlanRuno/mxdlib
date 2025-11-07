@@ -19,12 +19,12 @@ static void test_transaction_management(void) {
 
   mxd_transaction_t tx;
   uint8_t tx_hash[64];
-  uint8_t pub_key[256];
-  uint8_t priv_key[128];
+  uint8_t pub_key[2592];
+  uint8_t priv_key[4864];
 
   // Generate keypair
   TEST_ASSERT(mxd_dilithium_keygen(pub_key, priv_key) == 0, "Generate keypair");
-  TEST_ARRAY("Public key", pub_key, 256);
+  TEST_ARRAY("Public key", pub_key, 2592);
 
   // Create and sign transaction
   TEST_ASSERT(mxd_create_transaction(&tx) == 0, "Create transaction");
@@ -54,8 +54,8 @@ static void test_priority_handling(void) {
   mxd_init_mempool(); // Reset mempool
 
   mxd_transaction_t tx1, tx2, tx3;
-  uint8_t pub_key[256];
-  uint8_t priv_key[128];
+  uint8_t pub_key[2592];
+  uint8_t priv_key[4864];
 
   // Generate keypair
   assert(mxd_dilithium_keygen(pub_key, priv_key) == 0);
@@ -97,8 +97,8 @@ static void test_mempool_cleaning(void) {
 
   mxd_transaction_t tx;
   uint8_t tx_hash[64];
-  uint8_t pub_key[256];
-  uint8_t priv_key[128];
+  uint8_t pub_key[2592];
+  uint8_t priv_key[4864];
 
   // Generate keypair
   assert(mxd_dilithium_keygen(pub_key, priv_key) == 0);

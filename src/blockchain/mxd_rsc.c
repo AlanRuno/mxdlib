@@ -996,7 +996,7 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
 
 typedef struct {
     uint8_t node_address[20];
-    uint8_t signature[4096];
+    uint8_t signature[MXD_SIGNATURE_MAX];
     uint16_t signature_length;
     int received;
 } mxd_genesis_signature_t;
@@ -1312,7 +1312,7 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         return -1;
     }
     
-    uint8_t signature[4096];
+    uint8_t signature[MXD_SIGNATURE_MAX];
     size_t signature_len = sizeof(signature);
     if (mxd_dilithium_sign(signature, &signature_len, membership_digest, 64, local_genesis_privkey) != 0) {
         MXD_LOG_ERROR("rsc", "Failed to sign membership digest");
@@ -1445,7 +1445,7 @@ int mxd_try_coordinate_genesis_block(void) {
         
         mxd_free_validation_chain(&genesis_block);
         
-        uint8_t self_signature[4096];
+        uint8_t self_signature[MXD_SIGNATURE_MAX];
         size_t self_sig_len = sizeof(self_signature);
         if (mxd_dilithium_sign(self_signature, &self_sig_len, pending_genesis_digest, 64, local_genesis_privkey) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to sign own membership");
