@@ -29,21 +29,18 @@ static int serialize_utxo(const mxd_utxo_t *utxo, uint8_t **data, size_t *data_l
 
     size_t size = sizeof(mxd_utxo_t);
     if (utxo->cosigner_count > 0 && utxo->cosigner_keys) {
-        size += utxo->cosigner_count * 256;
+        size += utxo->cosigner_count * 20;
     }
 
-    // Allocate memory
     *data = malloc(size);
     if (!*data) {
         return -1;
     }
 
-    // Copy UTXO structure
     memcpy(*data, utxo, sizeof(mxd_utxo_t));
     
-    // Copy cosigner keys if present
     if (utxo->cosigner_count > 0 && utxo->cosigner_keys) {
-        memcpy(*data + sizeof(mxd_utxo_t), utxo->cosigner_keys, utxo->cosigner_count * 256);
+        memcpy(*data + sizeof(mxd_utxo_t), utxo->cosigner_keys, utxo->cosigner_count * 20);
     }
 
     *data_len = size;
@@ -55,18 +52,16 @@ static int deserialize_utxo(const uint8_t *data, size_t data_len, mxd_utxo_t *ut
         return -1;
     }
 
-    // Copy UTXO structure
     memcpy(utxo, data, sizeof(mxd_utxo_t));
     
     utxo->cosigner_keys = NULL;
     
-    // Copy cosigner keys if present
     if (utxo->cosigner_count > 0 && data_len > sizeof(mxd_utxo_t)) {
-        utxo->cosigner_keys = malloc(utxo->cosigner_count * 256);
+        utxo->cosigner_keys = malloc(utxo->cosigner_count * 20);
         if (!utxo->cosigner_keys) {
             return -1;
         }
-        memcpy(utxo->cosigner_keys, data + sizeof(mxd_utxo_t), utxo->cosigner_count * 256);
+        memcpy(utxo->cosigner_keys, data + sizeof(mxd_utxo_t), utxo->cosigner_count * 20);
     }
 
     return 0;
@@ -142,11 +137,10 @@ static void add_to_lru_cache(const mxd_utxo_t *utxo) {
         
         memcpy(&lru_cache[lru_index], utxo, sizeof(mxd_utxo_t));
         
-        // Copy cosigner keys if present
         if (utxo->cosigner_count > 0 && utxo->cosigner_keys) {
-            lru_cache[lru_index].cosigner_keys = malloc(utxo->cosigner_count * 256);
+            lru_cache[lru_index].cosigner_keys = malloc(utxo->cosigner_count * 20);
             if (lru_cache[lru_index].cosigner_keys) {
-                memcpy(lru_cache[lru_index].cosigner_keys, utxo->cosigner_keys, utxo->cosigner_count * 256);
+                memcpy(lru_cache[lru_index].cosigner_keys, utxo->cosigner_keys, utxo->cosigner_count * 20);
             }
         }
         
@@ -157,11 +151,10 @@ static void add_to_lru_cache(const mxd_utxo_t *utxo) {
         
         memcpy(&lru_cache[lru_cache_count], utxo, sizeof(mxd_utxo_t));
         
-        // Copy cosigner keys if present
         if (utxo->cosigner_count > 0 && utxo->cosigner_keys) {
-            lru_cache[lru_cache_count].cosigner_keys = malloc(utxo->cosigner_count * 256);
+            lru_cache[lru_cache_count].cosigner_keys = malloc(utxo->cosigner_count * 20);
             if (lru_cache[lru_cache_count].cosigner_keys) {
-                memcpy(lru_cache[lru_cache_count].cosigner_keys, utxo->cosigner_keys, utxo->cosigner_count * 256);
+                memcpy(lru_cache[lru_cache_count].cosigner_keys, utxo->cosigner_keys, utxo->cosigner_count * 20);
             }
         }
         
@@ -179,13 +172,12 @@ static int find_in_lru_cache(const uint8_t tx_hash[64], uint32_t output_index, m
             // Copy UTXO data
             memcpy(utxo, &lru_cache[i], sizeof(mxd_utxo_t));
             
-            // Copy cosigner keys if present
             if (lru_cache[i].cosigner_count > 0 && lru_cache[i].cosigner_keys) {
-                utxo->cosigner_keys = malloc(lru_cache[i].cosigner_count * 256);
+                utxo->cosigner_keys = malloc(lru_cache[i].cosigner_count * 20);
                 if (!utxo->cosigner_keys) {
                     return -1;
                 }
-                memcpy(utxo->cosigner_keys, lru_cache[i].cosigner_keys, lru_cache[i].cosigner_count * 256);
+                memcpy(utxo->cosigner_keys, lru_cache[i].cosigner_keys, lru_cache[i].cosigner_count * 20);
             } else {
                 utxo->cosigner_keys = NULL;
             }
@@ -318,10 +310,10 @@ int mxd_add_utxo(const mxd_utxo_t *utxo) {
         return -1;
     }
     
-    // Create secondary index by pubkey hash
+    // Create secondary index by owner address
     uint8_t pubkey_key[7 + 20 + 64 + sizeof(uint32_t)];
     size_t pubkey_key_len;
-    create_pubkey_hash_key(utxo->pubkey_hash, pubkey_key, &pubkey_key_len);
+    create_pubkey_hash_key(utxo->owner_key, pubkey_key, &pubkey_key_len);
     memcpy(pubkey_key + pubkey_key_len, utxo->tx_hash, 64);
     memcpy(pubkey_key + pubkey_key_len + 64, &utxo->output_index, sizeof(uint32_t));
     pubkey_key_len += 64 + sizeof(uint32_t);
@@ -372,7 +364,7 @@ int mxd_remove_utxo(const uint8_t tx_hash[64], uint32_t output_index) {
     
     uint8_t pubkey_key[7 + 20 + 64 + sizeof(uint32_t)];
     size_t pubkey_key_len;
-    create_pubkey_hash_key(utxo.pubkey_hash, pubkey_key, &pubkey_key_len);
+    create_pubkey_hash_key(utxo.owner_key, pubkey_key, &pubkey_key_len);
     memcpy(pubkey_key + pubkey_key_len, tx_hash, 64);
     memcpy(pubkey_key + pubkey_key_len + 64, &output_index, sizeof(uint32_t));
     pubkey_key_len += 64 + sizeof(uint32_t);
@@ -455,20 +447,15 @@ int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
     return result;
 }
 
-double mxd_get_balance(const uint8_t public_key[256]) {
-    if (!public_key || !mxd_get_rocksdb_db()) {
-        return -1;
-    }
-    
-    uint8_t pubkey_hash[20];
-    if (mxd_hash160(public_key, 256, pubkey_hash) != 0) {
+double mxd_get_balance(const uint8_t address[20]) {
+    if (!address || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
     mxd_utxo_t *utxos = NULL;
     size_t utxo_count_local = 0;
-    if (mxd_get_utxos_by_pubkey_hash(pubkey_hash, &utxos, &utxo_count_local) != 0) {
-        return 0.0; // No UTXOs found
+    if (mxd_get_utxos_by_pubkey_hash(address, &utxos, &utxo_count_local) != 0) {
+        return 0.0;
     }
     
     double balance = 0.0;
@@ -478,7 +465,6 @@ double mxd_get_balance(const uint8_t public_key[256]) {
         }
     }
     
-    // Free UTXOs
     for (size_t i = 0; i < utxo_count_local; i++) {
         mxd_free_utxo(&utxos[i]);
     }
@@ -488,41 +474,38 @@ double mxd_get_balance(const uint8_t public_key[256]) {
 }
 
 int mxd_verify_utxo(const uint8_t tx_hash[64], uint32_t output_index,
-                    const uint8_t public_key[256]) {
-    if (!tx_hash || !public_key || !mxd_get_rocksdb_db()) {
+                    const uint8_t address[20]) {
+    if (!tx_hash || !address || !mxd_get_rocksdb_db()) {
         return -1;
     }
     
     mxd_utxo_t utxo;
     memset(&utxo, 0, sizeof(mxd_utxo_t));
     if (mxd_find_utxo(tx_hash, output_index, &utxo) != 0) {
-        return -1; // UTXO not found
+        return -1;
     }
     
-    // Check if UTXO is spent
     if (utxo.is_spent) {
         mxd_free_utxo(&utxo);
-        return -1; // UTXO is already spent
+        return -1;
     }
     
-    if (memcmp(utxo.owner_key, public_key, 256) == 0) {
+    if (memcmp(utxo.owner_key, address, 20) == 0) {
         mxd_free_utxo(&utxo);
-        return 0; // UTXO is spendable
+        return 0;
     }
     
-    // Check if public key is a cosigner
     for (uint32_t j = 0; j < utxo.cosigner_count; j++) {
-        if (memcmp(utxo.cosigner_keys + (j * 256), public_key, 256) == 0) {
+        if (memcmp(utxo.cosigner_keys + (j * 20), address, 20) == 0) {
             mxd_free_utxo(&utxo);
-            return 0; // UTXO is spendable by cosigner
+            return 0;
         }
     }
     
     mxd_free_utxo(&utxo);
-    return -1; // Not authorized
+    return -1;
 }
 
-// Create multi-signature UTXO
 int mxd_create_multisig_utxo(mxd_utxo_t *utxo, const uint8_t *cosigner_keys,
                              uint32_t cosigner_count,
                              uint32_t required_signatures) {
@@ -531,24 +514,14 @@ int mxd_create_multisig_utxo(mxd_utxo_t *utxo, const uint8_t *cosigner_keys,
         return -1;
     }
     
-    // Allocate space for cosigner keys
-    utxo->cosigner_keys = malloc(cosigner_count * 256);
+    utxo->cosigner_keys = malloc(cosigner_count * 20);
     if (!utxo->cosigner_keys) {
         return -1;
     }
     
-    // Copy cosigner keys
-    memcpy(utxo->cosigner_keys, cosigner_keys, cosigner_count * 256);
+    memcpy(utxo->cosigner_keys, cosigner_keys, cosigner_count * 20);
     utxo->cosigner_count = cosigner_count;
     utxo->required_signatures = required_signatures;
-    
-    if (mxd_hash160(utxo->owner_key, 256, utxo->pubkey_hash) != 0) {
-        free(utxo->cosigner_keys);
-        utxo->cosigner_keys = NULL;
-        return -1;
-    }
-    
-    // Initialize as unspent
     utxo->is_spent = 0;
     
     return 0;

@@ -3,6 +3,7 @@
 #include "../include/mxd_address.h"
 #include "../include/mxd_transaction.h"
 #include "../include/mxd_utxo.h"
+#include "../include/mxd_crypto.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -420,11 +421,11 @@ const char* mxd_handle_wallet_generate(void) {
     
     mxd_wallet_keypair_t* keypair = &wallet.keypairs[wallet.keypair_count];
     
-    uint8_t property_key[64];
-    uint8_t public_key[256];
-    uint8_t private_key[128];
+    uint8_t public_key[MXD_PUBKEY_MAX_LEN];
+    uint8_t private_key[MXD_PRIVKEY_MAX_LEN];
     char address[64];
     char passphrase[256];
+    uint8_t algo_id = MXD_SIGALG_ED25519;
     
     if (mxd_generate_passphrase(passphrase, sizeof(passphrase)) != 0) {
         pthread_mutex_unlock(&wallet_mutex);
@@ -433,21 +434,15 @@ const char* mxd_handle_wallet_generate(void) {
         return wallet_response_buffer;
     }
     
-    if (mxd_derive_property_key(passphrase, "", property_key) != 0) {
-        pthread_mutex_unlock(&wallet_mutex);
-        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
-            "{\"success\":false,\"error\":\"Failed to derive property key\"}");
-        return wallet_response_buffer;
-    }
-    
-    if (mxd_generate_keypair(property_key, public_key, private_key) != 0) {
+    if (mxd_sig_keygen(algo_id, public_key, private_key) != 0) {
         pthread_mutex_unlock(&wallet_mutex);
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Failed to generate keypair\"}");
         return wallet_response_buffer;
     }
     
-    if (mxd_generate_address(public_key, address, sizeof(address)) != 0) {
+    size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
+    if (mxd_address_to_string_v2(algo_id, public_key, pubkey_len, address, sizeof(address)) != 0) {
         pthread_mutex_unlock(&wallet_mutex);
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Failed to generate address\"}");
@@ -455,8 +450,9 @@ const char* mxd_handle_wallet_generate(void) {
     }
     
     strncpy(keypair->address, address, sizeof(keypair->address) - 1);
-    memcpy(keypair->public_key, public_key, sizeof(public_key));
-    memcpy(keypair->private_key, private_key, sizeof(private_key));
+    memcpy(keypair->public_key, public_key, pubkey_len);
+    size_t privkey_len = mxd_sig_privkey_len(algo_id);
+    memcpy(keypair->private_key, private_key, privkey_len);
     strncpy(keypair->passphrase, passphrase, sizeof(keypair->passphrase) - 1);
     
     wallet.keypair_count++;

@@ -1244,7 +1244,8 @@ int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char
             
             memset(node, 0, sizeof(mxd_node_stake_t));
             strncpy(node->node_id, node_id_hex, sizeof(node->node_id) - 1);
-            memcpy(node->public_key, member->public_key, 256);
+            size_t pubkey_len = mxd_sig_pubkey_len(member->algo_id);
+            memcpy(node->public_key, member->public_key, pubkey_len);
             node->stake_amount = 0.0;  // Genesis mode, no stake required
             node->active = 1;
             node->in_rapid_table = 1;

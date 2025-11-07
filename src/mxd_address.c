@@ -83,20 +83,68 @@ int mxd_generate_keypair(const uint8_t property_key[64],
     return -1;
   }
 
-  // First derive the private key using Argon2
-  const mxd_secrets_t *secrets = mxd_get_secrets();
-  if (!secrets) {
+  uint8_t ed25519_pub[32];
+  uint8_t ed25519_priv[64];
+  
+  if (mxd_sig_keygen(MXD_SIGALG_ED25519, ed25519_pub, ed25519_priv) != 0) {
     return -1;
   }
-  uint8_t salt16[16] = {0};
-  memcpy(salt16, secrets->crypto_salt, sizeof(salt16));
   
-  if (mxd_argon2_lowmem((const char *)property_key, salt16, private_key, 128) != 0) {
+  memset(public_key, 0, 256);
+  memset(private_key, 0, 128);
+  memcpy(public_key, ed25519_pub, 32);
+  memcpy(private_key, ed25519_priv, 64);
+  
+  MXD_LOG_WARN("address", "mxd_generate_keypair() is deprecated - use mxd_sig_keygen() instead");
+  
+  return 0;
+}
+
+int mxd_address_to_string_v2(uint8_t algo_id, const uint8_t *public_key, size_t pubkey_len, 
+                              char *address, size_t max_length) {
+  if (!public_key || !address || max_length < 42) {
     return -1;
   }
 
-  // Generate Dilithium keypair
-  return mxd_dilithium_keygen(public_key, private_key);
+  uint8_t addr20[20];
+  if (mxd_derive_address(algo_id, public_key, pubkey_len, addr20) != 0) {
+    MXD_LOG_ERROR("address", "Failed to derive address20");
+    return -1;
+  }
+
+  // Prepare address bytes: Version(1) + Address20(20) + Checksum(4)
+  uint8_t address_bytes[25] = {0};
+  address_bytes[0] = 0x32; // Version byte (50 in decimal, unique to MXD)
+  memcpy(address_bytes + 1, addr20, 20);
+
+  // Calculate checksum (double SHA-512 of version + addr20)
+  uint8_t hash_buffer[64] = {0};
+  if (mxd_sha512(address_bytes, 21, hash_buffer) != 0) {
+    MXD_LOG_ERROR("address", "Checksum first SHA-512 failed");
+    return -1;
+  }
+
+  uint8_t temp_buffer[64] = {0};
+  memcpy(temp_buffer, hash_buffer, 64);
+  memset(hash_buffer, 0, 64);
+  if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
+    MXD_LOG_ERROR("address", "Checksum second SHA-512 failed");
+    return -1;
+  }
+
+  // Add 4-byte checksum
+  memcpy(address_bytes + 21, hash_buffer, 4);
+
+  // Encode in Base58Check
+  int result = base58_encode(address_bytes, 25, address, max_length);
+
+  if (result == 0) {
+    MXD_LOG_INFO("address", "Generated v2 address (algo: %s)", mxd_sig_alg_name(algo_id));
+  } else {
+    MXD_LOG_WARN("address", "Failed to generate v2 address");
+  }
+
+  return result;
 }
 
 int mxd_generate_address(const uint8_t public_key[256], char *address,
@@ -130,82 +178,7 @@ int mxd_generate_address(const uint8_t public_key[256], char *address,
     return 0;
   }
 
-  // Debug output for public key
-  MXD_LOG_DEBUG("address", "Processing public key");
-
-  // First hash: SHA-512 on public key
-  uint8_t hash_buffer[64] = {0};
-  uint8_t temp_buffer[64] = {0};
-
-  if (mxd_sha512(public_key, 256, hash_buffer) != 0) {
-    MXD_LOG_ERROR("address", "First SHA-512 failed");
-    return -1;
-  }
-
-  // Debug output for first hash
-  MXD_LOG_DEBUG("address", "Computed first SHA-512");
-
-  // Second hash: SHA-512 on first hash output
-  memcpy(temp_buffer, hash_buffer, 64);
-  memset(hash_buffer, 0, 64);
-  if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
-    MXD_LOG_ERROR("address", "Second SHA-512 failed");
-    return -1;
-  }
-
-  // Debug output for second hash
-  MXD_LOG_DEBUG("address", "Computed second SHA-512");
-
-  // RIPEMD-160 on the double SHA-512 output
-  uint8_t ripemd_output[20] = {0};
-  if (mxd_ripemd160(hash_buffer, 64, ripemd_output) != 0) {
-    MXD_LOG_ERROR("address", "RIPEMD-160 failed");
-    return -1;
-  }
-
-  // Debug output for RIPEMD-160
-  MXD_LOG_DEBUG("address", "Computed RIPEMD-160");
-
-  // Prepare address bytes: Version(1) + RIPEMD160(20) + Checksum(4)
-  uint8_t address_bytes[25] = {0};
-  address_bytes[0] = 0x32; // Version byte (50 in decimal, unique to MXD)
-  memcpy(address_bytes + 1, ripemd_output, 20);
-
-  // Calculate checksum (double SHA-512 of version + hash)
-  memset(hash_buffer, 0, 64);
-  if (mxd_sha512(address_bytes, 21, hash_buffer) != 0) {
-    MXD_LOG_ERROR("address", "Checksum first SHA-512 failed");
-    return -1;
-  }
-
-  memset(temp_buffer, 0, 64);
-  memcpy(temp_buffer, hash_buffer, 64);
-  memset(hash_buffer, 0, 64);
-  if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
-    MXD_LOG_ERROR("address", "Checksum second SHA-512 failed");
-    return -1;
-  }
-
-  // Add 4-byte checksum
-  memcpy(address_bytes + 21, hash_buffer, 4);
-
-  // Debug output for final address bytes
-  MXD_LOG_DEBUG("address", "Prepared address bytes");
-
-  // Debug output for address length
-  MXD_LOG_DEBUG("address", "Checked address buffer size");
-
-  // Encode in Base58Check
-  int result = base58_encode(address_bytes, 25, address, max_length);
-
-  // Debug output for result
-  if (result == 0) {
-    MXD_LOG_INFO("address", "Generated address");
-  } else {
-    MXD_LOG_WARN("address", "Failed to generate address");
-  }
-
-  return result;
+  return mxd_address_to_string_v2(MXD_SIGALG_ED25519, public_key, 32, address, max_length);
 }
 
 int mxd_validate_address(const char *address) {

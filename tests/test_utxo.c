@@ -14,22 +14,23 @@ static void test_utxo_initialization(void) {
 static void test_utxo_management(void) {
   mxd_utxo_t utxo = {0};
   uint8_t tx_hash[64] = {1};
-  uint8_t owner_key[256] = {2};
+  uint8_t pub_key[32] = {2};
+  uint8_t owner_addr[20];
 
   TEST_START("UTXO Management");
   
+  TEST_ASSERT(mxd_derive_address(MXD_SIGALG_ED25519, pub_key, 32, owner_addr) == 0, "Derive address from pubkey");
+  
   // Initialize UTXO
   TEST_ARRAY("Transaction hash", tx_hash, 64);
-  TEST_ARRAY("Owner key", owner_key, 256);
+  TEST_ARRAY("Owner address", owner_addr, 20);
   TEST_VALUE("Output index", "%u", 0);
   TEST_VALUE("Amount", "%.1f", 1.0);
   
   memcpy(utxo.tx_hash, tx_hash, 64);
   utxo.output_index = 0;
-  memcpy(utxo.owner_key, owner_key, 256);
+  memcpy(utxo.owner_key, owner_addr, 20);
   utxo.amount = 1.0;
-  
-  TEST_ASSERT(mxd_hash160(owner_key, 256, utxo.pubkey_hash) == 0, "Calculate pubkey hash");
 
   // Add UTXO
   TEST_ASSERT(mxd_add_utxo(&utxo) == 0, "Add UTXO to database");
@@ -41,10 +42,10 @@ static void test_utxo_management(void) {
   TEST_ASSERT(found_utxo.amount == 1.0, "Found UTXO amount matches");
 
   // Verify UTXO
-  TEST_ASSERT(mxd_verify_utxo(tx_hash, 0, owner_key) == 0, "Verify UTXO ownership");
+  TEST_ASSERT(mxd_verify_utxo(tx_hash, 0, owner_addr) == 0, "Verify UTXO ownership");
 
   // Get balance
-  TEST_ASSERT(mxd_get_balance(owner_key) == 1.0, "Owner balance is correct");
+  TEST_ASSERT(mxd_get_balance(owner_addr) == 1.0, "Owner balance is correct");
 
   // Remove UTXO
   TEST_ASSERT(mxd_remove_utxo(tx_hash, 0) == 0, "Remove UTXO from database");
@@ -56,27 +57,36 @@ static void test_utxo_management(void) {
 static void test_multisig_utxo(void) {
   mxd_utxo_t utxo = {0};
   uint8_t tx_hash[64] = {1};
-  uint8_t owner_key[256] = {2};
-  uint8_t cosigner_keys[2 * 256] = {3, 4};
+  uint8_t pub_key[32] = {2};
+  uint8_t owner_addr[20];
+  uint8_t cosigner_pub1[32] = {3};
+  uint8_t cosigner_pub2[32] = {4};
+  uint8_t cosigner_addr1[20];
+  uint8_t cosigner_addr2[20];
+  uint8_t cosigner_addrs[2 * 20];
 
   TEST_START("Multi-signature UTXO");
   
+  TEST_ASSERT(mxd_derive_address(MXD_SIGALG_ED25519, pub_key, 32, owner_addr) == 0, "Derive owner address");
+  TEST_ASSERT(mxd_derive_address(MXD_SIGALG_ED25519, cosigner_pub1, 32, cosigner_addr1) == 0, "Derive cosigner 1 address");
+  TEST_ASSERT(mxd_derive_address(MXD_SIGALG_ED25519, cosigner_pub2, 32, cosigner_addr2) == 0, "Derive cosigner 2 address");
+  memcpy(cosigner_addrs, cosigner_addr1, 20);
+  memcpy(cosigner_addrs + 20, cosigner_addr2, 20);
+  
   // Initialize UTXO
   TEST_ARRAY("Transaction hash", tx_hash, 64);
-  TEST_ARRAY("Owner key", owner_key, 256);
-  TEST_ARRAY("Cosigner keys", cosigner_keys, 2 * 256);
+  TEST_ARRAY("Owner address", owner_addr, 20);
+  TEST_ARRAY("Cosigner addresses", cosigner_addrs, 2 * 20);
   TEST_VALUE("Output index", "%u", 0);
   TEST_VALUE("Amount", "%.1f", 1.0);
   
   memcpy(utxo.tx_hash, tx_hash, 64);
   utxo.output_index = 0;
-  memcpy(utxo.owner_key, owner_key, 256);
+  memcpy(utxo.owner_key, owner_addr, 20);
   utxo.amount = 1.0;
-  
-  TEST_ASSERT(mxd_hash160(owner_key, 256, utxo.pubkey_hash) == 0, "Calculate pubkey hash");
 
   // Create multi-sig UTXO
-  TEST_ASSERT(mxd_create_multisig_utxo(&utxo, cosigner_keys, 2, 2) == 0, "Multi-sig UTXO creation successful");
+  TEST_ASSERT(mxd_create_multisig_utxo(&utxo, cosigner_addrs, 2, 2) == 0, "Multi-sig UTXO creation successful");
   TEST_ASSERT(utxo.required_signatures == 2, "Required signatures set correctly");
   TEST_ASSERT(utxo.cosigner_count == 2, "Cosigner count set correctly");
 
@@ -84,8 +94,8 @@ static void test_multisig_utxo(void) {
   TEST_ASSERT(mxd_add_utxo(&utxo) == 0, "Multi-sig UTXO added to database");
 
   // Verify cosigners can spend
-  TEST_ASSERT(mxd_verify_utxo(tx_hash, 0, cosigner_keys) == 0, "First cosigner can spend");
-  TEST_ASSERT(mxd_verify_utxo(tx_hash, 0, cosigner_keys + 256) == 0, "Second cosigner can spend");
+  TEST_ASSERT(mxd_verify_utxo(tx_hash, 0, cosigner_addr1) == 0, "First cosigner can spend");
+  TEST_ASSERT(mxd_verify_utxo(tx_hash, 0, cosigner_addr2) == 0, "Second cosigner can spend");
 
   // Clean up
   mxd_free_utxo(&utxo);

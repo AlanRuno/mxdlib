@@ -12,8 +12,8 @@ static void test_node_setup(void) {
     // Generate address
     char passphrase[256];
     uint8_t property_key[64];
-    uint8_t public_key[256];
-    uint8_t private_key[128];
+    uint8_t public_key[32];
+    uint8_t private_key[64];
     char address[42];
     
     TEST_ASSERT(mxd_generate_passphrase(passphrase, sizeof(passphrase)) == 0,

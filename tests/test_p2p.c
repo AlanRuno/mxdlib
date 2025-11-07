@@ -24,13 +24,13 @@ int test_p2p_networking(void) {
     printf("Test timeouts set to %d seconds\n", TEST_TIMEOUT);
     fflush(stdout);
 
-    // Generate test keypair (256-byte public key, 128-byte private key for Dilithium)
-    uint8_t public_key[256] = {0};
-    uint8_t private_key[128] = {0};
-    for (int i = 0; i < 256; i++) {
+    // Generate test keypair (32-byte public key, 64-byte private key for Ed25519)
+    uint8_t public_key[32] = {0};
+    uint8_t private_key[64] = {0};
+    for (int i = 0; i < 32; i++) {
         public_key[i] = i % 256;
     }
-    for (int i = 0; i < 128; i++) {
+    for (int i = 0; i < 64; i++) {
         private_key[i] = (i * 2) % 256;
     }
 

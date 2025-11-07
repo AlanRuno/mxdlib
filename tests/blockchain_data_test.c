@@ -15,19 +15,15 @@
 static void test_blockchain_data_retrieval(void) {
     TEST_START("Blockchain Data Retrieval Test");
     
-    // Initialize two nodes for testing
-    uint8_t public_key_1[256] = {0};
-    uint8_t public_key_2[256] = {0};
-    uint8_t private_key_1[128] = {0};
-    uint8_t private_key_2[128] = {0};
-    for (int i = 0; i < 256; i++) {
-        public_key_1[i] = i % 256;
-        public_key_2[i] = (i + 32) % 256;
-    }
-    for (int i = 0; i < 128; i++) {
-        private_key_1[i] = (i * 2) % 256;
-        private_key_2[i] = (i * 2 + 1) % 256;
-    }
+    uint8_t public_key_1[32] = {0};
+    uint8_t public_key_2[32] = {0};
+    uint8_t private_key_1[64] = {0};
+    uint8_t private_key_2[64] = {0};
+    
+    TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_ED25519, public_key_1, private_key_1) == 0,
+                "Node 1 keypair generation");
+    TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_ED25519, public_key_2, private_key_2) == 0,
+                "Node 2 keypair generation");
     
     // Start first node
     TEST_ASSERT(test_init_p2p_ed25519(TEST_PORT_1, public_key_1, private_key_1) == 0, "Node 1 P2P initialization");

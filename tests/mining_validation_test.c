@@ -54,15 +54,15 @@ static void test_mining_validation(void) {
 
   // Create test transactions and keys
   mxd_transaction_t transactions[TEST_TRANSACTIONS];
-  uint8_t recipient_key[256] = {0};
-  uint8_t private_key[128] = {0};
-  uint8_t public_key[256] = {0};
+  uint8_t recipient_key[32] = {0};
+  uint8_t private_key[64] = {0};
+  uint8_t public_key[32] = {0};
   uint8_t prev_hash[64] = {0};
 
-  // Generate valid keys for testing
-  TEST_ASSERT(mxd_dilithium_keygen(public_key, private_key) == 0,
+  // Generate valid Ed25519 keys for testing
+  TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_ED25519, public_key, private_key) == 0,
               "Key generation");
-  memcpy(recipient_key, public_key, 256);
+  memcpy(recipient_key, public_key, 32);
 
   // Create valid previous transaction hash
   for (int i = 0; i < 64; i++) {
@@ -78,18 +78,19 @@ static void test_mining_validation(void) {
 
   TEST_ASSERT(mxd_create_transaction(&genesis_tx) == 0,
               "Genesis transaction creation");
-  TEST_ASSERT(mxd_add_tx_output(&genesis_tx, public_key, 1000.0) == 0,
+  TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&genesis_tx, public_key, 1000.0) == 0,
               "Genesis output addition");
   TEST_ASSERT(mxd_calculate_tx_hash(&genesis_tx, genesis_hash) == 0,
               "Genesis hash calculation");
   memcpy(genesis_tx.tx_hash, genesis_hash, sizeof(genesis_hash));
 
-  // Create and add UTXO
+  // Create and add UTXO with address20 derived from pubkey
   memset(&genesis_utxo, 0, sizeof(mxd_utxo_t));
   memcpy(genesis_utxo.tx_hash, genesis_hash, sizeof(genesis_hash));
   genesis_utxo.output_index = 0;
   genesis_utxo.amount = 1000.0;
-  memcpy(genesis_utxo.owner_key, public_key, sizeof(public_key));
+  TEST_ASSERT(mxd_derive_address(MXD_SIGALG_ED25519, public_key, 32, genesis_utxo.owner_key) == 0,
+              "Address derivation for genesis UTXO");
   TEST_ASSERT(mxd_add_utxo(&genesis_utxo) == 0, "Genesis UTXO addition");
 
   // Process transactions with rate tracking
@@ -99,18 +100,22 @@ static void test_mining_validation(void) {
     // Create and setup transaction with valid UTXO
     TEST_ASSERT(mxd_create_transaction(&transactions[i]) == 0,
                 "Transaction creation");
-    TEST_ASSERT(mxd_add_tx_input(&transactions[i], genesis_tx.tx_hash, 0,
+    TEST_ASSERT(test_add_tx_input_ed25519(&transactions[i], genesis_tx.tx_hash, 0,
                                  public_key) == 0,
                 "Input addition");
-    TEST_ASSERT(mxd_add_tx_output(&transactions[i], recipient_key, 10.0) == 0,
+    
+    transactions[i].inputs[0].amount = genesis_utxo.amount;
+    
+    TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&transactions[i], recipient_key, 10.0) == 0,
                 "Output addition");
 
     // Set timestamp and sign
     transactions[i].timestamp = get_current_time_ms();
-    TEST_ASSERT(mxd_sign_tx_input(&transactions[i], 0, private_key) == 0,
+    TEST_ASSERT(test_sign_tx_input_ed25519(&transactions[i], 0, private_key) == 0,
                 "Input signing");
 
     // Validate through node chain with latency tracking
+    int validation_success = 0;
     for (size_t j = 0; j < TEST_NODE_COUNT; j++) {
       uint64_t validation_start = get_current_time_ms();
 
@@ -120,6 +125,7 @@ static void test_mining_validation(void) {
         TEST_ERROR_COUNT(error_count, MAX_CONSECUTIVE_ERRORS);
       } else {
         error_count = 0;
+        validation_success = 1;
         TEST_TX_RATE_UPDATE("Transaction Validation", MIN_TX_RATE);
 
         // Update node metrics
@@ -132,6 +138,12 @@ static void test_mining_validation(void) {
                                             validation_end) == 0,
                     "Metrics update");
       }
+    }
+    
+    // Apply transaction to UTXO database if validation succeeded
+    if (validation_success) {
+      TEST_ASSERT(mxd_apply_transaction_to_utxo(&transactions[i]) == 0,
+                  "Apply transaction to UTXO database");
     }
 
     // Check transaction rate every second
@@ -313,17 +325,12 @@ static void test_mining_validation(void) {
 }
 
 int main(void) {
-  // Initialize test keys for P2P
-  uint8_t test_pub_key[256] = {0};
-  uint8_t test_priv_key[128] = {0};
-  for (int i = 0; i < 256; i++) {
-    test_pub_key[i] = i % 256;
-  }
-  for (int i = 0; i < 128; i++) {
-    test_priv_key[i] = (i * 2) % 256;
-  }
+  uint8_t test_pub_key[32] = {0};
+  uint8_t test_priv_key[64] = {0};
+  
+  TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_ED25519, test_pub_key, test_priv_key) == 0,
+              "Test keypair generation");
 
-  // Initialize required systems
   TEST_ASSERT(mxd_init_ntp() == 0, "NTP initialization");
   TEST_ASSERT(test_init_p2p_ed25519(12345, test_pub_key, test_priv_key) == 0, "P2P initialization");
   TEST_ASSERT(mxd_init_transaction_validation() == 0,
@@ -331,7 +338,6 @@ int main(void) {
 
   test_mining_validation();
 
-  // Cleanup
   mxd_stop_p2p();
   return 0;
 }

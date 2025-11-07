@@ -17,12 +17,12 @@
 static void test_node_network(void) {
     TEST_START("Node Network Test");
     
-    uint8_t public_key[256] = {0};
-    uint8_t private_key[128] = {0};
-    for (int i = 0; i < 256; i++) {
+    uint8_t public_key[32] = {0};
+    uint8_t private_key[64] = {0};
+    for (int i = 0; i < 32; i++) {
         public_key[i] = i % 256;
     }
-    for (int i = 0; i < 128; i++) {
+    for (int i = 0; i < 64; i++) {
         private_key[i] = (i * 2) % 256;
     }
     

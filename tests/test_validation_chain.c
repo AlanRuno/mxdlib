@@ -131,10 +131,10 @@ static void test_validation_chain_persistence(void) {
 static void test_validation_chain_propagation(void) {
     TEST_START("Validation Chain Propagation");
     
-    uint8_t public_key_1[256] = {0};
-    uint8_t public_key_2[256] = {0};
-    uint8_t private_key_1[128] = {0};
-    uint8_t private_key_2[128] = {0};
+    uint8_t public_key_1[32] = {0};
+    uint8_t public_key_2[32] = {0};
+    uint8_t private_key_1[64] = {0};
+    uint8_t private_key_2[64] = {0};
     for (int i = 0; i < 256; i++) {
         public_key_1[i] = i % 256;
         public_key_2[i] = (i + 32) % 256;
@@ -282,8 +282,8 @@ static void test_validation_chain_sync(void) {
     TEST_ASSERT(mxd_store_block(&block) == 0, 
                 "Block storage with validation chain");
     
-    uint8_t public_key[256] = {0};
-    uint8_t private_key[128] = {0};
+    uint8_t public_key[32] = {0};
+    uint8_t private_key[64] = {0};
     for (int i = 0; i < 256; i++) {
         public_key[i] = i % 256;
     }
