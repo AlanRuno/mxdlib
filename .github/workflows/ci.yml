@@ -53,12 +53,13 @@ jobs:
             libuv1-dev libcurl4-openssl-dev \
             valgrind cppcheck clang-tidy
     
-      - name: Set CC/CXX to clang
+      - name: Set CC/CXX to clang with sanitizers
         if: ${{ matrix.compiler == 'clang' }}
         run: |
           echo "CC=clang" >> $GITHUB_ENV
           echo "CXX=clang++" >> $GITHUB_ENV
-          echo 'CFLAGS=-Wno-deprecated-declarations' >> $GITHUB_ENV
+          echo 'CFLAGS=-Wno-deprecated-declarations -fsanitize=address,undefined -fno-omit-frame-pointer -O1' >> $GITHUB_ENV
+          echo 'LDFLAGS=-fsanitize=address,undefined' >> $GITHUB_ENV
 
       - name: "Guard: fail on printf/fprintf/sprintf/vsprintf usage in src/ (excluding logging implementation)"
         run: |
@@ -104,13 +105,23 @@ jobs:
         working-directory: build
         run: ctest --output-on-failure
     
-      - name: Run memory tests with Valgrind
+      - name: Run memory tests with Valgrind (gcc only)
+        if: ${{ matrix.compiler == 'gcc' }}
         working-directory: build
         run: |
           valgrind --tool=memcheck --leak-check=full --error-exitcode=1 \
             ./lib/mxd_crypto_tests
           valgrind --tool=memcheck --leak-check=full --error-exitcode=1 \
             ./lib/mxd_metrics_tests
+      
+      - name: Run tests with sanitizers (clang only)
+        if: ${{ matrix.compiler == 'clang' }}
+        working-directory: build
+        run: |
+          export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+          export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+          ./lib/mxd_crypto_tests
+          ./lib/mxd_metrics_tests
 
   performance-test:
     runs-on: ubuntu-latest
