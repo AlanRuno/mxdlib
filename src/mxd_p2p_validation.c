@@ -1,5 +1,6 @@
 #include "mxd_logging.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include "mxd_blockchain.h"
@@ -79,28 +80,32 @@ int mxd_send_validation_signature(const char *address, uint16_t port,
         return -1;
     }
     
-    struct {
-        uint8_t block_hash[64];
-        uint16_t signature_length;
-        uint8_t signature[MXD_SIGNATURE_MAX];
-        uint32_t chain_position;
-        uint64_t timestamp;
-    } validation_msg;
+    size_t msg_len = 64 + sizeof(uint16_t) + signature_length + sizeof(uint32_t) + sizeof(uint64_t);
+    uint8_t *validation_msg = malloc(msg_len);
+    if (!validation_msg) {
+        return -1;
+    }
     
-    memcpy(validation_msg.block_hash, block_hash, 64);
-    validation_msg.signature_length = signature_length;
-    memcpy(validation_msg.signature, signature, signature_length);
-    validation_msg.chain_position = chain_position;
-    validation_msg.timestamp = time(NULL);
-
-    size_t msg_len = sizeof(validation_msg.block_hash)
-                   + sizeof(validation_msg.signature_length)
-                   + signature_length
-                   + sizeof(validation_msg.chain_position)
-                   + sizeof(validation_msg.timestamp);
+    uint8_t *ptr = validation_msg;
+    memcpy(ptr, block_hash, 64);
+    ptr += 64;
     
-    return mxd_send_message(address, port, MXD_MSG_VALIDATION_SIGNATURE, 
-                           &validation_msg, msg_len);
+    memcpy(ptr, &signature_length, sizeof(uint16_t));
+    ptr += sizeof(uint16_t);
+    
+    memcpy(ptr, signature, signature_length);
+    ptr += signature_length;
+    
+    memcpy(ptr, &chain_position, sizeof(uint32_t));
+    ptr += sizeof(uint32_t);
+    
+    uint64_t timestamp = time(NULL);
+    memcpy(ptr, &timestamp, sizeof(uint64_t));
+    
+    int result = mxd_send_message(address, port, MXD_MSG_VALIDATION_SIGNATURE, 
+                                  validation_msg, msg_len);
+    free(validation_msg);
+    return result;
 }
 
 int mxd_request_validation_chain(const char *address, uint16_t port,
