@@ -174,9 +174,10 @@ target_include_directories(mxd PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 # liboqs is now required for hybrid cryptography support (Ed25519 + Dilithium5)
-find_package(OQS REQUIRED)
+pkg_check_modules(LIBOQS REQUIRED liboqs)
 target_compile_definitions(mxd PRIVATE MXD_PQC_DILITHIUM=1)
-target_link_libraries(mxd PRIVATE oqs)
+target_include_directories(mxd PRIVATE ${LIBOQS_INCLUDE_DIRS})
+target_link_libraries(mxd PRIVATE ${LIBOQS_LIBRARIES})
 
 
 # Install rules
