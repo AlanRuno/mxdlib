@@ -90,9 +90,32 @@ static uint64_t get_current_time_ms(void) {
 // Test helper for P2P initialization with default Ed25519 algorithm
 #include "mxd_p2p.h"
 #include "mxd_crypto.h"
+#include "mxd_address.h"
+#include "mxd_transaction.h"
 
 static inline int test_init_p2p_ed25519(uint16_t port, const uint8_t *public_key, const uint8_t *private_key) {
     return mxd_init_p2p(port, MXD_SIGALG_ED25519, public_key, private_key);
+}
+
+// Test helper for adding transaction input with Ed25519
+static inline int test_add_tx_input_ed25519(mxd_transaction_t *tx, const uint8_t prev_tx_hash[64],
+                                            uint32_t output_index, const uint8_t *public_key) {
+    return mxd_add_tx_input(tx, prev_tx_hash, output_index, MXD_SIGALG_ED25519, 
+                           public_key, mxd_sig_pubkey_len(MXD_SIGALG_ED25519));
+}
+
+// Test helper for adding transaction output using pubkey (derives address20)
+static inline int test_add_tx_output_to_pubkey_ed25519(mxd_transaction_t *tx, const uint8_t *public_key, double amount) {
+    uint8_t addr20[20];
+    if (mxd_derive_address(MXD_SIGALG_ED25519, public_key, mxd_sig_pubkey_len(MXD_SIGALG_ED25519), addr20) != 0) {
+        return -1;
+    }
+    return mxd_add_tx_output(tx, addr20, amount);
+}
+
+// Test helper for signing transaction input with Ed25519
+static inline int test_sign_tx_input_ed25519(mxd_transaction_t *tx, uint32_t input_index, const uint8_t *private_key) {
+    return mxd_sign_tx_input(tx, input_index, MXD_SIGALG_ED25519, private_key);
 }
 
 #endif
