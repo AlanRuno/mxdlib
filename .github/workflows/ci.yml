@@ -53,12 +53,13 @@ jobs:
             libuv1-dev libcurl4-openssl-dev \
             valgrind cppcheck clang-tidy
     
-      - name: Set CC/CXX to clang
+      - name: Set CC/CXX to clang with sanitizers
         if: ${{ matrix.compiler == 'clang' }}
         run: |
           echo "CC=clang" >> $GITHUB_ENV
           echo "CXX=clang++" >> $GITHUB_ENV
-          echo 'CFLAGS=-Wno-deprecated-declarations' >> $GITHUB_ENV
+          echo 'CFLAGS=-Wno-deprecated-declarations -fsanitize=address,undefined -fno-omit-frame-pointer -O1' >> $GITHUB_ENV
+          echo 'LDFLAGS=-fsanitize=address,undefined' >> $GITHUB_ENV
 
       - name: "Guard: fail on printf/fprintf/sprintf/vsprintf usage in src/ (excluding logging implementation)"
         run: |
@@ -88,7 +89,9 @@ jobs:
         run: ./install_dependencies.sh
     
       - name: Configure CMake
-        run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_TESTING=ON -DMXD_WITH_WASI=OFF
+        run: |
+          export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+          cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_TESTING=ON -DMXD_WITH_WASI=OFF
     
       - name: Build
         run: cmake --build build --config ${{env.BUILD_TYPE}} -j$(nproc)
@@ -102,13 +105,23 @@ jobs:
         working-directory: build
         run: ctest --output-on-failure
     
-      - name: Run memory tests with Valgrind
+      - name: Run memory tests with Valgrind (gcc only)
+        if: ${{ matrix.compiler == 'gcc' }}
         working-directory: build
         run: |
           valgrind --tool=memcheck --leak-check=full --error-exitcode=1 \
             ./lib/mxd_crypto_tests
           valgrind --tool=memcheck --leak-check=full --error-exitcode=1 \
             ./lib/mxd_metrics_tests
+      
+      - name: Run tests with sanitizers (clang only)
+        if: ${{ matrix.compiler == 'clang' }}
+        working-directory: build
+        run: |
+          export ASAN_OPTIONS=detect_leaks=0:halt_on_error=1
+          export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+          ./lib/mxd_crypto_tests
+          ./lib/mxd_metrics_tests
 
   performance-test:
     runs-on: ubuntu-latest
@@ -129,6 +142,7 @@ jobs:
     
       - name: Build
         run: |
+          export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=ON -DMXD_WITH_WASI=OFF
           cmake --build build --config Release -j$(nproc)
 
@@ -143,36 +157,6 @@ jobs:
           echo "| Test | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Performance Tests | Completed successfully |" >> $GITHUB_STEP_SUMMARY
-
-  build-and-test-pqc:
-    runs-on: ubuntu-latest
-    needs: security-scan
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config \
-            libssl-dev libsodium-dev librocksdb-dev libcjson-dev \
-            libuv1-dev libcurl4-openssl-dev ninja-build git
-      - name: Install liboqs
-        run: |
-          git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git
-          cd liboqs
-          mkdir build && cd build
-          cmake -GNinja -DCMAKE_INSTALL_PREFIX=/usr/local -DOQS_BUILD_ONLY_LIB=ON -DCMAKE_BUILD_TYPE=Release ..
-          ninja
-          sudo ninja install
-          sudo ldconfig
-      - name: Install MXD dependencies
-        run: ./install_dependencies.sh
-      - name: Configure CMake (PQC ON)
-        run: cmake -B build-pqc -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DENABLE_TESTING=ON -DMXD_WITH_WASI=OFF -DMXD_PQC_DILITHIUM=ON
-      - name: Build (PQC ON)
-        run: cmake --build build-pqc --config ${{env.BUILD_TYPE}} -j$(nproc)
-      - name: Run tests (PQC ON)
-        working-directory: build-pqc
-        run: ctest --output-on-failure
 
   docker-build:
     runs-on: ubuntu-latest

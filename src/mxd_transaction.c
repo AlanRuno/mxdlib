@@ -117,13 +117,19 @@ int mxd_calculate_tx_hash(const mxd_transaction_t *tx, uint8_t hash[64]) {
     return -1;
   }
 
-  // Create buffer for transaction data
+  // Calculate buffer size based on actual input lengths
   size_t buffer_size =
       sizeof(uint32_t) * 3 +                            // version + counts
       sizeof(double) +                                   // voluntary tip
-      sizeof(uint64_t) +                                // timestamp
-      tx->input_count * (64 + sizeof(uint32_t) + 256) + // inputs
-      tx->output_count * (256 + sizeof(double));        // outputs
+      sizeof(uint64_t);                                 // timestamp
+  
+  // Add input sizes (using actual public key lengths)
+  for (uint32_t i = 0; i < tx->input_count; i++) {
+    buffer_size += 64 + sizeof(uint32_t) + tx->inputs[i].public_key_length;
+  }
+  
+  // Add output sizes
+  buffer_size += tx->output_count * (20 + sizeof(double));
 
   uint8_t *buffer = malloc(buffer_size);
   if (!buffer) {
@@ -149,8 +155,8 @@ int mxd_calculate_tx_hash(const mxd_transaction_t *tx, uint8_t hash[64]) {
     offset += 64;
     memcpy(buffer + offset, &tx->inputs[i].output_index, sizeof(uint32_t));
     offset += sizeof(uint32_t);
-    memcpy(buffer + offset, tx->inputs[i].public_key, 256);
-    offset += 256;
+    memcpy(buffer + offset, tx->inputs[i].public_key, tx->inputs[i].public_key_length);
+    offset += tx->inputs[i].public_key_length;
   }
 
   // Serialize outputs
@@ -164,7 +170,7 @@ int mxd_calculate_tx_hash(const mxd_transaction_t *tx, uint8_t hash[64]) {
   // Calculate double SHA-512 hash
   uint8_t temp_hash[64];
   int result = -1;
-  if (mxd_sha512(buffer, buffer_size, temp_hash) == 0 &&
+  if (mxd_sha512(buffer, offset, temp_hash) == 0 &&
       mxd_sha512(temp_hash, 64, hash) == 0) {
     result = 0;
   }

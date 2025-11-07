@@ -5,9 +5,7 @@
 #include <openssl/ripemd.h>
 #include <sodium.h>
 #include <sodium/crypto_sign.h>
-#ifdef MXD_PQC_DILITHIUM
 #include <oqs/oqs.h>
-#endif
 #include <string.h>
 
 // Initialize OpenSSL and libsodium
@@ -239,7 +237,6 @@ int mxd_dilithium_keygen(uint8_t *public_key, uint8_t *secret_key) {
   if (ensure_crypto_init() < 0) {
     return -1;
   }
-#ifdef MXD_PQC_DILITHIUM
   OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
   if (!sig) {
     return -1;
@@ -247,16 +244,12 @@ int mxd_dilithium_keygen(uint8_t *public_key, uint8_t *secret_key) {
   int rc = OQS_SIG_keypair(sig, public_key, secret_key);
   OQS_SIG_free(sig);
   return rc == OQS_SUCCESS ? 0 : -1;
-#else
-  return crypto_sign_keypair(public_key, secret_key);
-#endif
 }
 
 // Dilithium5 signing
 int mxd_dilithium_sign(uint8_t *signature, size_t *signature_length,
                        const uint8_t *message, size_t message_length,
                        const uint8_t *secret_key) {
-#ifdef MXD_PQC_DILITHIUM
   OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
   if (!sig) {
     return -1;
@@ -267,20 +260,12 @@ int mxd_dilithium_sign(uint8_t *signature, size_t *signature_length,
   if (rc != OQS_SUCCESS) return -1;
   *signature_length = sig_len;
   return 0;
-#else
-  unsigned long long sig_len;
-  int result = crypto_sign_detached(signature, &sig_len, message,
-                                    message_length, secret_key);
-  *signature_length = (size_t)sig_len;
-  return result;
-#endif
 }
 
 // Dilithium5 verification
 int mxd_dilithium_verify(const uint8_t *signature, size_t signature_length,
                          const uint8_t *message, size_t message_length,
                          const uint8_t *public_key) {
-#ifdef MXD_PQC_DILITHIUM
   OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
   if (!sig) {
     return -1;
@@ -288,10 +273,6 @@ int mxd_dilithium_verify(const uint8_t *signature, size_t signature_length,
   int rc = OQS_SIG_verify(sig, message, message_length, signature, signature_length, public_key);
   OQS_SIG_free(sig);
   return rc == OQS_SUCCESS ? 0 : -1;
-#else
-  return crypto_sign_verify_detached(signature, message, message_length,
-                                     public_key);
-#endif
 }
 
 size_t mxd_sig_pubkey_len(uint8_t algo_id) {
@@ -348,7 +329,6 @@ int mxd_sig_keygen(uint8_t algo_id, uint8_t *public_key, uint8_t *secret_key) {
       return crypto_sign_keypair(public_key, secret_key);
     
     case MXD_SIGALG_DILITHIUM5:
-#ifdef MXD_PQC_DILITHIUM
       {
         OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
         if (!sig) {
@@ -358,10 +338,6 @@ int mxd_sig_keygen(uint8_t algo_id, uint8_t *public_key, uint8_t *secret_key) {
         OQS_SIG_free(sig);
         return rc == OQS_SUCCESS ? 0 : -1;
       }
-#else
-      MXD_LOG_ERROR("crypto", "Dilithium5 not available (MXD_PQC_DILITHIUM not defined)");
-      return -1;
-#endif
     
     default:
       MXD_LOG_ERROR("crypto", "Unknown signature algorithm: %u", algo_id);
@@ -383,7 +359,6 @@ int mxd_sig_sign(uint8_t algo_id, uint8_t *signature, size_t *signature_length,
       }
     
     case MXD_SIGALG_DILITHIUM5:
-#ifdef MXD_PQC_DILITHIUM
       {
         OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
         if (!sig) {
@@ -396,10 +371,6 @@ int mxd_sig_sign(uint8_t algo_id, uint8_t *signature, size_t *signature_length,
         *signature_length = sig_len;
         return 0;
       }
-#else
-      MXD_LOG_ERROR("crypto", "Dilithium5 not available (MXD_PQC_DILITHIUM not defined)");
-      return -1;
-#endif
     
     default:
       MXD_LOG_ERROR("crypto", "Unknown signature algorithm: %u", algo_id);
@@ -416,7 +387,6 @@ int mxd_sig_verify(uint8_t algo_id, const uint8_t *signature, size_t signature_l
                                          public_key);
     
     case MXD_SIGALG_DILITHIUM5:
-#ifdef MXD_PQC_DILITHIUM
       {
         OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_dilithium_5);
         if (!sig) {
@@ -426,10 +396,6 @@ int mxd_sig_verify(uint8_t algo_id, const uint8_t *signature, size_t signature_l
         OQS_SIG_free(sig);
         return rc == OQS_SUCCESS ? 0 : -1;
       }
-#else
-      MXD_LOG_ERROR("crypto", "Dilithium5 not available (MXD_PQC_DILITHIUM not defined)");
-      return -1;
-#endif
     
     default:
       MXD_LOG_ERROR("crypto", "Unknown signature algorithm: %u", algo_id);

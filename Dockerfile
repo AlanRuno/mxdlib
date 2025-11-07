@@ -17,8 +17,21 @@ RUN apt-get update && apt-get install -y \
     libminiupnpc-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install custom dependencies (wasm3, libuv, uvwasi) as root
+# Install custom dependencies (wasm3, libuv, uvwasi, liboqs) as root
 WORKDIR /tmp
+
+# Install liboqs (required for hybrid cryptography)
+RUN git clone --depth 1 --branch 0.10.1 https://github.com/open-quantum-safe/liboqs.git && \
+    cd liboqs && mkdir -p build && cd build && \
+    cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DOQS_USE_OPENSSL=ON \
+          -DOQS_BUILD_ONLY_LIB=ON .. && \
+    make -j$(nproc) && make install && \
+    ldconfig && \
+    cd /tmp && rm -rf liboqs
 
 # Install libuv
 RUN git clone https://github.com/libuv/libuv && \
@@ -85,6 +98,7 @@ COPY --chown=builder:builder . /home/builder/mxdlib/
 WORKDIR /home/builder/mxdlib
 RUN mkdir -p build && \
     cd build && \
+    export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH && \
     cmake .. && \
     make -j$(nproc)
 
@@ -112,6 +126,7 @@ RUN useradd -m -u 1001 mxdnode && \
 COPY --from=builder /usr/local/lib/libuv.so* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libuvwasi.so* /usr/local/lib/
 COPY --from=builder /usr/local/lib/libm3.so* /usr/local/lib/
+COPY --from=builder /usr/local/lib/liboqs.so* /usr/local/lib/
 
 # Copy built binaries and libraries
 COPY --from=builder --chown=mxdnode:mxdnode /home/builder/mxdlib/build/lib/libmxd.so /opt/mxd/lib/

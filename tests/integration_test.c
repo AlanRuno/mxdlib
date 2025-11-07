@@ -31,7 +31,7 @@ static void test_node_lifecycle(void) {
     
     // Initialize test nodes
     mxd_node_stake_t nodes[TEST_NODE_COUNT];
-    static uint8_t node_private_keys[TEST_NODE_COUNT][128];
+    static uint8_t node_private_keys[TEST_NODE_COUNT][64];  // Ed25519 private key size
     double total_stake = 0.0;
     uint32_t error_count = 0;
     mxd_transaction_t transactions[TEST_TRANSACTIONS];
@@ -46,8 +46,8 @@ static void test_node_lifecycle(void) {
         // Generate unique address for each node
         char passphrase[256];
         uint8_t property_key[64];
-        uint8_t public_key[256];
-        uint8_t private_key[128];
+        uint8_t public_key[32];   // Ed25519 public key size
+        uint8_t private_key[64];  // Ed25519 private key size
         char address[42];
         
         TEST_ASSERT(mxd_generate_passphrase(passphrase, sizeof(passphrase)) == 0,
@@ -67,7 +67,7 @@ static void test_node_lifecycle(void) {
         // Initialize node ID and keys first
         snprintf(nodes[i].node_id, sizeof(nodes[i].node_id), "node-%zu", i);
         nodes[i].stake_amount = 100.0 + (i * 10.0);  // Significant stakes
-        memcpy(nodes[i].public_key, public_key, sizeof(public_key));
+        memcpy(nodes[i].public_key, public_key, 32);  // Copy only Ed25519 public key size
         
         // Initialize metrics
         TEST_ASSERT(mxd_init_node_metrics(&nodes[i].metrics) == 0,

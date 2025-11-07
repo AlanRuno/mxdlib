@@ -50,23 +50,25 @@ static void test_property_key_derivation(void) {
 
 static void test_keypair_generation(void) {
   uint8_t property_key[64] = {1}; // Test property key
-  uint8_t public_key[256];
-  uint8_t private_key[128];
+  uint8_t public_key[32];  // Ed25519 public key size
+  uint8_t private_key[64]; // Ed25519 private key size
 
   TEST_START("Keypair Generation");
   TEST_ARRAY("Input property key", property_key, 64);
   
   TEST_ASSERT(mxd_generate_keypair(property_key, public_key, private_key) == 0, "Keypair generation successful");
-  TEST_ARRAY("Generated public key", public_key, 256);
-  TEST_ARRAY("Generated private key", private_key, 128);
+  TEST_ARRAY("Generated public key", public_key, 32);
+  TEST_ARRAY("Generated private key", private_key, 64);
 
   // Keys should not be all zeros
   int pub_zero = 1, priv_zero = 1;
-  for (int i = 0; i < 256; i++) {
-    if (i < 128 && private_key[i] != 0)
-      priv_zero = 0;
+  for (int i = 0; i < 32; i++) {
     if (public_key[i] != 0)
       pub_zero = 0;
+  }
+  for (int i = 0; i < 64; i++) {
+    if (private_key[i] != 0)
+      priv_zero = 0;
   }
   TEST_ASSERT(!pub_zero && !priv_zero, "Generated keys are not empty");
 

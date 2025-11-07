@@ -50,18 +50,18 @@ static void test_argon2(void) {
 }
 
 static void test_dilithium(void) {
-  uint8_t public_key[crypto_sign_PUBLICKEYBYTES];
-  uint8_t secret_key[crypto_sign_SECRETKEYBYTES];
+  uint8_t public_key[2592];
+  uint8_t secret_key[4864];
 
   TEST_START("Dilithium");
   
   // Test key generation
   TEST_ASSERT(mxd_dilithium_keygen(public_key, secret_key) == 0, "Key generation successful");
-  TEST_ARRAY("Public key", public_key, crypto_sign_PUBLICKEYBYTES);
+  TEST_ARRAY("Public key", public_key, 2592);
   
   // Test signing
   const char *message = "test message";
-  uint8_t signature[crypto_sign_BYTES];
+  uint8_t signature[4595];
   size_t signature_length;
 
   TEST_VALUE("Message to sign", "%s", message);
