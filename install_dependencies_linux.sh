@@ -424,6 +424,54 @@ install_uvwasi() {
     fi
 }
 
+check_liboqs_installed() {
+    check_library_installed "liboqs.so" && [ -f "/usr/local/include/oqs/oqs.h" ]
+}
+
+install_liboqs() {
+    if [ "$FORCE_BUILD" = "true" ]; then
+        log "Force rebuilding liboqs..."
+        sudo rm -rf /usr/local/lib/liboqs.so* /usr/local/include/oqs*
+    elif check_liboqs_installed; then
+        log "liboqs is already installed, skipping (use --force_build to override)"
+        return 0
+    fi
+    log "Installing liboqs (Open Quantum Safe)..."
+    rm -rf liboqs
+    git clone --depth 1 --branch 0.10.1 https://github.com/open-quantum-safe/liboqs.git
+    cd liboqs
+    mkdir -p build && cd build
+    cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DOQS_USE_OPENSSL=ON \
+          -DOQS_BUILD_ONLY_LIB=ON \
+          ..
+    make -j$(nproc)
+    sudo make install
+    
+    # Run ldconfig if available
+    if command -v ldconfig >/dev/null 2>&1; then
+        sudo ldconfig
+    else
+        local ldconfig_path=$(get_ldconfig_path)
+        if [ -n "$ldconfig_path" ]; then
+            sudo "$ldconfig_path"
+        fi
+    fi
+    
+    cd ../..
+    rm -rf liboqs
+    
+    # Verify liboqs installation
+    if ! check_liboqs_installed; then
+        log "Error: liboqs installation verification failed"
+        exit 1
+    fi
+    log "liboqs installed successfully"
+}
+
 verify_installation() {
     local errors=0
     
@@ -469,6 +517,7 @@ main() {
     install_system_deps
     install_libuv
     install_uvwasi
+    install_liboqs
     install_wasm3
     
     # Run ldconfig if available
