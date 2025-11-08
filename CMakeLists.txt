@@ -175,7 +175,6 @@ target_include_directories(mxd PUBLIC
 )
 # liboqs is now required for hybrid cryptography support (Ed25519 + Dilithium5)
 pkg_check_modules(LIBOQS REQUIRED liboqs)
-target_compile_definitions(mxd PRIVATE MXD_PQC_DILITHIUM=1)
 target_include_directories(mxd PRIVATE ${LIBOQS_INCLUDE_DIRS})
 target_link_libraries(mxd ${LIBOQS_LIBRARIES})
 

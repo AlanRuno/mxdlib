@@ -203,6 +203,20 @@ int mxd_init_wallet(void) {
 void mxd_cleanup_wallet(void) {
     if (wallet_initialized) {
         pthread_mutex_lock(&wallet_mutex);
+        
+        for (size_t i = 0; i < wallet.keypair_count; i++) {
+            if (wallet.keypairs[i].public_key) {
+                free(wallet.keypairs[i].public_key);
+                wallet.keypairs[i].public_key = NULL;
+            }
+            if (wallet.keypairs[i].private_key) {
+                free(wallet.keypairs[i].private_key);
+                wallet.keypairs[i].private_key = NULL;
+            }
+            wallet.keypairs[i].public_key_length = 0;
+            wallet.keypairs[i].private_key_length = 0;
+        }
+        
         memset(&wallet, 0, sizeof(wallet));
         wallet_initialized = 0;
         pthread_mutex_unlock(&wallet_mutex);
@@ -449,9 +463,24 @@ const char* mxd_handle_wallet_generate(void) {
         return wallet_response_buffer;
     }
     
-    strncpy(keypair->address, address, sizeof(keypair->address) - 1);
-    memcpy(keypair->public_key, public_key, pubkey_len);
     size_t privkey_len = mxd_sig_privkey_len(algo_id);
+    
+    keypair->public_key = (uint8_t*)malloc(pubkey_len);
+    keypair->private_key = (uint8_t*)malloc(privkey_len);
+    if (!keypair->public_key || !keypair->private_key) {
+        if (keypair->public_key) free(keypair->public_key);
+        if (keypair->private_key) free(keypair->private_key);
+        pthread_mutex_unlock(&wallet_mutex);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Memory allocation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    strncpy(keypair->address, address, sizeof(keypair->address) - 1);
+    keypair->algo_id = algo_id;
+    keypair->public_key_length = (uint16_t)pubkey_len;
+    keypair->private_key_length = (uint16_t)privkey_len;
+    memcpy(keypair->public_key, public_key, pubkey_len);
     memcpy(keypair->private_key, private_key, privkey_len);
     strncpy(keypair->passphrase, passphrase, sizeof(keypair->passphrase) - 1);
     

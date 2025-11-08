@@ -146,6 +146,8 @@ int main(int argc, char** argv) {
     const char* config_path = NULL;
     uint16_t override_port = 0;
     int is_bootstrap = 0;
+    uint8_t override_algo_id = 0;
+    int algo_specified = 0;
     
     // Handle command line arguments
     for (int i = 1; i < argc; i++) {
@@ -158,13 +160,27 @@ int main(int argc, char** argv) {
                 return 1;
             }
             override_port = (uint16_t)port;
+        } else if (strcmp(argv[i], "--algo") == 0 && i + 1 < argc) {
+            const char* algo_name = argv[++i];
+            if (strcmp(algo_name, "ed25519") == 0) {
+                override_algo_id = MXD_SIGALG_ED25519;
+                algo_specified = 1;
+                MXD_LOG_INFO("node", "Using Ed25519 signature algorithm");
+            } else if (strcmp(algo_name, "dilithium5") == 0) {
+                override_algo_id = MXD_SIGALG_DILITHIUM5;
+                algo_specified = 1;
+                MXD_LOG_INFO("node", "Using Dilithium5 signature algorithm");
+            } else {
+                MXD_LOG_ERROR("node", "Invalid algorithm: %s (must be 'ed25519' or 'dilithium5')", algo_name);
+                return 1;
+            }
         } else if (strcmp(argv[i], "--bootstrap") == 0) {
             is_bootstrap = 1;
             MXD_LOG_INFO("node", "Running in bootstrap mode");
         } else if (argv[i][0] != '-' && !config_path) {
             config_path = argv[i];
         } else {
-            MXD_LOG_ERROR("node", "Usage: %s [config_file] [--config <file>] [--port <number>] [--bootstrap]", argv[0]);
+            MXD_LOG_ERROR("node", "Usage: %s [config_file] [--config <file>] [--port <number>] [--algo <ed25519|dilithium5>] [--bootstrap]", argv[0]);
             return 1;
         }
     }
@@ -313,7 +329,7 @@ int main(int argc, char** argv) {
     mxd_set_message_handler(mxd_genesis_message_handler);
     MXD_LOG_INFO("node", "Genesis message handler registered");
     
-    uint8_t algo_id = MXD_SIGALG_ED25519;
+    uint8_t algo_id = algo_specified ? override_algo_id : MXD_SIGALG_ED25519;
     uint8_t node_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
     uint8_t node_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
     uint8_t node_address[20] = {0};

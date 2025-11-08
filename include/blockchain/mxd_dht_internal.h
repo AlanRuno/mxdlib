@@ -30,7 +30,7 @@ typedef struct {
     uint8_t version;    // Protocol version
     uint8_t type;       // Message type
     mxd_node_id_t sender_id;
-    uint8_t signature[64];  // Message signature
+    uint8_t signature[64];
 } mxd_dht_message_header_t;
 
 // DHT value storage
