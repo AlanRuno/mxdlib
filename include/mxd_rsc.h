@@ -13,6 +13,7 @@ extern "C" {
 #include "common/mxd_metrics_types.h"
 
 int mxd_get_validator_public_key(const uint8_t validator_id[20], uint8_t *out_key, size_t out_capacity, size_t *out_len);
+int mxd_get_validator_algo_id(const uint8_t validator_id[20], uint8_t *out_algo_id);
 int mxd_test_register_validator_pubkey(const uint8_t validator_id[20], const uint8_t *pub, size_t pub_len);
 void mxd_test_clear_validator_pubkeys(void);
 

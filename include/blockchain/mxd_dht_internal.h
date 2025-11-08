@@ -29,8 +29,10 @@ typedef struct {
     uint32_t magic;     // "MXD\0"
     uint8_t version;    // Protocol version
     uint8_t type;       // Message type
+    uint8_t algo_id;    // Signature algorithm ID
     mxd_node_id_t sender_id;
-    uint8_t signature[64];  // Message signature
+    uint16_t signature_length;  // Length of signature
+    uint8_t signature[4595];    // Message signature (MXD_SIG_MAX_LEN)
 } mxd_dht_message_header_t;
 
 // DHT value storage

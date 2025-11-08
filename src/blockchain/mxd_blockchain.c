@@ -241,8 +241,14 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
     return -1; // Public key not registered
   }
   
-  // Verify signature using Dilithium
-  if (mxd_dilithium_verify(signature, signature_length, digest, 64, pubkey) != 0) {
+  // Get validator algorithm ID
+  uint8_t algo_id;
+  if (mxd_get_validator_algo_id(node_address, &algo_id) != 0) {
+    return -1; // Algorithm ID not found
+  }
+  
+  // Verify signature using algorithm-aware verification
+  if (mxd_sig_verify(algo_id, signature, signature_length, digest, 64, pubkey) != 0) {
     return -1; // Invalid signature
   }
   

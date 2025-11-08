@@ -808,6 +808,7 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
 }
 static struct {
     uint8_t id[20];
+    uint8_t algo_id;
     uint8_t pub[4096];
     size_t len;
 } mxd_pubkey_registry[64];
@@ -815,9 +816,17 @@ static struct {
 static size_t mxd_pubkey_registry_count;
 
 int mxd_test_register_validator_pubkey(const uint8_t validator_id[20], const uint8_t *pub, size_t pub_len) {
+    uint8_t algo_id = MXD_SIGALG_ED25519;
+    if (pub_len == 2592) {
+        algo_id = MXD_SIGALG_DILITHIUM5;
+    } else if (pub_len == 32) {
+        algo_id = MXD_SIGALG_ED25519;
+    }
+    
     if (!validator_id || !pub || pub_len == 0 || pub_len > sizeof(mxd_pubkey_registry[0].pub)) return -1;
     if (mxd_pubkey_registry_count >= 64) return -1;
     memcpy(mxd_pubkey_registry[mxd_pubkey_registry_count].id, validator_id, 20);
+    mxd_pubkey_registry[mxd_pubkey_registry_count].algo_id = algo_id;
     memcpy(mxd_pubkey_registry[mxd_pubkey_registry_count].pub, pub, pub_len);
     mxd_pubkey_registry[mxd_pubkey_registry_count].len = pub_len;
     mxd_pubkey_registry_count++;
@@ -835,6 +844,17 @@ int mxd_get_validator_public_key(const uint8_t validator_id[20], uint8_t *out_ke
             if (out_capacity < mxd_pubkey_registry[i].len) return -1;
             memcpy(out_key, mxd_pubkey_registry[i].pub, mxd_pubkey_registry[i].len);
             *out_len = mxd_pubkey_registry[i].len;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int mxd_get_validator_algo_id(const uint8_t validator_id[20], uint8_t *out_algo_id) {
+    if (!validator_id || !out_algo_id) return -1;
+    for (size_t i = 0; i < mxd_pubkey_registry_count; i++) {
+        if (memcmp(mxd_pubkey_registry[i].id, validator_id, 20) == 0) {
+            *out_algo_id = mxd_pubkey_registry[i].algo_id;
             return 0;
         }
     }
@@ -1313,7 +1333,7 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
     
     uint8_t signature[MXD_SIGNATURE_MAX];
     size_t signature_len = sizeof(signature);
-    if (mxd_dilithium_sign(signature, &signature_len, membership_digest, 64, local_genesis_privkey) != 0) {
+    if (mxd_sig_sign(local_genesis_algo_id, signature, &signature_len, membership_digest, 64, local_genesis_privkey) != 0) {
         MXD_LOG_ERROR("rsc", "Failed to sign membership digest");
         return -1;
     }
@@ -1366,7 +1386,13 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
         return -1;
     }
     
-    if (mxd_dilithium_verify(signature, signature_length, membership_digest, 64, signer_pubkey) != 0) {
+    uint8_t signer_algo_id;
+    if (mxd_get_validator_algo_id(signer_address, &signer_algo_id) != 0) {
+        MXD_LOG_WARN("rsc", "Failed to get algorithm ID for signer");
+        return -1;
+    }
+    
+    if (mxd_sig_verify(signer_algo_id, signature, signature_length, membership_digest, 64, signer_pubkey) != 0) {
         MXD_LOG_WARN("rsc", "Invalid genesis signature");
         return -1;
     }
@@ -1446,7 +1472,7 @@ int mxd_try_coordinate_genesis_block(void) {
         
         uint8_t self_signature[MXD_SIGNATURE_MAX];
         size_t self_sig_len = sizeof(self_signature);
-        if (mxd_dilithium_sign(self_signature, &self_sig_len, pending_genesis_digest, 64, local_genesis_privkey) != 0) {
+        if (mxd_sig_sign(local_genesis_algo_id, self_signature, &self_sig_len, pending_genesis_digest, 64, local_genesis_privkey) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to sign own membership");
             return -1;
         }

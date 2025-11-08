@@ -32,7 +32,7 @@ typedef struct {
   mxd_peer_state_t state;  // Connection state
   uint64_t last_seen;      // Last seen timestamp
   uint32_t latency;        // Connection latency in ms
-  uint8_t public_key[256]; // Peer's public key
+  uint8_t peer_address[20]; // Peer's cryptographic wallet address (HASH160 of pubkey)
   uint8_t in_rapid_table;  // Whether peer is in the Rapid Table
   uint32_t rapid_table_position; // Position in the Rapid Table (0 = highest)
 } mxd_peer_t;

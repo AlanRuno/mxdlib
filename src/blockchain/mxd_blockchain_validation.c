@@ -107,7 +107,12 @@ int mxd_verify_validation_chain(const mxd_block_t *block) {
             return -1;
         }
 
-        if (mxd_dilithium_verify(sig_i->signature, (size_t)sig_i->signature_length, msg, sizeof(msg), pubbuf) != 0) {
+        uint8_t algo_id;
+        if (mxd_get_validator_algo_id(sig_i->validator_id, &algo_id) != 0) {
+            return -1;
+        }
+
+        if (mxd_sig_verify(algo_id, sig_i->signature, sig_i->signature_length, msg, sizeof(msg), pubbuf) != 0) {
             return -1;
         }
     }

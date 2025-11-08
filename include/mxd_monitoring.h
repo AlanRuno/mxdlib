@@ -37,8 +37,11 @@ typedef struct {
 
 typedef struct {
     char address[42];
-    uint8_t public_key[256];
-    uint8_t private_key[128];
+    uint8_t algo_id;
+    uint16_t public_key_length;
+    uint8_t *public_key;
+    uint16_t private_key_length;
+    uint8_t *private_key;
     char passphrase[256];
 } mxd_wallet_keypair_t;
 
