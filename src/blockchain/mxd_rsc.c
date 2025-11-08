@@ -530,7 +530,7 @@ double mxd_calculate_validation_latency_score(const mxd_block_t *block, const mx
         const uint8_t *validator_id = block->validation_chain[i].validator_id;
         
         for (size_t j = 0; j < table->count; j++) {
-            if (table->nodes[j] && memcmp(table->nodes[j]->public_key, validator_id, 20) == 0) {
+            if (table->nodes[j] && memcmp(table->nodes[j]->node_address, validator_id, 20) == 0) {
                 uint64_t latency = table->nodes[j]->metrics.avg_response_time;
                 if (latency < 1) latency = 1; // Avoid division by zero
                 
@@ -683,7 +683,7 @@ int mxd_get_next_validator(const mxd_block_t *block, const mxd_rapid_table_t *ta
             return -1; // No validators in Rapid Table
         }
         
-        memcpy(next_validator_id, table->nodes[0]->public_key, 20);
+        memcpy(next_validator_id, table->nodes[0]->node_address, 20);
         return 0;
     }
     
@@ -691,7 +691,7 @@ int mxd_get_next_validator(const mxd_block_t *block, const mxd_rapid_table_t *ta
     int found = 0;
     
     for (size_t i = 0; i < table->count; i++) {
-        if (memcmp(table->nodes[i]->public_key, 
+        if (memcmp(table->nodes[i]->node_address, 
                   block->validation_chain[block->validation_count - 1].validator_id, 20) == 0) {
             last_position = i;
             found = 1;
@@ -710,7 +710,7 @@ int mxd_get_next_validator(const mxd_block_t *block, const mxd_rapid_table_t *ta
         return -1; // All validators have signed
     }
     
-    memcpy(next_validator_id, table->nodes[next_position]->public_key, 20);
+    memcpy(next_validator_id, table->nodes[next_position]->node_address, 20);
     
     return 0;
 }
@@ -1244,9 +1244,8 @@ int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char
             
             memset(node, 0, sizeof(mxd_node_stake_t));
             strncpy(node->node_id, node_id_hex, sizeof(node->node_id) - 1);
-            size_t pubkey_len = mxd_sig_pubkey_len(member->algo_id);
-            memcpy(node->public_key, member->public_key, pubkey_len);
-            node->stake_amount = 0.0;  // Genesis mode, no stake required
+            memcpy(node->node_address, member->node_address, 20);
+            node->stake_amount = 0.0;
             node->active = 1;
             node->in_rapid_table = 1;
             

@@ -26,7 +26,7 @@ typedef struct {
 typedef struct {
     char node_id[64];
     double stake_amount;
-    uint8_t public_key[256];
+    uint8_t node_address[20];
     mxd_node_metrics_t metrics;
     uint32_t rank;
     uint8_t active;

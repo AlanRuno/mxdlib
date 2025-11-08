@@ -38,8 +38,9 @@ static void test_mining_validation(void) {
     snprintf(nodes[i].node_id, sizeof(nodes[i].node_id), "node-%zu", i);
     nodes[i].stake_amount = 100.0 + (i * 10.0); // Significant stakes
     nodes[i].active = 1;                        // Mark node as active
-    for (int j = 0; j < 256; j++) {
-      nodes[i].public_key[j] = j + i; // Unique key per node
+    // Initialize unique 20-byte address per node
+    for (int j = 0; j < 20; j++) {
+      nodes[i].node_address[j] = j + i; // Unique address per node
     }
     TEST_ASSERT(mxd_init_node_metrics(&nodes[i].metrics) == 0,
                 "Node metrics initialization");
