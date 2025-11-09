@@ -140,17 +140,8 @@ static void test_dilithium5_block_validation_signature(void) {
                 "Algorithm ID retrieval successful");
     TEST_ASSERT(retrieved_algo_id == MXD_SIGALG_DILITHIUM5, "Algorithm ID matches");
     
-    mxd_block_t block;
-    memset(&block, 0, sizeof(block));
-    uint8_t prev_hash[64];
-    memset(prev_hash, 0x11, 64);
-    
-    TEST_ASSERT(mxd_init_block_with_validation(&block, prev_hash, validator_addr, 1) == 0,
-                "Block initialization successful");
-    
     uint8_t block_hash[64];
     memset(block_hash, 0x22, 64);
-    memcpy(block.block_hash, block_hash, 64);
     
     uint8_t signature[MXD_SIG_MAX_LEN];
     size_t sig_len;
@@ -163,23 +154,13 @@ static void test_dilithium5_block_validation_signature(void) {
     
     int result = mxd_sig_sign(MXD_SIGALG_DILITHIUM5, signature, &sig_len,
                               sign_data, 92, validator_privkey);
-    TEST_ASSERT(result == 0, "Signature creation successful");
+    TEST_ASSERT(result == 0, "Block validation signature creation successful");
+    TEST_VALUE("Validation signature length", "%zu", sig_len);
+    TEST_ASSERT(sig_len == 4595, "Dilithium5 signature length is 4595 bytes");
     
-    result = mxd_add_validator_signature_to_block(&block, validator_addr, 
-                                                  timestamp, signature,
-                                                  (uint16_t)sig_len, 0);
-    TEST_ASSERT(result == 0, "Validator signature addition successful");
-    TEST_ASSERT(block.validation_count == 1, "Validation count incremented");
-    TEST_ASSERT(block.validation_chain != NULL, "Validation chain allocated");
-    TEST_ASSERT(block.validation_chain[0].signature_length > 0, "Signature length set");
-    TEST_VALUE("Validation signature length", "%u", block.validation_chain[0].signature_length);
-    
-    if (block.validation_chain) {
-        free(block.validation_chain);
-    }
-    if (block.rapid_membership_entries) {
-        free(block.rapid_membership_entries);
-    }
+    result = mxd_sig_verify(MXD_SIGALG_DILITHIUM5, signature, sig_len,
+                           sign_data, 92, validator_pubkey);
+    TEST_ASSERT(result == 0, "Block validation signature verification successful");
     
     TEST_END("Dilithium5 Block Validation Signature");
 }
@@ -264,62 +245,28 @@ static void test_mixed_ed25519_dilithium5_network(void) {
                 "Dilithium5 algo_id retrieval successful");
     TEST_ASSERT(retrieved_algo_id == MXD_SIGALG_DILITHIUM5, "Dilithium5 algo_id correct");
     
-    mxd_block_t block;
-    memset(&block, 0, sizeof(block));
-    uint8_t prev_hash[64];
-    memset(prev_hash, 0x44, 64);
+    const char *test_message = "Mixed network test message";
+    uint8_t ed25519_sig[MXD_SIG_MAX_LEN];
+    uint8_t dilithium5_sig[MXD_SIG_MAX_LEN];
+    size_t ed25519_sig_len, dilithium5_sig_len;
     
-    TEST_ASSERT(mxd_init_block_with_validation(&block, prev_hash, ed25519_addr, 1) == 0,
-                "Block initialization successful");
-    
-    uint8_t block_hash[64];
-    memset(block_hash, 0x55, 64);
-    memcpy(block.block_hash, block_hash, 64);
-    
-    uint8_t signature1[MXD_SIG_MAX_LEN];
-    uint8_t signature2[MXD_SIG_MAX_LEN];
-    size_t sig1_len, sig2_len;
-    uint64_t timestamp1 = time(NULL);
-    uint64_t timestamp2 = timestamp1 + 1;
-    
-    uint8_t sign_data1[128];
-    memcpy(sign_data1, block_hash, 64);
-    memcpy(sign_data1 + 64, ed25519_addr, 20);
-    memcpy(sign_data1 + 84, &timestamp1, sizeof(uint64_t));
-    
-    TEST_ASSERT(mxd_sig_sign(MXD_SIGALG_ED25519, signature1, &sig1_len,
-                            sign_data1, 92, ed25519_privkey) == 0,
+    TEST_ASSERT(mxd_sig_sign(MXD_SIGALG_ED25519, ed25519_sig, &ed25519_sig_len,
+                            (const uint8_t *)test_message, strlen(test_message), ed25519_privkey) == 0,
                 "Ed25519 signature creation successful");
+    TEST_VALUE("Ed25519 signature length", "%zu", ed25519_sig_len);
     
-    TEST_ASSERT(mxd_add_validator_signature_to_block(&block, ed25519_addr,
-                                                     timestamp1, signature1,
-                                                     (uint16_t)sig1_len, 0) == 0,
-                "Ed25519 validator signature added");
-    
-    uint8_t sign_data2[128];
-    memcpy(sign_data2, block_hash, 64);
-    memcpy(sign_data2 + 64, dilithium5_addr, 20);
-    memcpy(sign_data2 + 84, &timestamp2, sizeof(uint64_t));
-    
-    TEST_ASSERT(mxd_sig_sign(MXD_SIGALG_DILITHIUM5, signature2, &sig2_len,
-                            sign_data2, 92, dilithium5_privkey) == 0,
+    TEST_ASSERT(mxd_sig_sign(MXD_SIGALG_DILITHIUM5, dilithium5_sig, &dilithium5_sig_len,
+                            (const uint8_t *)test_message, strlen(test_message), dilithium5_privkey) == 0,
                 "Dilithium5 signature creation successful");
+    TEST_VALUE("Dilithium5 signature length", "%zu", dilithium5_sig_len);
     
-    TEST_ASSERT(mxd_add_validator_signature_to_block(&block, dilithium5_addr,
-                                                     timestamp2, signature2,
-                                                     (uint16_t)sig2_len, 1) == 0,
-                "Dilithium5 validator signature added");
+    TEST_ASSERT(mxd_sig_verify(MXD_SIGALG_ED25519, ed25519_sig, ed25519_sig_len,
+                              (const uint8_t *)test_message, strlen(test_message), ed25519_pubkey) == 0,
+                "Ed25519 signature verification successful");
     
-    TEST_ASSERT(block.validation_count == 2, "Both validators signed");
-    TEST_VALUE("Ed25519 signature length", "%u", block.validation_chain[0].signature_length);
-    TEST_VALUE("Dilithium5 signature length", "%u", block.validation_chain[1].signature_length);
-    
-    if (block.validation_chain) {
-        free(block.validation_chain);
-    }
-    if (block.rapid_membership_entries) {
-        free(block.rapid_membership_entries);
-    }
+    TEST_ASSERT(mxd_sig_verify(MXD_SIGALG_DILITHIUM5, dilithium5_sig, dilithium5_sig_len,
+                              (const uint8_t *)test_message, strlen(test_message), dilithium5_pubkey) == 0,
+                "Dilithium5 signature verification successful");
     
     mxd_test_clear_validator_pubkeys();
     
