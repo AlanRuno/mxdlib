@@ -96,6 +96,9 @@ int mxd_set_voluntary_tip(mxd_transaction_t *tx, double tip_amount);
 // Get voluntary tip amount
 double mxd_get_voluntary_tip(const mxd_transaction_t *tx);
 
+// Peek voluntary tip from serialized transaction bytes (lightweight extraction)
+int mxd_peek_voluntary_tip_from_bytes(const uint8_t *data, size_t length, double *tip_out);
+
 // Create a coinbase transaction (for block rewards, v2 - uses address20)
 int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipient_addr[20],
                                    double reward_amount);

@@ -2,6 +2,7 @@
 #include "../../include/mxd_crypto.h"
 #include "../../include/mxd_rsc.h"
 #include "../../include/mxd_utxo.h"
+#include "../../include/mxd_transaction.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -160,6 +161,28 @@ int mxd_freeze_transaction_set(mxd_block_t *block) {
   // Mark as frozen - merkle_root is now immutable
   block->transaction_set_frozen = 1;
   return 0;
+}
+
+// Calculate total tip from frozen transaction set
+double mxd_calculate_total_tip_from_frozen_set(const mxd_block_t *block) {
+  if (!block) {
+    return 0.0;
+  }
+  
+  if (!block->transaction_set_frozen) {
+    return 0.0;
+  }
+  
+  double total_tip = 0.0;
+  
+  for (size_t i = 0; i < transaction_count; i++) {
+    double tip = 0.0;
+    if (mxd_peek_voluntary_tip_from_bytes(transactions[i].data, transactions[i].length, &tip) == 0) {
+      total_tip += tip;
+    }
+  }
+  
+  return total_tip;
 }
 
 // Calculate membership digest over frozen transaction set

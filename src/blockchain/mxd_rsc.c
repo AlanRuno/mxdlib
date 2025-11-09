@@ -762,7 +762,7 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
                 }
                 
                 // Calculate tip distribution using 50% pattern
-                double total_tip = 0.0; // TODO: Calculate from frozen transactions
+                double total_tip = mxd_calculate_total_tip_from_frozen_set(block);
                 
                 if (total_tip > 0.0) {
                     mxd_distribute_tips(validators, block->validation_count, total_tip);

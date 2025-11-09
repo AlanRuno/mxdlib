@@ -81,6 +81,8 @@ int mxd_block_is_finalized(const mxd_block_t *block);
 
 int mxd_freeze_transaction_set(mxd_block_t *block);
 
+double mxd_calculate_total_tip_from_frozen_set(const mxd_block_t *block);
+
 int mxd_block_has_quorum(const mxd_block_t *block);
 
 int mxd_block_has_min_signatures(const mxd_block_t *block);
