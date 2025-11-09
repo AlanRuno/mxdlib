@@ -81,8 +81,8 @@ static void test_dilithium5_transaction_signing(void) {
     TEST_ASSERT(tx.inputs[0].signature != NULL, "Signature allocated");
     TEST_VALUE("Signature length", "%u", tx.inputs[0].signature_length);
     
-    result = mxd_validate_transaction(&tx);
-    TEST_ASSERT(result == 0, "Transaction validation successful");
+    result = mxd_verify_tx_input(&tx, 0);
+    TEST_ASSERT(result == 0, "Transaction signature verification successful");
     
     mxd_free_transaction(&tx);
     
