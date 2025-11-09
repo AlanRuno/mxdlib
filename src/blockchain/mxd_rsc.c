@@ -750,6 +750,49 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
             }
         }
         
+        // Distribute tips to validators in the validation chain
+        if (block->validation_count > 0) {
+            mxd_node_stake_t *validators = malloc(block->validation_count * sizeof(mxd_node_stake_t));
+            if (validators) {
+                // Initialize validators from validation chain
+                for (uint32_t i = 0; i < block->validation_count; i++) {
+                    memset(&validators[i], 0, sizeof(mxd_node_stake_t));
+                    memcpy(validators[i].node_address, block->validation_chain[i].validator_id, 20);
+                    validators[i].active = 1;
+                }
+                
+                // Calculate tip distribution using 50% pattern
+                double total_tip = 0.0; // TODO: Calculate from frozen transactions
+                
+                if (total_tip > 0.0) {
+                    mxd_distribute_tips(validators, block->validation_count, total_tip);
+                    
+                    mxd_transaction_t tip_tx;
+                    if (mxd_create_transaction(&tip_tx) == 0) {
+                        tip_tx.is_coinbase = 1;
+                        
+                        for (uint32_t i = 0; i < block->validation_count; i++) {
+                            if (validators[i].metrics.tip_share > 0.0) {
+                                if (mxd_add_tx_output(&tip_tx, validators[i].node_address, 
+                                                     validators[i].metrics.tip_share) != 0) {
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Calculate transaction hash
+                        mxd_calculate_tx_hash(&tip_tx, tip_tx.tx_hash);
+                        
+                        mxd_create_utxos_from_tx(&tip_tx, tip_tx.tx_hash);
+                        
+                        // Free transaction resources
+                        mxd_free_transaction(&tip_tx);
+                    }
+                }
+                
+                free(validators);
+            }
+        }
         
         mxd_store_block(block);
         
