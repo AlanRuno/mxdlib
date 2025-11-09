@@ -1,0 +1,316 @@
+#include "../include/mxd_crypto.h"
+#include "../include/mxd_address.h"
+#include "../include/mxd_transaction.h"
+#include "../include/mxd_p2p.h"
+#include "../include/mxd_blockchain.h"
+#include "../include/mxd_rsc.h"
+#include "test_utils.h"
+#include <assert.h>
+#include <sodium.h>
+#include <stdio.h>
+#include <string.h>
+
+static void test_dilithium5_address_generation(void) {
+    TEST_START("Dilithium5 Address Generation");
+    
+    uint8_t public_key[MXD_PUBKEY_MAX_LEN];
+    uint8_t secret_key[MXD_PRIVKEY_MAX_LEN];
+    
+    int result = mxd_sig_keygen(MXD_SIGALG_DILITHIUM5, public_key, secret_key);
+    TEST_ASSERT(result == 0, "Dilithium5 key generation successful");
+    
+    uint8_t address[20];
+    result = mxd_derive_address(MXD_SIGALG_DILITHIUM5, public_key, 
+                                mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5), address);
+    TEST_ASSERT(result == 0, "Address derivation successful");
+    TEST_ARRAY("Dilithium5 Address", address, 20);
+    
+    char address_str[64];
+    result = mxd_address_to_string_v2(address, MXD_SIGALG_DILITHIUM5, address_str, sizeof(address_str));
+    TEST_ASSERT(result == 0, "Address string conversion successful");
+    TEST_VALUE("Address string", "%s", address_str);
+    
+    uint8_t decoded_address[20];
+    uint8_t decoded_algo_id;
+    result = mxd_string_to_address_v2(address_str, decoded_address, &decoded_algo_id);
+    TEST_ASSERT(result == 0, "Address string decoding successful");
+    TEST_ASSERT(decoded_algo_id == MXD_SIGALG_DILITHIUM5, "Algorithm ID preserved");
+    TEST_ASSERT(memcmp(address, decoded_address, 20) == 0, "Address matches after round-trip");
+    
+    TEST_END("Dilithium5 Address Generation");
+}
+
+static void test_dilithium5_transaction_signing(void) {
+    TEST_START("Dilithium5 Transaction Signing");
+    
+    uint8_t sender_pubkey[MXD_PUBKEY_MAX_LEN];
+    uint8_t sender_privkey[MXD_PRIVKEY_MAX_LEN];
+    uint8_t sender_addr[20];
+    
+    TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_DILITHIUM5, sender_pubkey, sender_privkey) == 0,
+                "Sender key generation successful");
+    TEST_ASSERT(mxd_derive_address(MXD_SIGALG_DILITHIUM5, sender_pubkey, 
+                                   mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5), sender_addr) == 0,
+                "Sender address derivation successful");
+    
+    uint8_t recipient_addr[20];
+    memset(recipient_addr, 0xAB, 20);
+    
+    mxd_transaction_t tx;
+    memset(&tx, 0, sizeof(tx));
+    tx.version = 1;
+    tx.input_count = 1;
+    tx.output_count = 1;
+    
+    tx.inputs = malloc(sizeof(mxd_tx_input_t));
+    tx.outputs = malloc(sizeof(mxd_tx_output_t));
+    
+    memset(tx.inputs[0].prev_tx_hash, 0x12, 64);
+    tx.inputs[0].output_index = 0;
+    tx.inputs[0].algo_id = MXD_SIGALG_DILITHIUM5;
+    tx.inputs[0].public_key_length = mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5);
+    tx.inputs[0].public_key = malloc(tx.inputs[0].public_key_length);
+    memcpy(tx.inputs[0].public_key, sender_pubkey, tx.inputs[0].public_key_length);
+    tx.inputs[0].signature_length = 0;
+    tx.inputs[0].signature = NULL;
+    tx.inputs[0].amount = 100.0;
+    
+    memcpy(tx.outputs[0].address, recipient_addr, 20);
+    tx.outputs[0].amount = 95.0;
+    
+    int result = mxd_sign_tx_input(&tx, 0, sender_privkey, MXD_SIGALG_DILITHIUM5);
+    TEST_ASSERT(result == 0, "Transaction signing successful");
+    TEST_ASSERT(tx.inputs[0].signature_length > 0, "Signature length set");
+    TEST_ASSERT(tx.inputs[0].signature != NULL, "Signature allocated");
+    TEST_VALUE("Signature length", "%u", tx.inputs[0].signature_length);
+    
+    result = mxd_validate_transaction(&tx);
+    TEST_ASSERT(result == 0, "Transaction validation successful");
+    
+    mxd_free_transaction(&tx);
+    
+    TEST_END("Dilithium5 Transaction Signing");
+}
+
+static void test_dilithium5_p2p_handshake(void) {
+    TEST_START("Dilithium5 P2P Handshake");
+    
+    uint8_t node_pubkey[MXD_PUBKEY_MAX_LEN];
+    uint8_t node_privkey[MXD_PRIVKEY_MAX_LEN];
+    
+    TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_DILITHIUM5, node_pubkey, node_privkey) == 0,
+                "Node key generation successful");
+    
+    mxd_handshake_t handshake;
+    memset(&handshake, 0, sizeof(handshake));
+    
+    int result = mxd_create_signed_handshake(&handshake, MXD_SIGALG_DILITHIUM5, 
+                                             node_pubkey, node_privkey, 8000);
+    TEST_ASSERT(result == 0, "Handshake creation successful");
+    TEST_ASSERT(handshake.algo_id == MXD_SIGALG_DILITHIUM5, "Algorithm ID set correctly");
+    TEST_ASSERT(handshake.public_key_length == mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5),
+                "Public key length correct");
+    TEST_ASSERT(handshake.signature_length > 0, "Signature length set");
+    TEST_VALUE("Handshake signature length", "%u", handshake.signature_length);
+    
+    result = mxd_verify_handshake(&handshake);
+    TEST_ASSERT(result == 0, "Handshake verification successful");
+    
+    TEST_END("Dilithium5 P2P Handshake");
+}
+
+static void test_dilithium5_block_validation_signature(void) {
+    TEST_START("Dilithium5 Block Validation Signature");
+    
+    uint8_t validator_pubkey[MXD_PUBKEY_MAX_LEN];
+    uint8_t validator_privkey[MXD_PRIVKEY_MAX_LEN];
+    uint8_t validator_addr[20];
+    
+    TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_DILITHIUM5, validator_pubkey, validator_privkey) == 0,
+                "Validator key generation successful");
+    TEST_ASSERT(mxd_derive_address(MXD_SIGALG_DILITHIUM5, validator_pubkey,
+                                   mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5), validator_addr) == 0,
+                "Validator address derivation successful");
+    
+    TEST_ASSERT(mxd_test_register_validator_pubkey(validator_addr, validator_pubkey,
+                                                   mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5)) == 0,
+                "Validator public key registration successful");
+    
+    uint8_t retrieved_algo_id;
+    TEST_ASSERT(mxd_get_validator_algo_id(validator_addr, &retrieved_algo_id) == 0,
+                "Algorithm ID retrieval successful");
+    TEST_ASSERT(retrieved_algo_id == MXD_SIGALG_DILITHIUM5, "Algorithm ID matches");
+    
+    mxd_block_t block;
+    memset(&block, 0, sizeof(block));
+    uint8_t prev_hash[64];
+    memset(prev_hash, 0x11, 64);
+    
+    TEST_ASSERT(mxd_init_block_with_validation(&block, prev_hash, validator_addr, 1) == 0,
+                "Block initialization successful");
+    
+    uint8_t block_hash[64];
+    memset(block_hash, 0x22, 64);
+    memcpy(block.block_hash, block_hash, 64);
+    
+    uint8_t prev_validator_id[20];
+    memset(prev_validator_id, 0, 20);
+    
+    int result = mxd_add_validator_signature_to_block(&block, validator_addr, 
+                                                      prev_validator_id, validator_privkey,
+                                                      MXD_SIGALG_DILITHIUM5);
+    TEST_ASSERT(result == 0, "Validator signature addition successful");
+    TEST_ASSERT(block.validation_count == 1, "Validation count incremented");
+    TEST_ASSERT(block.validation_chain != NULL, "Validation chain allocated");
+    TEST_ASSERT(block.validation_chain[0].signature_length > 0, "Signature length set");
+    TEST_VALUE("Validation signature length", "%u", block.validation_chain[0].signature_length);
+    
+    if (block.validation_chain) {
+        free(block.validation_chain);
+    }
+    if (block.rapid_membership_entries) {
+        free(block.rapid_membership_entries);
+    }
+    
+    TEST_END("Dilithium5 Block Validation Signature");
+}
+
+static void test_dilithium5_genesis_coordination(void) {
+    TEST_START("Dilithium5 Genesis Coordination");
+    
+    uint8_t genesis_pubkey[MXD_PUBKEY_MAX_LEN];
+    uint8_t genesis_privkey[MXD_PRIVKEY_MAX_LEN];
+    uint8_t genesis_addr[20];
+    
+    TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_DILITHIUM5, genesis_pubkey, genesis_privkey) == 0,
+                "Genesis key generation successful");
+    TEST_ASSERT(mxd_derive_address(MXD_SIGALG_DILITHIUM5, genesis_pubkey,
+                                   mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5), genesis_addr) == 0,
+                "Genesis address derivation successful");
+    
+    mxd_genesis_member_t member;
+    memset(&member, 0, sizeof(member));
+    memcpy(member.address, genesis_addr, 20);
+    member.algo_id = MXD_SIGALG_DILITHIUM5;
+    member.pubkey_len = mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5);
+    memcpy(member.pubkey, genesis_pubkey, member.pubkey_len);
+    member.stake = 1000.0;
+    
+    uint8_t announce_hash[64];
+    memset(announce_hash, 0x33, 64);
+    
+    uint8_t signature[MXD_SIG_MAX_LEN];
+    size_t sig_len;
+    int result = mxd_sig_sign(MXD_SIGALG_DILITHIUM5, signature, &sig_len,
+                              announce_hash, 64, genesis_privkey);
+    TEST_ASSERT(result == 0, "Genesis announce signing successful");
+    TEST_VALUE("Genesis signature length", "%zu", sig_len);
+    
+    result = mxd_sig_verify(MXD_SIGALG_DILITHIUM5, signature, sig_len,
+                           announce_hash, 64, genesis_pubkey);
+    TEST_ASSERT(result == 0, "Genesis signature verification successful");
+    
+    TEST_END("Dilithium5 Genesis Coordination");
+}
+
+static void test_mixed_ed25519_dilithium5_network(void) {
+    TEST_START("Mixed Ed25519/Dilithium5 Network");
+    
+    uint8_t ed25519_pubkey[MXD_PUBKEY_MAX_LEN];
+    uint8_t ed25519_privkey[MXD_PRIVKEY_MAX_LEN];
+    uint8_t ed25519_addr[20];
+    
+    uint8_t dilithium5_pubkey[MXD_PUBKEY_MAX_LEN];
+    uint8_t dilithium5_privkey[MXD_PRIVKEY_MAX_LEN];
+    uint8_t dilithium5_addr[20];
+    
+    TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_ED25519, ed25519_pubkey, ed25519_privkey) == 0,
+                "Ed25519 key generation successful");
+    TEST_ASSERT(mxd_derive_address(MXD_SIGALG_ED25519, ed25519_pubkey,
+                                   mxd_sig_pubkey_len(MXD_SIGALG_ED25519), ed25519_addr) == 0,
+                "Ed25519 address derivation successful");
+    
+    TEST_ASSERT(mxd_sig_keygen(MXD_SIGALG_DILITHIUM5, dilithium5_pubkey, dilithium5_privkey) == 0,
+                "Dilithium5 key generation successful");
+    TEST_ASSERT(mxd_derive_address(MXD_SIGALG_DILITHIUM5, dilithium5_pubkey,
+                                   mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5), dilithium5_addr) == 0,
+                "Dilithium5 address derivation successful");
+    
+    TEST_ASSERT(memcmp(ed25519_addr, dilithium5_addr, 20) != 0,
+                "Addresses are different (no collision)");
+    
+    TEST_ASSERT(mxd_test_register_validator_pubkey(ed25519_addr, ed25519_pubkey,
+                                                   mxd_sig_pubkey_len(MXD_SIGALG_ED25519)) == 0,
+                "Ed25519 validator registration successful");
+    TEST_ASSERT(mxd_test_register_validator_pubkey(dilithium5_addr, dilithium5_pubkey,
+                                                   mxd_sig_pubkey_len(MXD_SIGALG_DILITHIUM5)) == 0,
+                "Dilithium5 validator registration successful");
+    
+    uint8_t retrieved_algo_id;
+    TEST_ASSERT(mxd_get_validator_algo_id(ed25519_addr, &retrieved_algo_id) == 0,
+                "Ed25519 algo_id retrieval successful");
+    TEST_ASSERT(retrieved_algo_id == MXD_SIGALG_ED25519, "Ed25519 algo_id correct");
+    
+    TEST_ASSERT(mxd_get_validator_algo_id(dilithium5_addr, &retrieved_algo_id) == 0,
+                "Dilithium5 algo_id retrieval successful");
+    TEST_ASSERT(retrieved_algo_id == MXD_SIGALG_DILITHIUM5, "Dilithium5 algo_id correct");
+    
+    mxd_block_t block;
+    memset(&block, 0, sizeof(block));
+    uint8_t prev_hash[64];
+    memset(prev_hash, 0x44, 64);
+    
+    TEST_ASSERT(mxd_init_block_with_validation(&block, prev_hash, ed25519_addr, 1) == 0,
+                "Block initialization successful");
+    
+    uint8_t block_hash[64];
+    memset(block_hash, 0x55, 64);
+    memcpy(block.block_hash, block_hash, 64);
+    
+    uint8_t prev_validator_id[20];
+    memset(prev_validator_id, 0, 20);
+    
+    TEST_ASSERT(mxd_add_validator_signature_to_block(&block, ed25519_addr,
+                                                     prev_validator_id, ed25519_privkey,
+                                                     MXD_SIGALG_ED25519) == 0,
+                "Ed25519 validator signature added");
+    
+    TEST_ASSERT(mxd_add_validator_signature_to_block(&block, dilithium5_addr,
+                                                     ed25519_addr, dilithium5_privkey,
+                                                     MXD_SIGALG_DILITHIUM5) == 0,
+                "Dilithium5 validator signature added");
+    
+    TEST_ASSERT(block.validation_count == 2, "Both validators signed");
+    TEST_VALUE("Ed25519 signature length", "%u", block.validation_chain[0].signature_length);
+    TEST_VALUE("Dilithium5 signature length", "%u", block.validation_chain[1].signature_length);
+    
+    if (block.validation_chain) {
+        free(block.validation_chain);
+    }
+    if (block.rapid_membership_entries) {
+        free(block.rapid_membership_entries);
+    }
+    
+    mxd_test_clear_validator_pubkeys();
+    
+    TEST_END("Mixed Ed25519/Dilithium5 Network");
+}
+
+int main(void) {
+    TEST_START("Comprehensive Dilithium5 Tests");
+    
+    if (sodium_init() < 0) {
+        printf("Failed to initialize libsodium\n");
+        return 1;
+    }
+    
+    test_dilithium5_address_generation();
+    test_dilithium5_transaction_signing();
+    test_dilithium5_p2p_handshake();
+    test_dilithium5_block_validation_signature();
+    test_dilithium5_genesis_coordination();
+    test_mixed_ed25519_dilithium5_network();
+    
+    TEST_END("Comprehensive Dilithium5 Tests");
+    return 0;
+}

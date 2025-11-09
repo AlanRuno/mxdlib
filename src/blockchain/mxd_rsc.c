@@ -761,8 +761,26 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
                     }
                 }
                 
+                // Calculate tip distribution (50% pattern)
                 mxd_distribute_tips(validators, table->count, total_tip);
                 
+                double remaining_tip = total_tip;
+                for (size_t i = 0; i < table->count && remaining_tip > 0.01; i++) {
+                    if (table->nodes[i] && table->nodes[i]->active) {
+                        double tip_amount = remaining_tip * 0.5;
+                        
+                        mxd_transaction_t tip_tx;
+                        uint8_t validator_addr[20];
+                        // Convert node address string to address20
+                        memset(validator_addr, 0, 20);
+                        
+                        if (mxd_create_coinbase_transaction(&tip_tx, validator_addr, tip_amount) == 0) {
+                            mxd_free_transaction(&tip_tx);
+                        }
+                        
+                        remaining_tip -= tip_amount;
+                    }
+                }
                 
                 free(validators);
             }

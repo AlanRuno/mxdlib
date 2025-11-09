@@ -335,3 +335,18 @@ target_link_libraries(mxd_validation_chain_test
 
 add_test(NAME validation_chain_tests COMMAND mxd_validation_chain_test)
 set_tests_properties(validation_chain_tests PROPERTIES TIMEOUT 120 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=0")
+
+# Comprehensive Dilithium5 test
+add_executable(mxd_dilithium5_comprehensive_test
+    test_dilithium5_comprehensive.c
+)
+
+target_link_libraries(mxd_dilithium5_comprehensive_test
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME dilithium5_comprehensive_tests COMMAND mxd_dilithium5_comprehensive_test)
+set_tests_properties(dilithium5_comprehensive_tests PROPERTIES TIMEOUT 120 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=0")
