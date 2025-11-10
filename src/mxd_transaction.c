@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 
 static int validation_initialized = 0;
 
@@ -307,6 +308,40 @@ double mxd_get_voluntary_tip(const mxd_transaction_t *tx) {
     return -1;
   }
   return tx->voluntary_tip;
+}
+
+int mxd_peek_voluntary_tip_from_bytes(const uint8_t *data, size_t length, double *tip_out) {
+  if (!data || !tip_out) {
+    return -1;
+  }
+  
+  _Static_assert(sizeof(double) == 8, "double must be 8 bytes");
+  
+  const size_t header_min = sizeof(uint32_t) * 3 + sizeof(double) + sizeof(uint64_t);
+  
+  if (length < header_min) {
+    return -1;
+  }
+  
+  uint32_t version;
+  memcpy(&version, data, sizeof(uint32_t));
+  
+  if (version != 2) {
+    return -1;
+  }
+  
+  const size_t tip_offset = sizeof(uint32_t) * 3;
+  
+  double tip_value;
+  memcpy(&tip_value, data + tip_offset, sizeof(double));
+  
+  if (tip_value < 0.0 || !isfinite(tip_value)) {
+    *tip_out = 0.0;
+  } else {
+    *tip_out = tip_value;
+  }
+  
+  return 0;
 }
 
 // Validate transaction inputs against UTXO database
