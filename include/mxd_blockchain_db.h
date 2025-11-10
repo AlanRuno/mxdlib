@@ -37,6 +37,14 @@ int mxd_flush_blockchain_db(void);
 
 int mxd_compact_blockchain_db(void);
 
+int mxd_store_validator_metadata(const uint8_t validator_id[20], uint8_t algo_id, 
+                                  const uint8_t *public_key, size_t pubkey_len);
+
+int mxd_retrieve_validator_metadata(const uint8_t validator_id[20], uint8_t *out_algo_id,
+                                     uint8_t *out_public_key, size_t out_capacity, size_t *out_len);
+
+int mxd_load_all_validator_metadata(void);
+
 #ifdef __cplusplus
 }
 #endif

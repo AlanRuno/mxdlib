@@ -24,13 +24,12 @@ typedef enum {
     DHT_FIND_VALUE_REPLY
 } mxd_dht_message_type_t;
 
-// DHT message header
+// DHT message header (signatures removed - rely on P2P authentication)
 typedef struct {
     uint32_t magic;     // "MXD\0"
     uint8_t version;    // Protocol version
     uint8_t type;       // Message type
     mxd_node_id_t sender_id;
-    uint8_t signature[64];
 } mxd_dht_message_header_t;
 
 // DHT value storage

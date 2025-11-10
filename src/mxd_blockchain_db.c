@@ -635,3 +635,150 @@ int mxd_compact_blockchain_db(void) {
     MXD_LOG_INFO("db", "Blockchain database compaction completed");
     return 0;
 }
+
+int mxd_store_validator_metadata(const uint8_t validator_id[20], uint8_t algo_id, 
+                                  const uint8_t *public_key, size_t pubkey_len) {
+    if (!validator_id || !public_key || pubkey_len == 0) {
+        return -1;
+    }
+    
+    if (!mxd_get_rocksdb_db()) {
+        MXD_LOG_ERROR("db", "Database not initialized");
+        return -1;
+    }
+    
+    uint8_t key[30];
+    memcpy(key, "validator:", 10);
+    memcpy(key + 10, validator_id, 20);
+    size_t key_len = 30;
+    
+    size_t value_len = 1 + 2 + pubkey_len;
+    uint8_t *value = malloc(value_len);
+    if (!value) {
+        return -1;
+    }
+    
+    value[0] = algo_id;
+    uint16_t len_field = (uint16_t)pubkey_len;
+    memcpy(value + 1, &len_field, 2);
+    memcpy(value + 3, public_key, pubkey_len);
+    
+    char *err = NULL;
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), 
+                (char *)key, key_len, (char *)value, value_len, &err);
+    
+    free(value);
+    
+    if (err) {
+        MXD_LOG_ERROR("db", "Failed to store validator metadata: %s", err);
+        free(err);
+        return -1;
+    }
+    
+    return 0;
+}
+
+int mxd_retrieve_validator_metadata(const uint8_t validator_id[20], uint8_t *out_algo_id,
+                                     uint8_t *out_public_key, size_t out_capacity, size_t *out_len) {
+    if (!validator_id || !out_algo_id || !out_public_key || !out_len) {
+        return -1;
+    }
+    
+    if (!mxd_get_rocksdb_db()) {
+        return -1;
+    }
+    
+    uint8_t key[30];
+    memcpy(key, "validator:", 10);
+    memcpy(key + 10, validator_id, 20);
+    size_t key_len = 30;
+    
+    char *err = NULL;
+    size_t value_len = 0;
+    char *value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(),
+                              (char *)key, key_len, &value_len, &err);
+    
+    if (err) {
+        free(err);
+        return -1;
+    }
+    
+    if (!value || value_len < 3) {
+        if (value) free(value);
+        return -1;
+    }
+    
+    *out_algo_id = (uint8_t)value[0];
+    uint16_t pubkey_len = 0;
+    memcpy(&pubkey_len, value + 1, 2);
+    
+    if (pubkey_len > out_capacity || value_len < 3 + pubkey_len) {
+        free(value);
+        return -1;
+    }
+    
+    memcpy(out_public_key, value + 3, pubkey_len);
+    *out_len = pubkey_len;
+    
+    free(value);
+    return 0;
+}
+
+int mxd_load_all_validator_metadata(void) {
+    if (!mxd_get_rocksdb_db()) {
+        return -1;
+    }
+    
+    rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), 
+                                                        mxd_get_rocksdb_readoptions());
+    if (!iter) {
+        return -1;
+    }
+    
+    uint8_t prefix[10];
+    memcpy(prefix, "validator:", 10);
+    
+    int loaded_count = 0;
+    
+    for (rocksdb_iter_seek(iter, (char *)prefix, 10);
+         rocksdb_iter_valid(iter);
+         rocksdb_iter_next(iter)) {
+        
+        size_t key_len = 0;
+        const char *key = rocksdb_iter_key(iter, &key_len);
+        
+        if (key_len != 30 || memcmp(key, prefix, 10) != 0) {
+            break;
+        }
+        
+        size_t value_len = 0;
+        const char *value = rocksdb_iter_value(iter, &value_len);
+        
+        if (!value || value_len < 3) {
+            continue;
+        }
+        
+        uint8_t validator_id[20];
+        memcpy(validator_id, key + 10, 20);
+        
+        uint8_t algo_id = (uint8_t)value[0];
+        uint16_t pubkey_len = 0;
+        memcpy(&pubkey_len, value + 1, 2);
+        
+        if (value_len < 3 + pubkey_len) {
+            continue;
+        }
+        
+        extern int mxd_test_register_validator_pubkey(const uint8_t validator_id[20], 
+                                                       const uint8_t *pub, size_t pub_len);
+        
+        if (mxd_test_register_validator_pubkey(validator_id, (const uint8_t *)(value + 3), pubkey_len) == 0) {
+            loaded_count++;
+        }
+    }
+    
+    rocksdb_iter_destroy(iter);
+    
+    MXD_LOG_INFO("db", "Loaded %d validator metadata entries from database", loaded_count);
+    return 0;
+}

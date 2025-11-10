@@ -107,7 +107,7 @@ int mxd_address_to_string_v2(uint8_t algo_id, const uint8_t *public_key, size_t 
 
   // Prepare address bytes: Version(1) + Address20(20) + Checksum(4)
   uint8_t address_bytes[25] = {0};
-  address_bytes[0] = 0x32; // Version byte (50 in decimal, unique to MXD)
+  address_bytes[0] = (algo_id == MXD_SIGALG_DILITHIUM5) ? 0x33 : 0x32;
   memcpy(address_bytes + 1, addr20, 20);
 
   // Calculate checksum (double SHA-512 of version + addr20)
@@ -209,8 +209,8 @@ int mxd_validate_address(const char *address) {
     return -1;
   }
 
-  // Check version byte
-  if (decoded[0] != 0x32) { // MXD version byte
+  // Check version byte (0x32 for Ed25519, 0x33 for Dilithium5)
+  if (decoded[0] != 0x32 && decoded[0] != 0x33) {
     return -1;
   }
 
@@ -229,4 +229,68 @@ int mxd_validate_address(const char *address) {
 
   // Compare checksum
   return memcmp(decoded + 21, hash_buffer, 4) == 0 ? 0 : -1;
+}
+
+int mxd_parse_address(const char *address, uint8_t *out_algo_id, uint8_t out_addr20[20]) {
+  if (!address || !out_algo_id || !out_addr20) {
+    return -1;
+  }
+
+  size_t address_len = strlen(address);
+  if (address_len < 25 || address_len > 42) {
+    return -1;
+  }
+
+  if (strncmp(address, "mx", 2) != 0) {
+    return -1;
+  }
+
+  if (address_len == 41) {
+    char expected = address[2];
+    if (expected == '1' || expected == 'f') {
+      int all_match = 1;
+      for (size_t i = 2; i < 41; i++) {
+        if (address[i] != expected) {
+          all_match = 0;
+          break;
+        }
+      }
+      if (all_match) {
+        *out_algo_id = MXD_SIGALG_ED25519;
+        memset(out_addr20, expected == '1' ? 0 : 0xFF, 20);
+        return 0;
+      }
+    }
+  }
+
+  uint8_t decoded[25] = {0};
+  size_t decoded_len = sizeof(decoded);
+  if (base58_decode(address + 2, decoded, &decoded_len) != 0 || decoded_len != 25) {
+    return -1;
+  }
+
+  if (decoded[0] != 0x32 && decoded[0] != 0x33) {
+    return -1;
+  }
+
+  uint8_t hash_buffer[64] = {0};
+  if (mxd_sha512(decoded, 21, hash_buffer) != 0) {
+    return -1;
+  }
+
+  uint8_t temp_buffer[64] = {0};
+  memcpy(temp_buffer, hash_buffer, 64);
+  memset(hash_buffer, 0, 64);
+  if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
+    return -1;
+  }
+
+  if (memcmp(decoded + 21, hash_buffer, 4) != 0) {
+    return -1;
+  }
+
+  *out_algo_id = (decoded[0] == 0x33) ? MXD_SIGALG_DILITHIUM5 : MXD_SIGALG_ED25519;
+  memcpy(out_addr20, decoded + 1, 20);
+
+  return 0;
 }
