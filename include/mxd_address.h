@@ -31,6 +31,11 @@ int mxd_generate_address(const uint8_t public_key[256], char *address,
 // Validate an MXD address format and checksum
 int mxd_validate_address(const char *address);
 
+// Parse an MXD address to extract algo_id and address20
+// Returns 0 on success, -1 on error
+// Version bytes: 0x32 for Ed25519, 0x33 for Dilithium5
+int mxd_parse_address(const char *address, uint8_t *out_algo_id, uint8_t out_addr20[20]);
+
 #ifdef __cplusplus
 }
 #endif
