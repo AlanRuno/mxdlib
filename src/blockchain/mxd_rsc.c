@@ -837,7 +837,7 @@ static struct {
     uint8_t algo_id;
     uint8_t pub[4096];
     size_t len;
-} mxd_pubkey_registry[64];
+} mxd_pubkey_registry[1024];
 
 static size_t mxd_pubkey_registry_count;
 
@@ -850,12 +850,17 @@ int mxd_test_register_validator_pubkey(const uint8_t *validator_id, const uint8_
     }
     
     if (!validator_id || !pub || pub_len == 0 || pub_len > sizeof(mxd_pubkey_registry[0].pub)) return -1;
-    if (mxd_pubkey_registry_count >= 64) return -1;
+    if (mxd_pubkey_registry_count >= 1024) return -1;
     memcpy(mxd_pubkey_registry[mxd_pubkey_registry_count].id, validator_id, 20);
     mxd_pubkey_registry[mxd_pubkey_registry_count].algo_id = algo_id;
     memcpy(mxd_pubkey_registry[mxd_pubkey_registry_count].pub, pub, pub_len);
     mxd_pubkey_registry[mxd_pubkey_registry_count].len = pub_len;
     mxd_pubkey_registry_count++;
+    
+    if (mxd_store_validator_metadata(validator_id, algo_id, pub, pub_len) != 0) {
+        MXD_LOG_WARN("rsc", "Failed to persist validator metadata to RocksDB");
+    }
+    
     return 0;
 }
 
