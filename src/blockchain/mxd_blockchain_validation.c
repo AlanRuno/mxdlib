@@ -33,11 +33,22 @@ int mxd_init_block_with_validation(mxd_block_t *block, const uint8_t prev_hash[6
 }
 
 int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[20],
-                              uint64_t timestamp, const uint8_t *signature, uint16_t signature_length) {
+                              uint64_t timestamp, uint8_t algo_id, const uint8_t *signature, uint16_t signature_length) {
     if (!block || !validator_id || !signature) {
         return -1;
     }
     if (signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
+        return -1;
+    }
+    
+    // Validate algo_id
+    if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
+        return -1;
+    }
+    
+    // Validate signature length matches algorithm
+    size_t expected_sig_len = mxd_sig_signature_len(algo_id);
+    if (signature_length != expected_sig_len) {
         return -1;
     }
 
@@ -56,6 +67,7 @@ int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[2
     mxd_validator_signature_t *sig = &block->validation_chain[block->validation_count];
     memcpy(sig->validator_id, validator_id, 20);
     sig->timestamp = timestamp;
+    sig->algo_id = algo_id;
     sig->signature_length = signature_length;
     memcpy(sig->signature, signature, signature_length);
     sig->chain_position = block->validation_count;
@@ -107,8 +119,10 @@ int mxd_verify_validation_chain(const mxd_block_t *block) {
             return -1;
         }
 
-        uint8_t algo_id;
-        if (mxd_get_validator_algo_id(sig_i->validator_id, &algo_id) != 0) {
+        uint8_t algo_id = sig_i->algo_id;
+        
+        // Validate algo_id
+        if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
             return -1;
         }
 

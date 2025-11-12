@@ -72,6 +72,7 @@ static void mxd_set_default_config(mxd_config_t* config) {
     
     config->enable_upnp = 1;
     config->bootstrap_refresh_interval = 300;
+    config->preferred_sign_algo = 1;
 }
 
 int mxd_load_config(const char* config_file, mxd_config_t* config) {

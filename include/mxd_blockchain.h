@@ -16,6 +16,7 @@ extern "C" {
 typedef struct {
     uint8_t validator_id[20];
     uint64_t timestamp;
+    uint8_t algo_id;
     uint16_t signature_length;
     uint8_t signature[MXD_SIGNATURE_MAX];
     uint32_t chain_position;
@@ -60,7 +61,7 @@ int mxd_add_transaction(mxd_block_t *block, const uint8_t *transaction_data,
                         size_t transaction_length);
 
 int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[20],
-                                uint64_t timestamp, const uint8_t *signature, uint16_t signature_length);
+                                uint64_t timestamp, uint8_t algo_id, const uint8_t *signature, uint16_t signature_length);
 
 int mxd_validate_block(const mxd_block_t *block);
 

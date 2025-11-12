@@ -400,9 +400,23 @@ int mxd_init_validation_context(mxd_validation_context_t *context, const mxd_blo
 }
 
 int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t validator_id[20], 
-                                        uint64_t timestamp, const uint8_t *signature,
+                                        uint64_t timestamp, uint8_t algo_id, const uint8_t *signature,
                                         uint16_t signature_length, uint32_t chain_position) {
     if (!block || !validator_id || !signature || signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
+        return -1;
+    }
+    
+    // Validate algo_id
+    if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
+        MXD_LOG_ERROR("rsc", "Invalid algo_id %u in validator signature", algo_id);
+        return -1;
+    }
+    
+    // Validate signature length matches algorithm
+    size_t expected_sig_len = mxd_sig_signature_len(algo_id);
+    if (signature_length != expected_sig_len) {
+        MXD_LOG_ERROR("rsc", "Signature length %u doesn't match algo_id %u (expected %zu)", 
+                      signature_length, algo_id, expected_sig_len);
         return -1;
     }
     
@@ -438,6 +452,7 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
     mxd_validator_signature_t *sig = &block->validation_chain[block->validation_count];
     memcpy(sig->validator_id, validator_id, 20);
     sig->timestamp = timestamp;
+    sig->algo_id = algo_id;
     sig->signature_length = signature_length;
     memcpy(sig->signature, signature, sig->signature_length);
     sig->chain_position = chain_position;
