@@ -1466,6 +1466,9 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
     
     mxd_genesis_signature_t *sig = &collected_signatures[collected_signature_count];
     memcpy(sig->node_address, signer_address, 20);
+    sig->algo_id = signer_algo_id;
+    memcpy(sig->public_key, signer_pubkey, pubkey_len);
+    sig->public_key_length = (uint16_t)pubkey_len;
     memcpy(sig->signature, signature, signature_length);
     sig->signature_length = signature_length;
     sig->received = 1;
@@ -1541,6 +1544,10 @@ int mxd_try_coordinate_genesis_block(void) {
         
         mxd_genesis_signature_t *self_sig = &collected_signatures[collected_signature_count];
         memcpy(self_sig->node_address, local_genesis_address, 20);
+        self_sig->algo_id = local_genesis_algo_id;
+        size_t local_pubkey_len = mxd_sig_pubkey_len(local_genesis_algo_id);
+        memcpy(self_sig->public_key, local_genesis_pubkey, local_pubkey_len);
+        self_sig->public_key_length = (uint16_t)local_pubkey_len;
         memcpy(self_sig->signature, self_signature, self_sig_len);
         self_sig->signature_length = (uint16_t)self_sig_len;
         self_sig->received = 1;
