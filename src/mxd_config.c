@@ -177,6 +177,13 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
         config->enable_upnp = cJSON_IsTrue(item);
     }
     
+    if ((item = cJSON_GetObjectItem(root, "preferred_sign_algo")) && cJSON_IsNumber(item)) {
+        uint8_t algo = (uint8_t)item->valueint;
+        if (algo == 1 || algo == 2) {
+            config->preferred_sign_algo = algo;
+        }
+    }
+    
     cJSON_Delete(root);
     
     // Validate final configuration

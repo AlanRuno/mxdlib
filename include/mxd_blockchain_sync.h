@@ -23,6 +23,7 @@ int mxd_process_incoming_validation_chain(const uint8_t block_hash[64],
 
 int mxd_verify_and_add_validation_signature(mxd_block_t *block,
                                            const uint8_t validator_id[20],
+                                           uint8_t algo_id,
                                            const uint8_t *signature,
                                            uint16_t signature_length,
                                            uint64_t timestamp);
