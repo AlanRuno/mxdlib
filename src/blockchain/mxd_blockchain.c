@@ -234,14 +234,32 @@ int mxd_calculate_membership_digest(const mxd_block_t *block, uint8_t digest[64]
 
 // Append membership entry to block with validation
 int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[20],
+                                uint8_t algo_id, const uint8_t *public_key, uint16_t public_key_length,
                                 const uint8_t *signature, uint16_t signature_length,
                                 uint64_t timestamp) {
-  if (!block || !node_address || !signature || signature_length == 0) {
+  if (!block || !node_address || !public_key || !signature || signature_length == 0 || public_key_length == 0) {
     return -1;
   }
   
   if (!block->transaction_set_frozen) {
     return -1; // Transaction set must be frozen before accepting membership entries
+  }
+  
+  // Validate algo_id
+  if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
+    return -1; // Invalid algorithm ID
+  }
+  
+  // Validate public_key_length matches algo_id
+  size_t expected_pubkey_len = mxd_sig_pubkey_len(algo_id);
+  if (public_key_length != expected_pubkey_len) {
+    return -1; // Invalid public key length for algorithm
+  }
+  
+  // Validate signature_length matches algo_id
+  size_t expected_sig_len = mxd_sig_signature_len(algo_id);
+  if (signature_length != expected_sig_len) {
+    return -1; // Invalid signature length for algorithm
   }
   
   // Check for duplicate address
@@ -257,27 +275,14 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
     return -1;
   }
   
-  // Get validator public key
-  uint8_t pubkey[4096];
-  size_t pubkey_len = 0;
-  if (mxd_get_validator_public_key(node_address, pubkey, sizeof(pubkey), &pubkey_len) != 0) {
-    return -1; // Public key not registered
-  }
-  
-  // Get validator algorithm ID
-  uint8_t algo_id;
-  if (mxd_get_validator_algo_id(node_address, &algo_id) != 0) {
-    return -1; // Algorithm ID not found
-  }
-  
-  // Verify signature using algorithm-aware verification
-  if (mxd_sig_verify(algo_id, signature, signature_length, digest, 64, pubkey) != 0) {
+  // Verify signature using algorithm-aware verification with provided public key
+  if (mxd_sig_verify(algo_id, signature, signature_length, digest, 64, public_key) != 0) {
     return -1; // Invalid signature
   }
   
   // Verify stake requirement (1% of total supply, or genesis mode)
   if (block->total_supply > 0.0) {
-    double balance = mxd_get_balance(pubkey);
+    double balance = mxd_get_balance(public_key);
     double stake_percentage = (balance / block->total_supply) * 100.0;
     if (stake_percentage < 1.0) {
       return -1; // Insufficient stake
@@ -297,10 +302,13 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
     block->rapid_membership_capacity = new_capacity;
   }
   
-  // Add entry
+  // Add entry with algo_id and public_key
   mxd_rapid_membership_entry_t *entry = &block->rapid_membership_entries[block->rapid_membership_count];
   memcpy(entry->node_address, node_address, 20);
   entry->timestamp = timestamp;
+  entry->algo_id = algo_id;
+  entry->public_key_length = public_key_length;
+  memcpy(entry->public_key, public_key, public_key_length);
   entry->signature_length = signature_length;
   if (signature_length > MXD_SIGNATURE_MAX) {
     return -1; // Signature too large
