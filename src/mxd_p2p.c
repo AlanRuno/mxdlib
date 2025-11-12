@@ -709,7 +709,7 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
     
     handshake->algo_id = node_algo_id;
     size_t pubkey_len = mxd_sig_pubkey_len(node_algo_id);
-    handshake->public_key_length = (uint16_t)pubkey_len;
+    handshake->public_key_length = htons((uint16_t)pubkey_len);
     memcpy(handshake->public_key, node_public_key, pubkey_len);
     
     if (challenge && challenge_len > 0) {
@@ -738,10 +738,10 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
         return -1;
     }
     
-    handshake->signature_length = (uint16_t)sig_len;
+    handshake->signature_length = htons((uint16_t)sig_len);
     
     MXD_LOG_DEBUG("p2p", "Created signed handshake: algo=%s, pubkey_len=%u, sig_len=%u", 
-                  mxd_sig_alg_name(node_algo_id), handshake->public_key_length, handshake->signature_length);
+                  mxd_sig_alg_name(node_algo_id), ntohs(handshake->public_key_length), ntohs(handshake->signature_length));
     return 0;
 }
 
@@ -766,17 +766,19 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
+    uint16_t public_key_length = ntohs(handshake->public_key_length);
     size_t expected_pubkey_len = mxd_sig_pubkey_len(handshake->algo_id);
-    if (handshake->public_key_length != expected_pubkey_len) {
+    if (public_key_length != expected_pubkey_len) {
         MXD_LOG_WARN("p2p", "Invalid pubkey length %u for algo %u from %s:%d (expected %zu)", 
-                   handshake->public_key_length, handshake->algo_id, address, port, expected_pubkey_len);
+                   public_key_length, handshake->algo_id, address, port, expected_pubkey_len);
         return -1;
     }
     
+    uint16_t signature_length = ntohs(handshake->signature_length);
     size_t expected_sig_len = mxd_sig_signature_len(handshake->algo_id);
-    if (handshake->signature_length != expected_sig_len) {
+    if (signature_length != expected_sig_len) {
         MXD_LOG_WARN("p2p", "Invalid signature length %u for algo %u from %s:%d (expected %zu)", 
-                   handshake->signature_length, handshake->algo_id, address, port, expected_sig_len);
+                   signature_length, handshake->algo_id, address, port, expected_sig_len);
         return -1;
     }
     
@@ -787,7 +789,7 @@ static int handle_handshake_message(const char *address, uint16_t port,
     }
     
     uint8_t addr_hash[20];
-    if (mxd_derive_address(handshake->algo_id, handshake->public_key, handshake->public_key_length, addr_hash) != 0) {
+    if (mxd_derive_address(handshake->algo_id, handshake->public_key, public_key_length, addr_hash) != 0) {
         MXD_LOG_WARN("p2p", "Failed to derive address from public key for %s:%d", address, port);
         return -1;
     }
@@ -809,7 +811,7 @@ static int handle_handshake_message(const char *address, uint16_t port,
     message_to_verify[32] = handshake->algo_id;
     memcpy(message_to_verify + 33, addr_hash, 20);
     
-    if (mxd_sig_verify(handshake->algo_id, handshake->signature, handshake->signature_length, 
+    if (mxd_sig_verify(handshake->algo_id, handshake->signature, signature_length, 
                        message_to_verify, 53, handshake->public_key) != 0) {
         MXD_LOG_WARN("p2p", "Signature verification failed for %s:%d (node_id: %s, algo: %s)", 
                    address, port, handshake->node_id, mxd_sig_alg_name(handshake->algo_id));
