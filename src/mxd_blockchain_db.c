@@ -3,6 +3,7 @@
 #include "../include/mxd_blockchain_db.h"
 #include "../include/mxd_rocksdb_globals.h"
 #include "../include/blockchain/mxd_rsc.h"
+#include "../include/mxd_endian.h"
 #include <rocksdb/c.h>
 #include <stdlib.h>
 #include <string.h>
