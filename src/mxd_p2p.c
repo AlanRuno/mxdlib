@@ -773,6 +773,13 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
+    size_t expected_sig_len = mxd_sig_signature_len(handshake->algo_id);
+    if (handshake->signature_length != expected_sig_len) {
+        MXD_LOG_WARN("p2p", "Invalid signature length %u for algo %u from %s:%d (expected %zu)", 
+                   handshake->signature_length, handshake->algo_id, address, port, expected_sig_len);
+        return -1;
+    }
+    
     if (strcmp(handshake->node_id, node_config.node_id) == 0) {
         MXD_LOG_INFO("p2p", "Rejecting self-connection from %s:%d (node_id: %s)", 
                    address, port, handshake->node_id);

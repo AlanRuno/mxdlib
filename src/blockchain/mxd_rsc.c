@@ -840,6 +840,7 @@ static struct {
 } mxd_pubkey_registry[1024];
 
 static size_t mxd_pubkey_registry_count;
+static pthread_mutex_t mxd_pubkey_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int mxd_test_register_validator_pubkey(const uint8_t *validator_id, const uint8_t *pub, size_t pub_len) {
     uint8_t algo_id = MXD_SIGALG_ED25519;
@@ -850,12 +851,21 @@ int mxd_test_register_validator_pubkey(const uint8_t *validator_id, const uint8_
     }
     
     if (!validator_id || !pub || pub_len == 0 || pub_len > sizeof(mxd_pubkey_registry[0].pub)) return -1;
-    if (mxd_pubkey_registry_count >= 1024) return -1;
+    
+    pthread_mutex_lock(&mxd_pubkey_registry_mutex);
+    
+    if (mxd_pubkey_registry_count >= 1024) {
+        pthread_mutex_unlock(&mxd_pubkey_registry_mutex);
+        return -1;
+    }
+    
     memcpy(mxd_pubkey_registry[mxd_pubkey_registry_count].id, validator_id, 20);
     mxd_pubkey_registry[mxd_pubkey_registry_count].algo_id = algo_id;
     memcpy(mxd_pubkey_registry[mxd_pubkey_registry_count].pub, pub, pub_len);
     mxd_pubkey_registry[mxd_pubkey_registry_count].len = pub_len;
     mxd_pubkey_registry_count++;
+    
+    pthread_mutex_unlock(&mxd_pubkey_registry_mutex);
     
     if (mxd_store_validator_metadata(validator_id, algo_id, pub, pub_len) != 0) {
         MXD_LOG_WARN("rsc", "Failed to persist validator metadata to RocksDB");
@@ -865,30 +875,47 @@ int mxd_test_register_validator_pubkey(const uint8_t *validator_id, const uint8_
 }
 
 void mxd_test_clear_validator_pubkeys(void) {
+    pthread_mutex_lock(&mxd_pubkey_registry_mutex);
     mxd_pubkey_registry_count = 0;
+    pthread_mutex_unlock(&mxd_pubkey_registry_mutex);
 }
 
 int mxd_get_validator_public_key(const uint8_t *validator_id, uint8_t *out_key, size_t out_capacity, size_t *out_len) {
     if (!validator_id || !out_key || !out_len) return -1;
+    
+    pthread_mutex_lock(&mxd_pubkey_registry_mutex);
+    
     for (size_t i = 0; i < mxd_pubkey_registry_count; i++) {
         if (memcmp(mxd_pubkey_registry[i].id, validator_id, 20) == 0) {
-            if (out_capacity < mxd_pubkey_registry[i].len) return -1;
+            if (out_capacity < mxd_pubkey_registry[i].len) {
+                pthread_mutex_unlock(&mxd_pubkey_registry_mutex);
+                return -1;
+            }
             memcpy(out_key, mxd_pubkey_registry[i].pub, mxd_pubkey_registry[i].len);
             *out_len = mxd_pubkey_registry[i].len;
+            pthread_mutex_unlock(&mxd_pubkey_registry_mutex);
             return 0;
         }
     }
+    
+    pthread_mutex_unlock(&mxd_pubkey_registry_mutex);
     return -1;
 }
 
 int mxd_get_validator_algo_id(const uint8_t *validator_id, uint8_t *out_algo_id) {
     if (!validator_id || !out_algo_id) return -1;
+    
+    pthread_mutex_lock(&mxd_pubkey_registry_mutex);
+    
     for (size_t i = 0; i < mxd_pubkey_registry_count; i++) {
         if (memcmp(mxd_pubkey_registry[i].id, validator_id, 20) == 0) {
             *out_algo_id = mxd_pubkey_registry[i].algo_id;
+            pthread_mutex_unlock(&mxd_pubkey_registry_mutex);
             return 0;
         }
     }
+    
+    pthread_mutex_unlock(&mxd_pubkey_registry_mutex);
     return -1;
 }
 
@@ -1047,6 +1074,9 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
 
 typedef struct {
     uint8_t node_address[20];
+    uint8_t algo_id;
+    uint8_t public_key[MXD_PUBKEY_MAX_LEN];
+    uint16_t public_key_length;
     uint8_t signature[MXD_SIGNATURE_MAX];
     uint16_t signature_length;
     int received;
@@ -1566,8 +1596,9 @@ int mxd_try_coordinate_genesis_block(void) {
     for (size_t i = 0; i < collected_signature_count && i < 3; i++) {
         mxd_genesis_signature_t *sig = &collected_signatures[i];
         
-        if (mxd_append_membership_entry(&genesis_block, sig->node_address, sig->signature, 
-                                        sig->signature_length, current_time) != 0) {
+        if (mxd_append_membership_entry(&genesis_block, sig->node_address, 
+                                        sig->algo_id, sig->public_key, sig->public_key_length,
+                                        sig->signature, sig->signature_length, current_time) != 0) {
             MXD_LOG_WARN("rsc", "Failed to append membership entry for signature %zu", i);
             continue;
         }

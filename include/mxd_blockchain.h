@@ -24,6 +24,9 @@ typedef struct {
 typedef struct {
     uint8_t node_address[20];
     uint64_t timestamp;
+    uint8_t algo_id;
+    uint16_t public_key_length;
+    uint8_t public_key[2592];  // Max size for Dilithium5
     uint16_t signature_length;
     uint8_t signature[MXD_SIGNATURE_MAX];
 } mxd_rapid_membership_entry_t;
@@ -68,6 +71,7 @@ int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]);
 int mxd_calculate_membership_digest(const mxd_block_t *block, uint8_t digest[64]);
 
 int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[20],
+                                uint8_t algo_id, const uint8_t *public_key, uint16_t public_key_length,
                                 const uint8_t *signature, uint16_t signature_length,
                                 uint64_t timestamp);
 

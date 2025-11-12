@@ -662,7 +662,7 @@ int mxd_store_validator_metadata(const uint8_t validator_id[20], uint8_t algo_id
     }
     
     value[0] = algo_id;
-    uint16_t len_field = (uint16_t)pubkey_len;
+    uint16_t len_field = htons((uint16_t)pubkey_len);
     memcpy(value + 1, &len_field, 2);
     memcpy(value + 3, public_key, pubkey_len);
     
@@ -712,8 +712,9 @@ int mxd_retrieve_validator_metadata(const uint8_t validator_id[20], uint8_t *out
     }
     
     *out_algo_id = (uint8_t)value[0];
-    uint16_t pubkey_len = 0;
-    memcpy(&pubkey_len, value + 1, 2);
+    uint16_t pubkey_len_net = 0;
+    memcpy(&pubkey_len_net, value + 1, 2);
+    uint16_t pubkey_len = ntohs(pubkey_len_net);
     
     if (pubkey_len > out_capacity || value_len < 3 + pubkey_len) {
         free(value);
@@ -765,8 +766,9 @@ int mxd_load_all_validator_metadata(void) {
         memcpy(validator_id, key + 10, 20);
         
         uint8_t algo_id = (uint8_t)value[0];
-        uint16_t pubkey_len = 0;
-        memcpy(&pubkey_len, value + 1, 2);
+        uint16_t pubkey_len_net = 0;
+        memcpy(&pubkey_len_net, value + 1, 2);
+        uint16_t pubkey_len = ntohs(pubkey_len_net);
         
         if (value_len < 3 + pubkey_len) {
             continue;
