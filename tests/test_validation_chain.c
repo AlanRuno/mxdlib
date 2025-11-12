@@ -61,7 +61,7 @@ static int add_validator_signatures(mxd_block_t *block, int count) {
             signature[j] = j + i;
         }
         
-        if (mxd_add_validator_signature(block, validator_id, time(NULL), signature, 128) != 0) {
+        if (mxd_add_validator_signature(block, validator_id, time(NULL), 1, signature, 128) != 0) {
             printf("Failed to add validator signature %d\n", i);
             return -1;
         }
