@@ -699,6 +699,10 @@ static void handle_pong_message(const char *address, uint16_t port) {
     pthread_mutex_unlock(&peer_mutex);
 }
 
+static inline size_t handshake_wire_size(void) {
+    return 256 + 4 + 2 + 1 + 2 + MXD_PUBKEY_MAX_LEN + 32 + 2 + MXD_SIG_MAX_LEN;
+}
+
 static size_t handshake_to_wire(const mxd_handshake_payload_t *handshake, uint8_t *buf, size_t buf_len) {
     if (!handshake || !buf) return 0;
     
