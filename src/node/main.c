@@ -329,7 +329,11 @@ int main(int argc, char** argv) {
     mxd_set_message_handler(mxd_genesis_message_handler);
     MXD_LOG_INFO("node", "Genesis message handler registered");
     
-    uint8_t algo_id = algo_specified ? override_algo_id : MXD_SIGALG_ED25519;
+    uint8_t algo_id = algo_specified ? override_algo_id : 
+                      (current_config.preferred_sign_algo ? current_config.preferred_sign_algo : MXD_SIGALG_ED25519);
+    MXD_LOG_INFO("node", "Using signature algorithm: %s (source: %s)", 
+                 mxd_sig_alg_name(algo_id),
+                 algo_specified ? "CLI" : (current_config.preferred_sign_algo ? "config" : "default"));
     uint8_t node_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
     uint8_t node_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
     uint8_t node_address[20] = {0};

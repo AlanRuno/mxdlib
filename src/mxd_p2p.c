@@ -73,6 +73,7 @@ typedef struct {
     uint32_t messages_sent;
     uint32_t messages_received;
     int active;
+    uint8_t algo_id;  // Peer's signature algorithm (for diagnostics/display)
 } unified_peer_t;
 
 static unified_peer_t unified_peers[MXD_MAX_PEERS];
@@ -293,6 +294,7 @@ static void update_unified_peer_sent(const char *address, uint16_t port) {
             unified_peers[slot].messages_sent = 1;
             unified_peers[slot].messages_received = 0;
             unified_peers[slot].active = 1;
+            unified_peers[slot].algo_id = 0;
             
             if (inactive_slot < 0) {
                 unified_peer_count++;
@@ -334,10 +336,24 @@ static void update_unified_peer_received(const char *address, uint16_t port) {
             unified_peers[slot].messages_sent = 0;
             unified_peers[slot].messages_received = 1;
             unified_peers[slot].active = 1;
+            unified_peers[slot].algo_id = 0;
             
             if (inactive_slot < 0) {
                 unified_peer_count++;
             }
+        }
+    }
+    
+    pthread_mutex_unlock(&unified_peer_mutex);
+}
+
+static void update_unified_peer_algo(const char *address, uint16_t port, uint8_t algo_id) {
+    pthread_mutex_lock(&unified_peer_mutex);
+    
+    for (size_t i = 0; i < unified_peer_count; i++) {
+        if (strcmp(unified_peers[i].address, address) == 0 && unified_peers[i].port == port) {
+            unified_peers[i].algo_id = algo_id;
+            break;
         }
     }
     
@@ -969,6 +985,8 @@ static int handle_handshake_message(const char *address, uint16_t port,
         MXD_LOG_INFO("p2p", "Added peer %s:%d to DHT after handshake", 
                    address, handshake.listen_port);
     }
+    
+    update_unified_peer_algo(address, handshake.listen_port, handshake.algo_id);
     
     return 0;
 }

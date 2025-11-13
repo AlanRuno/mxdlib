@@ -15,16 +15,20 @@ int mxd_generate_passphrase(char *output, size_t max_length);
 int mxd_derive_property_key(const char *passphrase, const char *pin,
                             uint8_t property_key[64]);
 
-// Generate public/private key pair from property key (Ed25519 only, deprecated)
+// DEPRECATED: Generate public/private key pair from property key (Ed25519 only)
 // Use mxd_sig_keygen() for algorithm-aware key generation
+// This function is deprecated and should only be used in legacy code or tests
+__attribute__((deprecated("Use mxd_sig_keygen() for algorithm-aware key generation")))
 int mxd_generate_keypair(const uint8_t property_key[64],
                          uint8_t public_key[32], uint8_t private_key[64]);
 
-// V2 algo-aware address generation
+// V2 algo-aware address generation (RECOMMENDED)
 int mxd_address_to_string_v2(uint8_t algo_id, const uint8_t *public_key, size_t pubkey_len, 
                               char *address, size_t max_length);
 
-// Generate MXD address from public key (legacy - wraps v2 with Ed25519 default)
+// DEPRECATED: Generate MXD address from public key (legacy - wraps v2 with Ed25519 default)
+// Use mxd_address_to_string_v2() for algorithm-aware address generation
+__attribute__((deprecated("Use mxd_address_to_string_v2() for algorithm-aware address generation")))
 int mxd_generate_address(const uint8_t public_key[256], char *address,
                          size_t max_length);
 
