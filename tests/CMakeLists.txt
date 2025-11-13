@@ -350,3 +350,18 @@ target_link_libraries(mxd_dilithium5_comprehensive_test
 
 add_test(NAME dilithium5_comprehensive_tests COMMAND mxd_dilithium5_comprehensive_test)
 set_tests_properties(dilithium5_comprehensive_tests PROPERTIES TIMEOUT 120 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=0")
+
+# Mixed algorithms integration test
+add_executable(mxd_mixed_algorithms_test
+    test_mixed_algorithms.c
+)
+
+target_link_libraries(mxd_mixed_algorithms_test
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME mixed_algorithms_tests COMMAND mxd_mixed_algorithms_test)
+set_tests_properties(mixed_algorithms_tests PROPERTIES TIMEOUT 120 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=0")
