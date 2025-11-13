@@ -20,7 +20,7 @@ int base58_encode(const uint8_t *data, size_t data_len, char *output,
   char *out_ptr = output;
   size_t remaining_length = max_length;
 
-  if (data_len == 25 && data[0] == 0x32) {
+  if (data_len == 25 && (data[0] == 0x32 || data[0] == 0x33)) {
     if (max_length < 42)
       return -1;
     out_ptr[0] = 'm';
