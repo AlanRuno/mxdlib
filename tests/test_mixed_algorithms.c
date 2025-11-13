@@ -87,16 +87,19 @@ void test_mixed_address_generation(void) {
     
     assert(strcmp(ed25519_address, dilithium5_address) != 0);
     
-    assert(ed25519_address[0] == '2');
-    assert(dilithium5_address[0] == '3');
-    
     uint8_t parsed_algo_id;
     uint8_t parsed_addr20[20];
+    uint8_t expected_addr20[20];
+    
     assert(mxd_parse_address(ed25519_address, &parsed_algo_id, parsed_addr20) == 0);
     assert(parsed_algo_id == MXD_SIGALG_ED25519);
+    assert(mxd_derive_address(MXD_SIGALG_ED25519, ed25519_pubkey, ed25519_pubkey_len, expected_addr20) == 0);
+    assert(memcmp(parsed_addr20, expected_addr20, 20) == 0);
     
     assert(mxd_parse_address(dilithium5_address, &parsed_algo_id, parsed_addr20) == 0);
     assert(parsed_algo_id == MXD_SIGALG_DILITHIUM5);
+    assert(mxd_derive_address(MXD_SIGALG_DILITHIUM5, dilithium5_pubkey, dilithium5_pubkey_len, expected_addr20) == 0);
+    assert(memcmp(parsed_addr20, expected_addr20, 20) == 0);
     
     TEST_END();
 }
