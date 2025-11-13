@@ -17,6 +17,7 @@ typedef struct {
     char node_data[1024];      // Custom node data
     int enable_upnp;           // Enable UPnP port mapping (1=enabled, 0=disabled)
     int bootstrap_refresh_interval;  // Seconds between bootstrap list refreshes (from network_info.update_interval)
+    uint8_t preferred_sign_algo;     // Preferred signature algorithm (1=Ed25519, 2=Dilithium5)
 } mxd_config_t;
 
 // Load configuration from file or use built-in defaults.

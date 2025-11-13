@@ -73,6 +73,7 @@ int mxd_process_incoming_validation_chain(const uint8_t block_hash[64],
     for (uint32_t i = 0; i < signature_count; i++) {
         if (mxd_verify_and_add_validation_signature(&block,
                                                   signatures[i].validator_id,
+                                                  signatures[i].algo_id,
                                                   signatures[i].signature,
                                                   signatures[i].signature_length,
                                                   signatures[i].timestamp) != 0) {
@@ -94,10 +95,16 @@ int mxd_process_incoming_validation_chain(const uint8_t block_hash[64],
 
 int mxd_verify_and_add_validation_signature(mxd_block_t *block, 
                                            const uint8_t validator_id[20],
+                                           uint8_t algo_id,
                                            const uint8_t *signature,
                                            uint16_t signature_length,
                                            uint64_t timestamp) {
     if (!block || !validator_id || !signature || signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) return -1;
+    
+    if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
+        MXD_LOG_WARN("sync", "Invalid algo_id %u", algo_id);
+        return -1;
+    }
     
     uint64_t current_time = time(NULL);
     uint64_t drift = (timestamp > current_time) ? 
@@ -119,7 +126,7 @@ int mxd_verify_and_add_validation_signature(mxd_block_t *block,
         return -1;
     }
     
-    if (mxd_add_validator_signature(block, validator_id, timestamp, signature, signature_length) != 0) {
+    if (mxd_add_validator_signature(block, validator_id, timestamp, algo_id, signature, signature_length) != 0) {
         MXD_LOG_ERROR("sync", "Failed to add validator signature to block");
         return -1;
     }

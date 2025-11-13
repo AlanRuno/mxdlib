@@ -73,7 +73,7 @@ int mxd_init_validation_context(mxd_validation_context_t *context, const mxd_blo
                                const mxd_rapid_table_t *table);
 
 int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t validator_id[20],
-                                        uint64_t timestamp, const uint8_t *signature,
+                                        uint64_t timestamp, uint8_t algo_id, const uint8_t *signature,
                                         uint16_t signature_length, uint32_t chain_position);
 
 int mxd_verify_validation_chain_integrity(const mxd_block_t *block);
