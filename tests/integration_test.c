@@ -91,14 +91,14 @@ static void test_node_lifecycle(void) {
     // Test P2P network setup
     uint64_t start_time = get_current_time_ms();
     for (size_t i = 0; i < TEST_NODE_COUNT; i++) {
-        uint16_t port = 12345 + i;
+        uint16_t port = 13200 + i;
         TEST_ASSERT(test_init_p2p_ed25519(port, node_public_keys[i], node_private_keys[i]) == 0,
                    "P2P initialization");
         TEST_ASSERT(mxd_start_p2p() == 0, "P2P startup");
         
         // Connect to previous nodes
         for (size_t j = 0; j < i; j++) {
-            TEST_ASSERT(mxd_add_peer("127.0.0.1", 12345 + j) == 0,
+            TEST_ASSERT(mxd_add_peer("127.0.0.1", 13200 + j) == 0,
                        "Peer connection");
         }
         

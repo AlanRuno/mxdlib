@@ -7,8 +7,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#define TEST_PORT_1 12345
-#define TEST_PORT_2 12346
+#define TEST_PORT_1 13100
+#define TEST_PORT_2 13101
 #define MAX_LATENCY_MS 3000  // 3 second maximum latency requirement
 #define MIN_TX_RATE 10       // Minimum 10 transactions per second
 
