@@ -1111,10 +1111,18 @@ static size_t collected_signature_count = 0;
 static uint8_t pending_genesis_digest[64] = {0};
 static int genesis_sign_request_sent = 0;
 
-int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey) {
+int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey, uint8_t algo_id) {
     if (!local_address || !local_pubkey || !local_privkey) {
         return -1;
     }
+    
+    // Validate algo_id
+    if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
+        MXD_LOG_ERROR("rsc", "Invalid algo_id %u for genesis coordination", algo_id);
+        return -1;
+    }
+    
+    local_genesis_algo_id = algo_id;
     
     size_t pubkey_len = mxd_sig_pubkey_len(local_genesis_algo_id);
     size_t privkey_len = mxd_sig_privkey_len(local_genesis_algo_id);

@@ -509,9 +509,13 @@ const char* mxd_handle_wallet_balance(const char* address) {
     pthread_mutex_lock(&wallet_mutex);
     
     uint8_t* public_key = NULL;
+    uint8_t algo_id = 0;
+    uint16_t public_key_length = 0;
     for (size_t i = 0; i < wallet.keypair_count; i++) {
         if (strcmp(wallet.keypairs[i].address, address) == 0) {
             public_key = wallet.keypairs[i].public_key;
+            algo_id = wallet.keypairs[i].algo_id;
+            public_key_length = wallet.keypairs[i].public_key_length;
             break;
         }
     }
@@ -524,7 +528,14 @@ const char* mxd_handle_wallet_balance(const char* address) {
         return wallet_response_buffer;
     }
     
-    double balance = mxd_get_balance(public_key);
+    uint8_t addr20[20];
+    if (mxd_derive_address(algo_id, public_key, public_key_length, addr20) != 0) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Failed to derive address\"}");
+        return wallet_response_buffer;
+    }
+    
+    double balance = mxd_get_balance(addr20);
     
     snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
         "{\"success\":true,\"balance\":%.8f}", balance);

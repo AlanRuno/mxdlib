@@ -10,6 +10,8 @@
 #include "../include/mxd_rocksdb_globals.h"
 
 static rocksdb_options_t *options = NULL;
+static rocksdb_cache_t *block_cache = NULL;
+static rocksdb_block_based_table_options_t *table_options = NULL;
 static char *db_path_global = NULL;
 
 static size_t utxo_count = 0;
@@ -227,9 +229,9 @@ int mxd_init_utxo_db(const char *db_path) {
                  write_buffer_size / (1024*1024), max_write_buffer_number, block_cache_size / (1024*1024),
                  (write_buffer_size * max_write_buffer_number + block_cache_size) / (1024*1024));
     
-    rocksdb_cache_t *cache = rocksdb_cache_create_lru(block_cache_size);
-    rocksdb_block_based_table_options_t *table_options = rocksdb_block_based_options_create();
-    rocksdb_block_based_options_set_block_cache(table_options, cache);
+    block_cache = rocksdb_cache_create_lru(block_cache_size);
+    table_options = rocksdb_block_based_options_create();
+    rocksdb_block_based_options_set_block_cache(table_options, block_cache);
     rocksdb_options_set_block_based_table_factory(options, table_options);
     
     rocksdb_readoptions_set_verify_checksums(readoptions, 1);
@@ -560,6 +562,16 @@ int mxd_close_utxo_db(void) {
     
     rocksdb_close(mxd_get_rocksdb_db());
     mxd_set_rocksdb_db(NULL);
+    
+    if (table_options) {
+        rocksdb_block_based_options_destroy(table_options);
+        table_options = NULL;
+    }
+    
+    if (block_cache) {
+        rocksdb_cache_destroy(block_cache);
+        block_cache = NULL;
+    }
     
     rocksdb_options_destroy(options);
     rocksdb_readoptions_destroy(mxd_get_rocksdb_readoptions());
