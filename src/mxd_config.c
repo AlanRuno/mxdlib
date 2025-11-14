@@ -288,8 +288,52 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
                     address,
                     port_num);
             
+            mxd_bootstrap_node_t* node_v2 = &config->bootstrap_nodes_v2[config->bootstrap_count];
+            memset(node_v2, 0, sizeof(mxd_bootstrap_node_t));
+            
+            snprintf(node_v2->address, sizeof(node_v2->address), "%s", address);
+            node_v2->port = (uint16_t)port_num;
+            
+            cJSON* algo_id_json = cJSON_GetObjectItem(node, "algo_id");
+            cJSON* public_key_json = cJSON_GetObjectItem(node, "public_key");
+            cJSON* address20_json = cJSON_GetObjectItem(node, "address");
+            
+            if (algo_id_json && cJSON_IsNumber(algo_id_json)) {
+                node_v2->algo_id = (uint8_t)algo_id_json->valueint;
+                
+                // Validate algo_id
+                if (node_v2->algo_id != 1 && node_v2->algo_id != 2) {
+                    MXD_LOG_WARN("config", "Bootstrap node %s:%d has invalid algo_id %u, ignoring crypto metadata",
+                                address, port_num, node_v2->algo_id);
+                    node_v2->algo_id = 0;
+                    node_v2->has_crypto_info = 0;
+                } else if (public_key_json && cJSON_IsString(public_key_json)) {
+                    const char* pubkey_b64 = public_key_json->valuestring;
+                    size_t decoded_len = 0;
+                    
+                    MXD_LOG_INFO("config", "Bootstrap node %s:%d has algo_id=%u and public_key (crypto metadata available)",
+                                address, port_num, node_v2->algo_id);
+                    node_v2->has_crypto_info = 1;
+                    
+                    if (address20_json && cJSON_IsString(address20_json)) {
+                        MXD_LOG_DEBUG("config", "Bootstrap node %s:%d has address20 for validation",
+                                    address, port_num);
+                    }
+                } else {
+                    MXD_LOG_DEBUG("config", "Bootstrap node %s:%d has algo_id but no public_key",
+                                address, port_num);
+                    node_v2->has_crypto_info = 0;
+                }
+            } else {
+                node_v2->algo_id = 0;
+                node_v2->has_crypto_info = 0;
+                MXD_LOG_DEBUG("config", "Bootstrap node %s:%d has no crypto metadata (will authenticate via P2P handshake)",
+                            address, port_num);
+            }
+            
             config->bootstrap_count++;
-            MXD_LOG_INFO("config", "Added bootstrap node %s:%d", address, port_num);
+            MXD_LOG_INFO("config", "Added bootstrap node %s:%d%s", address, port_num,
+                        node_v2->has_crypto_info ? " (with crypto metadata)" : "");
             if (config->bootstrap_count >= 10) break;
         }
     }
