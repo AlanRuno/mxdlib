@@ -882,14 +882,32 @@ int mxd_save_wallet_to_file(const char* filepath) {
     char* json_str = cJSON_Print(root);
     cJSON_Delete(root);
     
-    FILE* fp = fopen(filepath, "w");
+    if (!json_str) {
+        pthread_mutex_unlock(&wallet_mutex);
+        MXD_LOG_ERROR("wallet", "Failed to serialize wallet to JSON");
+        return -2;
+    }
+    
+    FILE* fp = fopen(filepath, "wb");
     if (!fp) {
         pthread_mutex_unlock(&wallet_mutex);
         free(json_str);
+        MXD_LOG_ERROR("wallet", "Failed to open wallet file '%s' for writing", filepath);
         return -1;
     }
     
-    fprintf(fp, "%s", json_str);
+    if (fputs(json_str, fp) == EOF) {
+        fclose(fp);
+        free(json_str);
+        pthread_mutex_unlock(&wallet_mutex);
+        MXD_LOG_ERROR("wallet", "Failed to write wallet data to '%s'", filepath);
+        return -3;
+    }
+    
+    if (fflush(fp) != 0) {
+        MXD_LOG_WARN("wallet", "fflush failed for '%s'", filepath);
+    }
+    
     fclose(fp);
     free(json_str);
     
