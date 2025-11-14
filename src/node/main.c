@@ -27,6 +27,37 @@ extern void mxd_genesis_message_handler(const char *address, uint16_t port,
                                         const void *payload,
                                         size_t payload_length);
 
+extern void mxd_validation_message_handler(const char *address, uint16_t port,
+                                           mxd_message_type_t type,
+                                           const void *payload,
+                                           size_t payload_length);
+
+static void mxd_message_multiplexer(const char *address, uint16_t port,
+                                     mxd_message_type_t type,
+                                     const void *payload,
+                                     size_t payload_length) {
+    switch (type) {
+        case MXD_MSG_GENESIS_ANNOUNCE:
+        case MXD_MSG_GENESIS_SIGN_REQUEST:
+        case MXD_MSG_GENESIS_SIGN_RESPONSE:
+            mxd_genesis_message_handler(address, port, type, payload, payload_length);
+            break;
+        
+        case MXD_MSG_VALIDATION_SIGNATURE:
+        case MXD_MSG_VALIDATION_CHAIN:
+        case MXD_MSG_GET_VALIDATION_CHAIN:
+        case MXD_MSG_BLOCKS:
+        case MXD_MSG_GET_BLOCKS:
+        case MXD_MSG_BLOCK_VALIDATION:
+            mxd_validation_message_handler(address, port, type, payload, payload_length);
+            break;
+        
+        default:
+            MXD_LOG_WARN("node", "Unhandled message type: %d from %s:%u", type, address, port);
+            break;
+    }
+}
+
 static volatile int keep_running = 1;
 static mxd_config_t current_config;
 static mxd_node_metrics_t node_metrics;
@@ -326,8 +357,8 @@ int main(int argc, char** argv) {
         }
     }
     
-    mxd_set_message_handler(mxd_genesis_message_handler);
-    MXD_LOG_INFO("node", "Genesis message handler registered");
+    mxd_set_message_handler(mxd_message_multiplexer);
+    MXD_LOG_INFO("node", "Message multiplexer registered (genesis + validation handlers)");
     
     uint8_t algo_id = algo_specified ? override_algo_id : 
                       (current_config.preferred_sign_algo ? current_config.preferred_sign_algo : MXD_SIGALG_ED25519);

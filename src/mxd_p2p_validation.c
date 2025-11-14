@@ -7,6 +7,7 @@
 #include "mxd_crypto.h"
 #include "mxd_p2p.h"
 #include "mxd_rsc.h"
+#include "mxd_endian.h"
 
 int mxd_should_relay_block(const mxd_block_t *block, int just_signed) {
     if (!block) return 0;
@@ -71,36 +72,47 @@ int mxd_relay_block_by_validation_count(const void *block_data, size_t block_len
 }
 
 int mxd_send_validation_signature(const char *address, uint16_t port,
-                                 const uint8_t *block_hash, const uint8_t *signature,
+                                 const uint8_t *block_hash, uint8_t algo_id,
+                                 const uint8_t *validator_id, const uint8_t *signature,
                                  uint16_t signature_length, uint32_t chain_position) {
-    if (!address || !block_hash || !signature) {
+    if (!address || !block_hash || !validator_id || !signature) {
         return -1;
     }
     if (signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
         return -1;
     }
     
-    size_t msg_len = 64 + sizeof(uint16_t) + signature_length + sizeof(uint32_t) + sizeof(uint64_t);
+    size_t msg_len = 64 + 1 + 20 + sizeof(uint16_t) + signature_length + sizeof(uint32_t) + sizeof(uint64_t);
     uint8_t *validation_msg = malloc(msg_len);
     if (!validation_msg) {
         return -1;
     }
     
     uint8_t *ptr = validation_msg;
+    
     memcpy(ptr, block_hash, 64);
     ptr += 64;
     
-    memcpy(ptr, &signature_length, sizeof(uint16_t));
+    *ptr = algo_id;
+    ptr += 1;
+    
+    memcpy(ptr, validator_id, 20);
+    ptr += 20;
+    
+    uint16_t sig_len_net = htons(signature_length);
+    memcpy(ptr, &sig_len_net, sizeof(uint16_t));
     ptr += sizeof(uint16_t);
     
     memcpy(ptr, signature, signature_length);
     ptr += signature_length;
     
-    memcpy(ptr, &chain_position, sizeof(uint32_t));
+    uint32_t chain_pos_net = htonl(chain_position);
+    memcpy(ptr, &chain_pos_net, sizeof(uint32_t));
     ptr += sizeof(uint32_t);
     
     uint64_t timestamp = time(NULL);
-    memcpy(ptr, &timestamp, sizeof(uint64_t));
+    uint64_t timestamp_net = mxd_htonll(timestamp);
+    memcpy(ptr, &timestamp_net, sizeof(uint64_t));
     
     int result = mxd_send_message(address, port, MXD_MSG_VALIDATION_SIGNATURE, 
                                   validation_msg, msg_len);
