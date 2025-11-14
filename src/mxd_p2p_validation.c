@@ -7,6 +7,7 @@
 #include "mxd_crypto.h"
 #include "mxd_p2p.h"
 #include "mxd_rsc.h"
+#include "mxd_endian.h"
 
 int mxd_should_relay_block(const mxd_block_t *block, int just_signed) {
     if (!block) return 0;
@@ -98,17 +99,20 @@ int mxd_send_validation_signature(const char *address, uint16_t port,
     memcpy(ptr, validator_id, 20);
     ptr += 20;
     
-    memcpy(ptr, &signature_length, sizeof(uint16_t));
+    uint16_t sig_len_net = htons(signature_length);
+    memcpy(ptr, &sig_len_net, sizeof(uint16_t));
     ptr += sizeof(uint16_t);
     
     memcpy(ptr, signature, signature_length);
     ptr += signature_length;
     
-    memcpy(ptr, &chain_position, sizeof(uint32_t));
+    uint32_t chain_pos_net = htonl(chain_position);
+    memcpy(ptr, &chain_pos_net, sizeof(uint32_t));
     ptr += sizeof(uint32_t);
     
     uint64_t timestamp = time(NULL);
-    memcpy(ptr, &timestamp, sizeof(uint64_t));
+    uint64_t timestamp_net = mxd_htonll(timestamp);
+    memcpy(ptr, &timestamp_net, sizeof(uint64_t));
     
     int result = mxd_send_message(address, port, MXD_MSG_VALIDATION_SIGNATURE, 
                                   validation_msg, msg_len);

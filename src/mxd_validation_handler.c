@@ -44,15 +44,17 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             const uint8_t *signature = data + offset;
             offset += sig_len;
             
-            uint32_t chain_position;
-            memcpy(&chain_position, data + offset, 4);
+            uint32_t chain_pos_net;
+            memcpy(&chain_pos_net, data + offset, 4);
+            uint32_t chain_position = ntohl(chain_pos_net);
             offset += 4;
             
-            uint64_t timestamp;
-            memcpy(&timestamp, data + offset, 8);
+            uint64_t timestamp_net;
+            memcpy(&timestamp_net, data + offset, 8);
+            uint64_t timestamp = mxd_ntohll(timestamp_net);
             
-            MXD_LOG_INFO("validation", "Received validation signature: algo_id=%u, sig_len=%u, chain_pos=%u, timestamp=%lu",
-                         algo_id, sig_len, chain_position, timestamp);
+            MXD_LOG_INFO("validation", "Received validation signature: algo_id=%u, sig_len=%u, chain_pos=%u, timestamp=%llu",
+                         algo_id, sig_len, chain_position, (unsigned long long)timestamp);
             
             break;
         }
