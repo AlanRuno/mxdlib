@@ -282,7 +282,11 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
   
   // Verify stake requirement (1% of total supply, or genesis mode)
   if (block->total_supply > 0.0) {
-    double balance = mxd_get_balance(public_key);
+    uint8_t addr20[20];
+    if (mxd_derive_address(algo_id, public_key, public_key_length, addr20) != 0) {
+      return -1; // Failed to derive address
+    }
+    double balance = mxd_get_balance(addr20);
     double stake_percentage = (balance / block->total_supply) * 100.0;
     if (stake_percentage < 1.0) {
       return -1; // Insufficient stake
