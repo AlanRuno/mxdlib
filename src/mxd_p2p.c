@@ -883,9 +883,11 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
 static int handle_handshake_message(const char *address, uint16_t port, 
                                      const void *payload, size_t length,
                                      peer_connection_t *conn) {
-    if (!payload || length < handshake_wire_size()) {
-        MXD_LOG_WARN("p2p", "Invalid HANDSHAKE payload from %s:%d (length=%zu, expected=%zu)", 
-                     address, port, length, handshake_wire_size());
+    // Check minimum size (fixed fields before variable-length data)
+    size_t min_size = 256 + 4 + 2 + 1 + 2 + 32 + 2; // All fixed fields + length fields
+    if (!payload || length < min_size) {
+        MXD_LOG_WARN("p2p", "Invalid HANDSHAKE payload from %s:%d (length=%zu, minimum=%zu)", 
+                     address, port, length, min_size);
         return -1;
     }
     
