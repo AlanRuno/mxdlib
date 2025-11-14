@@ -14,7 +14,7 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
     
     switch (type) {
         case MXD_MSG_VALIDATION_SIGNATURE: {
-            if (payload_length < 64 + 2) {
+            if (payload_length < 64 + 1 + 20 + 2) {
                 MXD_LOG_WARN("validation", "Invalid VALIDATION_SIGNATURE message size: %zu", payload_length);
                 return;
             }
@@ -24,6 +24,12 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             
             const uint8_t *block_hash = data + offset;
             offset += 64;
+            
+            uint8_t algo_id = data[offset];
+            offset += 1;
+            
+            const uint8_t *validator_id = data + offset;
+            offset += 20;
             
             uint16_t sig_len_net;
             memcpy(&sig_len_net, data + offset, 2);
@@ -45,8 +51,8 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             uint64_t timestamp;
             memcpy(&timestamp, data + offset, 8);
             
-            MXD_LOG_INFO("validation", "Received validation signature: sig_len=%u, chain_pos=%u, timestamp=%lu",
-                         sig_len, chain_position, timestamp);
+            MXD_LOG_INFO("validation", "Received validation signature: algo_id=%u, sig_len=%u, chain_pos=%u, timestamp=%lu",
+                         algo_id, sig_len, chain_position, timestamp);
             
             break;
         }

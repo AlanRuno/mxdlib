@@ -71,24 +71,32 @@ int mxd_relay_block_by_validation_count(const void *block_data, size_t block_len
 }
 
 int mxd_send_validation_signature(const char *address, uint16_t port,
-                                 const uint8_t *block_hash, const uint8_t *signature,
+                                 const uint8_t *block_hash, uint8_t algo_id,
+                                 const uint8_t *validator_id, const uint8_t *signature,
                                  uint16_t signature_length, uint32_t chain_position) {
-    if (!address || !block_hash || !signature) {
+    if (!address || !block_hash || !validator_id || !signature) {
         return -1;
     }
     if (signature_length == 0 || signature_length > MXD_SIGNATURE_MAX) {
         return -1;
     }
     
-    size_t msg_len = 64 + sizeof(uint16_t) + signature_length + sizeof(uint32_t) + sizeof(uint64_t);
+    size_t msg_len = 64 + 1 + 20 + sizeof(uint16_t) + signature_length + sizeof(uint32_t) + sizeof(uint64_t);
     uint8_t *validation_msg = malloc(msg_len);
     if (!validation_msg) {
         return -1;
     }
     
     uint8_t *ptr = validation_msg;
+    
     memcpy(ptr, block_hash, 64);
     ptr += 64;
+    
+    *ptr = algo_id;
+    ptr += 1;
+    
+    memcpy(ptr, validator_id, 20);
+    ptr += 20;
     
     memcpy(ptr, &signature_length, sizeof(uint16_t));
     ptr += sizeof(uint16_t);
