@@ -417,10 +417,16 @@ const char* mxd_get_wallet_html(void) {
     return wallet_html;
 }
 
-const char* mxd_handle_wallet_generate(void) {
+const char* mxd_handle_wallet_generate_with_algo(uint8_t algo_id) {
     if (!wallet_initialized) {
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Wallet not initialized\"}");
+        return wallet_response_buffer;
+    }
+    
+    if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Invalid algorithm. Use 'ed25519' or 'dilithium5'\"}");
         return wallet_response_buffer;
     }
     
@@ -439,7 +445,6 @@ const char* mxd_handle_wallet_generate(void) {
     uint8_t private_key[MXD_PRIVKEY_MAX_LEN];
     char address[64];
     char passphrase[256];
-    uint8_t algo_id = MXD_SIGALG_ED25519;
     
     if (mxd_generate_passphrase(passphrase, sizeof(passphrase)) != 0) {
         pthread_mutex_unlock(&wallet_mutex);
@@ -488,9 +493,14 @@ const char* mxd_handle_wallet_generate(void) {
     
     pthread_mutex_unlock(&wallet_mutex);
     
+    const char* algo_name = (algo_id == MXD_SIGALG_ED25519) ? "ed25519" : "dilithium5";
     snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
-        "{\"success\":true,\"address\":\"%s\"}", address);
+        "{\"success\":true,\"address\":\"%s\",\"algo\":\"%s\"}", address, algo_name);
     return wallet_response_buffer;
+}
+
+const char* mxd_handle_wallet_generate(void) {
+    return mxd_handle_wallet_generate_with_algo(MXD_SIGALG_ED25519);
 }
 
 const char* mxd_handle_wallet_balance(const char* address) {
@@ -667,8 +677,17 @@ static void handle_http_request(int client_socket) {
             status_code = 200;
         }
     } else if (strcmp(method, "POST") == 0) {
-        if (strcmp(path, "/wallet/generate") == 0) {
-            response_body = mxd_handle_wallet_generate();
+        if (strcmp(path, "/wallet/generate") == 0 || strncmp(path, "/wallet/generate?", 17) == 0) {
+            uint8_t algo_id = MXD_SIGALG_ED25519; // Default
+            if (strncmp(path, "/wallet/generate?algo=", 22) == 0) {
+                char* algo_str = path + 22;
+                if (strncmp(algo_str, "dilithium5", 10) == 0) {
+                    algo_id = MXD_SIGALG_DILITHIUM5;
+                } else if (strncmp(algo_str, "ed25519", 7) == 0) {
+                    algo_id = MXD_SIGALG_ED25519;
+                }
+            }
+            response_body = mxd_handle_wallet_generate_with_algo(algo_id);
             content_type = "application/json";
             status_code = 200;
         } else if (strcmp(path, "/wallet/send") == 0) {
