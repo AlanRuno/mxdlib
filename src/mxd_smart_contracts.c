@@ -205,17 +205,19 @@ int mxd_get_contract_storage(const mxd_contract_state_t *state,
     return -1;
   }
 
-  // Simple key-value storage implementation
+  // Simple key-value storage implementation (use memcpy to avoid misaligned access)
   // TODO: Implement proper storage with merkle trees
   size_t offset = 0;
   while (offset < state->storage_size) {
-    size_t stored_key_size = *(size_t *)(state->storage + offset);
+    size_t stored_key_size;
+    memcpy(&stored_key_size, state->storage + offset, sizeof(size_t));
     offset += sizeof(size_t);
 
     if (stored_key_size == key_size &&
         memcmp(state->storage + offset, key, key_size) == 0) {
       offset += stored_key_size;
-      size_t stored_value_size = *(size_t *)(state->storage + offset);
+      size_t stored_value_size;
+      memcpy(&stored_value_size, state->storage + offset, sizeof(size_t));
       offset += sizeof(size_t);
 
       if (stored_value_size > *value_size) {
@@ -227,8 +229,9 @@ int mxd_get_contract_storage(const mxd_contract_state_t *state,
       return 0;
     }
 
-    offset += key_size;
-    size_t stored_value_size = *(size_t *)(state->storage + offset);
+    offset += stored_key_size;
+    size_t stored_value_size;
+    memcpy(&stored_value_size, state->storage + offset, sizeof(size_t));
     offset += sizeof(size_t) + stored_value_size;
   }
 
@@ -253,13 +256,13 @@ int mxd_set_contract_storage(mxd_contract_state_t *state, const uint8_t *key,
     return -1;
   }
 
-  // Add new entry
+  // Add new entry (use memcpy to avoid misaligned access)
   size_t offset = state->storage_size;
-  *(size_t *)(new_storage + offset) = key_size;
+  memcpy(new_storage + offset, &key_size, sizeof(size_t));
   offset += sizeof(size_t);
   memcpy(new_storage + offset, key, key_size);
   offset += key_size;
-  *(size_t *)(new_storage + offset) = value_size;
+  memcpy(new_storage + offset, &value_size, sizeof(size_t));
   offset += sizeof(size_t);
   memcpy(new_storage + offset, value, value_size);
 

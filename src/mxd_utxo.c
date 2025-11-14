@@ -224,6 +224,7 @@ int mxd_init_utxo_db(const char *db_path) {
     rocksdb_options_set_skip_stats_update_on_db_open(options, 1);
     rocksdb_options_set_max_open_files(options, 100); // Limit open file handles
     rocksdb_options_set_max_background_jobs(options, 1); // Limit concurrent compaction memory
+    rocksdb_options_set_stats_dump_period_sec(options, 0); // Disable periodic stats dump to prevent background thread issues
     
     MXD_LOG_INFO("utxo", "RocksDB UTXO settings: write_buffer=%zu MB, max_buffers=%d, block_cache=%zu MB, total_est=%zu MB",
                  write_buffer_size / (1024*1024), max_write_buffer_number, block_cache_size / (1024*1024),
