@@ -111,20 +111,147 @@ If you are contributing to this project:
 4. **Follow security patterns** - Review implemented security measures in codebase
 
 ### Node Configuration
+
+#### Configuration File
 The node can be started with or without a configuration file:
 ```bash
 # Start with custom config
-./mxd_node custom_config.json
+./mxd_node --config custom_config.json
 
-# Start with default config
+# Start with default config (loads default_config.json from executable directory)
 ./mxd_node
 ```
-The default configuration file (`default_config.json`) is automatically loaded from the same directory as the executable if no configuration file is specified.
+
+#### Configuration Options
+The configuration file supports the following options:
+
+**Core Settings:**
+- `node_id` (string): Unique identifier for this node (default: "default_node")
+- `node_name` (string): Human-readable name for this node (default: "MXD Default Node")
+- `network_type` (string): Network to connect to - "mainnet" or "testnet" (default: "testnet")
+- `port` (integer): P2P listening port (default: 8000)
+- `data_dir` (string): Directory for blockchain data storage (default: "./data")
+- `initial_stake` (number): Initial stake amount for this node (default: 100.0)
+
+**Cryptographic Algorithm Selection:**
+- `preferred_sign_algo` (integer): Signature algorithm to use for this node
+  - `1` = Ed25519 (default, production-ready, 32-byte keys, 64-byte signatures)
+  - `2` = Dilithium5 (post-quantum secure, 2592-byte keys, 4595-byte signatures)
+  
+**Bootstrap Nodes:**
+- `bootstrap_nodes` (array): List of bootstrap nodes in "host:port" format
+  - Testnet: `["34.31.52.198:8000"]`
+  - Mainnet: Contact network administrators for current bootstrap nodes
+
+**Metrics Configuration:**
+- `metrics.update_interval` (integer): Metrics collection interval in milliseconds (default: 1000)
+- `metrics.display_interval` (integer): Metrics display refresh interval in milliseconds (default: 5000)
+- `metrics.performance_threshold` (integer): Minimum TPS threshold (default: 10)
+- `metrics.max_latency` (integer): Maximum acceptable network latency in milliseconds (default: 3000)
+- `metrics.error_threshold` (integer): Maximum consecutive errors before alert (default: 10)
+
+**Validation Settings:**
+- `validation.min_tps` (integer): Minimum transactions per second required (default: 10)
+- `validation.stake_table_update_interval` (integer): Rapid Table update interval in milliseconds (default: 60000)
+
+**Network Settings:**
+- `network.max_peers` (integer): Maximum number of peer connections (default: 50)
+- `network.connection_timeout` (integer): Connection timeout in milliseconds (default: 5000)
+
+**Pool Settings:**
+- `pool.max_size` (integer): Maximum mempool size (default: 10000)
+- `pool.cleanup_interval` (integer): Mempool cleanup interval in seconds (default: 3600)
+
+**Logging:**
+- `log_level` (string): Logging verbosity - "debug", "info", "warn", "error" (default: "info")
+
+#### Example Configuration File
+```json
+{
+    "node_id": "my_node_001",
+    "node_name": "My MXD Node",
+    "network_type": "testnet",
+    "port": 8000,
+    "data_dir": "./data",
+    "initial_stake": 100.0,
+    "preferred_sign_algo": 1,
+    "bootstrap_nodes": [
+        "34.31.52.198:8000"
+    ],
+    "metrics": {
+        "update_interval": 1000,
+        "display_interval": 5000,
+        "performance_threshold": 10,
+        "max_latency": 3000,
+        "error_threshold": 10
+    },
+    "validation": {
+        "min_tps": 10,
+        "stake_table_update_interval": 60000
+    },
+    "network": {
+        "max_peers": 50,
+        "connection_timeout": 5000
+    },
+    "log_level": "info",
+    "pool": {
+        "max_size": 10000,
+        "cleanup_interval": 3600
+    }
+}
+```
+
+#### Command-Line Options
+The node supports the following command-line flags:
+
+**Configuration:**
+- `--config <file>`: Specify custom configuration file path
+  ```bash
+  ./mxd_node --config /path/to/config.json
+  ```
+
+**Algorithm Override:**
+Override the `preferred_sign_algo` from configuration file:
+- `--algo <algorithm>`: Force use of specific signature algorithm
+  - `--algo ed25519`: Use Ed25519 signatures (32-byte keys, 64-byte signatures)
+  - `--algo dilithium5`: Use Dilithium5 signatures (2592-byte keys, 4595-byte signatures)
+  ```bash
+  ./mxd_node --algo ed25519
+  ./mxd_node --algo dilithium5
+  ```
+
+**Network:**
+- `--port <number>`: Override P2P listening port
+  ```bash
+  ./mxd_node --port 9000
+  ```
+- `--bootstrap`: Register this node as a bootstrap node
+  ```bash
+  ./mxd_node --bootstrap
+  ```
+
+**Example Usage:**
+```bash
+# Start with Ed25519 on custom port
+./mxd_node --algo ed25519 --port 9000
+
+# Start with Dilithium5 using custom config
+./mxd_node --config testnet.json --algo dilithium5
+
+# Start as bootstrap node with default settings
+./mxd_node --bootstrap
+```
+
+**Note on Algorithm Selection:**
+- The `preferred_sign_algo` setting only affects **new keypair generation**
+- If a keypair already exists in the data directory, the node will use the algorithm from the existing keypair
+- To switch algorithms, delete the existing keypair file or use a different `data_dir`
+- Both Ed25519 and Dilithium5 nodes can coexist on the same network seamlessly
 
 ### 🔐 Cryptographic Implementation Status:
 - **Hybrid System**: Both Ed25519 and Dilithium5 supported simultaneously on the same network
 - **Default Algorithm**: Ed25519 signatures via libsodium (production ready)
-- **Post-Quantum**: Dilithium5 signatures available (requires `-DMXD_PQC_DILITHIUM=ON` at build time)
+- **Post-Quantum**: Dilithium5 signatures available (both backends always compiled and linked)
 - **Runtime Selection**: Nodes can use different algorithms; `algo_id` field identifies which algorithm each address uses
 - **Wire Protocol**: Self-describing messages include `algo_id` and length fields for variable-size keys/signatures
 - **Address Derivation**: `HASH160(algo_id || pubkey)` prevents cross-algorithm address collisions
