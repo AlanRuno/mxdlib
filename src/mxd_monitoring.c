@@ -32,6 +32,9 @@ static int wallet_initialized = 0;
 static char wallet_response_buffer[8192];
 static pthread_mutex_t wallet_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+#define MXD_WALLET_MAX_KEYPAIRS (sizeof(wallet.keypairs) / sizeof(wallet.keypairs[0]))
+#define MXD_WALLET_FILE_PATH "wallet.json"
+
 static mxd_transaction_history_entry_t transaction_history[1000];
 static size_t transaction_history_count = 0;
 static pthread_mutex_t history_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -328,10 +331,19 @@ const char* mxd_get_wallet_html(void) {
         "            <div class=\"card\">\n"
         "                <h2>Wallet Management</h2>\n"
         "                <div class=\"form-group\">\n"
-        "                    <label>Export/Import Wallet (Coming Soon)</label>\n"
-        "                    <p style=\"color: #666; font-size: 14px;\">Encrypted wallet export/import with Argon2id will be available in the next update.</p>\n"
+        "                    <label>Export Wallet (Argon2id Encrypted)</label>\n"
+        "                    <input type=\"password\" id=\"exportPassword\" placeholder=\"Enter password for encryption\">\n"
+        "                    <button class=\"btn\" onclick=\"exportWallet()\" style=\"margin-top: 10px;\">Export Wallet</button>\n"
+        "                    <div id=\"exportStatus\"></div>\n"
         "                </div>\n"
-        "                <div class=\"form-group\">\n"
+        "                <div class=\"form-group\" style=\"margin-top: 20px;\">\n"
+        "                    <label>Import Wallet</label>\n"
+        "                    <textarea id=\"importData\" placeholder=\"Paste encrypted wallet data here\" rows=\"3\" style=\"font-family: monospace; font-size: 12px;\"></textarea>\n"
+        "                    <input type=\"password\" id=\"importPassword\" placeholder=\"Enter decryption password\" style=\"margin-top: 10px;\">\n"
+        "                    <button class=\"btn\" onclick=\"importWallet()\" style=\"margin-top: 10px;\">Import Wallet</button>\n"
+        "                    <div id=\"importStatus\"></div>\n"
+        "                </div>\n"
+        "                <div class=\"form-group\" style=\"margin-top: 20px;\">\n"
         "                    <label>Transaction History</label>\n"
         "                    <button class=\"btn\" onclick=\"viewHistory()\">View Transaction History</button>\n"
         "                    <div id=\"historyStatus\"></div>\n"
@@ -451,6 +463,64 @@ const char* mxd_get_wallet_html(void) {
         "            }\n"
         "            listElement.innerHTML = html;\n"
         "        }\n"
+        "        async function exportWallet() {\n"
+        "            const password = document.getElementById('exportPassword').value;\n"
+        "            if (!password) {\n"
+        "                showStatus('exportStatus', 'Please enter a password', 'error');\n"
+        "                return;\n"
+        "            }\n"
+        "            showStatus('exportStatus', 'Exporting wallet with Argon2id encryption...', 'info');\n"
+        "            try {\n"
+        "                const response = await fetch('/wallet/export', {\n"
+        "                    method: 'POST',\n"
+        "                    headers: { 'Content-Type': 'application/json' },\n"
+        "                    body: JSON.stringify({ password: password })\n"
+        "                });\n"
+        "                const data = await response.json();\n"
+        "                if (data.success) {\n"
+        "                    const blob = new Blob([data.encrypted_data], { type: 'text/plain' });\n"
+        "                    const url = window.URL.createObjectURL(blob);\n"
+        "                    const a = document.createElement('a');\n"
+        "                    a.href = url;\n"
+        "                    a.download = 'mxd_wallet_' + Date.now() + '.enc';\n"
+        "                    a.click();\n"
+        "                    window.URL.revokeObjectURL(url);\n"
+        "                    showStatus('exportStatus', 'Wallet exported successfully! File downloaded.', 'success');\n"
+        "                    document.getElementById('exportPassword').value = '';\n"
+        "                } else {\n"
+        "                    showStatus('exportStatus', 'Error: ' + data.error, 'error');\n"
+        "                }\n"
+        "            } catch (error) {\n"
+        "                showStatus('exportStatus', 'Network error: ' + error.message, 'error');\n"
+        "            }\n"
+        "        }\n"
+        "        async function importWallet() {\n"
+        "            const encryptedData = document.getElementById('importData').value;\n"
+        "            const password = document.getElementById('importPassword').value;\n"
+        "            if (!encryptedData || !password) {\n"
+        "                showStatus('importStatus', 'Please provide encrypted data and password', 'error');\n"
+        "                return;\n"
+        "            }\n"
+        "            showStatus('importStatus', 'Importing wallet with Argon2id decryption...', 'info');\n"
+        "            try {\n"
+        "                const response = await fetch('/wallet/import', {\n"
+        "                    method: 'POST',\n"
+        "                    headers: { 'Content-Type': 'application/json' },\n"
+        "                    body: JSON.stringify({ encrypted_data: encryptedData, password: password })\n"
+        "                });\n"
+        "                const data = await response.json();\n"
+        "                if (data.success) {\n"
+        "                    showStatus('importStatus', 'Wallet imported! ' + data.imported + ' addresses added (total: ' + data.total + ')', 'success');\n"
+        "                    document.getElementById('importData').value = '';\n"
+        "                    document.getElementById('importPassword').value = '';\n"
+        "                    listAddresses();\n"
+        "                } else {\n"
+        "                    showStatus('importStatus', 'Error: ' + data.error, 'error');\n"
+        "                }\n"
+        "            } catch (error) {\n"
+        "                showStatus('importStatus', 'Network error: ' + error.message, 'error');\n"
+        "            }\n"
+        "        }\n"
         "        async function viewHistory() {\n"
         "            try {\n"
         "                const response = await fetch('/wallet/history');\n"
@@ -496,7 +566,7 @@ const char* mxd_handle_wallet_generate_with_algo(uint8_t algo_id) {
     
     pthread_mutex_lock(&wallet_mutex);
     
-    if (wallet.keypair_count >= 10) {
+    if (wallet.keypair_count >= MXD_WALLET_MAX_KEYPAIRS) {
         pthread_mutex_unlock(&wallet_mutex);
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Maximum number of addresses reached\"}");
@@ -1007,14 +1077,327 @@ int mxd_load_wallet_from_file(const char* filepath) {
 }
 
 const char* mxd_handle_wallet_export(const char* password) {
+    if (!wallet_initialized || !password || strlen(password) == 0) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Invalid password\"}");
+        return wallet_response_buffer;
+    }
+    
+    pthread_mutex_lock(&wallet_mutex);
+    
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "version", 1);
+    cJSON_AddNumberToObject(root, "keypair_count", wallet.keypair_count);
+    cJSON* keypairs = cJSON_CreateArray();
+    
+    for (size_t i = 0; i < wallet.keypair_count; i++) {
+        cJSON* kp = cJSON_CreateObject();
+        cJSON_AddNumberToObject(kp, "algo_id", wallet.keypairs[i].algo_id);
+        
+        char pubkey_hex[MXD_PUBKEY_MAX_LEN * 2 + 1];
+        for (size_t j = 0; j < wallet.keypairs[i].public_key_length; j++) {
+            snprintf(pubkey_hex + (j * 2), 3, "%02x", wallet.keypairs[i].public_key[j]);
+        }
+        cJSON_AddStringToObject(kp, "public_key", pubkey_hex);
+        
+        char privkey_hex[MXD_PRIVKEY_MAX_LEN * 2 + 1];
+        for (size_t j = 0; j < wallet.keypairs[i].private_key_length; j++) {
+            snprintf(privkey_hex + (j * 2), 3, "%02x", wallet.keypairs[i].private_key[j]);
+        }
+        cJSON_AddStringToObject(kp, "private_key", privkey_hex);
+        cJSON_AddStringToObject(kp, "address", wallet.keypairs[i].address);
+        
+        cJSON_AddItemToArray(keypairs, kp);
+    }
+    cJSON_AddItemToObject(root, "keypairs", keypairs);
+    
+    char* json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    
+    if (!json_str) {
+        pthread_mutex_unlock(&wallet_mutex);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Failed to serialize wallet\"}");
+        return wallet_response_buffer;
+    }
+    
+    size_t json_len = strlen(json_str);
+    uint8_t salt[crypto_pwhash_SALTBYTES];
+    randombytes_buf(salt, sizeof(salt));
+    
+    uint8_t key[crypto_secretbox_KEYBYTES];
+    if (mxd_argon2(password, salt, key, sizeof(key)) != 0) {
+        free(json_str);
+        pthread_mutex_unlock(&wallet_mutex);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Key derivation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    uint8_t nonce[crypto_secretbox_NONCEBYTES];
+    randombytes_buf(nonce, sizeof(nonce));
+    
+    size_t ciphertext_len = crypto_secretbox_MACBYTES + json_len;
+    uint8_t* ciphertext = malloc(ciphertext_len);
+    if (!ciphertext) {
+        free(json_str);
+        pthread_mutex_unlock(&wallet_mutex);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Memory allocation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    crypto_secretbox_easy(ciphertext, (const uint8_t*)json_str, json_len, nonce, key);
+    
+    sodium_memzero(key, sizeof(key));
+    sodium_memzero(json_str, json_len);
+    free(json_str);
+    
+    size_t encrypted_blob_len = sizeof(salt) + sizeof(nonce) + ciphertext_len;
+    uint8_t* encrypted_blob = malloc(encrypted_blob_len);
+    if (!encrypted_blob) {
+        free(ciphertext);
+        pthread_mutex_unlock(&wallet_mutex);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Memory allocation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    memcpy(encrypted_blob, salt, sizeof(salt));
+    memcpy(encrypted_blob + sizeof(salt), nonce, sizeof(nonce));
+    memcpy(encrypted_blob + sizeof(salt) + sizeof(nonce), ciphertext, ciphertext_len);
+    free(ciphertext);
+    
+    size_t b64_len = ((encrypted_blob_len + 2) / 3) * 4 + 1;
+    char* base64_output = malloc(b64_len);
+    if (!base64_output) {
+        free(encrypted_blob);
+        pthread_mutex_unlock(&wallet_mutex);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Memory allocation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    if (sodium_bin2base64(base64_output, b64_len, encrypted_blob, encrypted_blob_len, 
+                          sodium_base64_VARIANT_ORIGINAL) == NULL) {
+        free(base64_output);
+        free(encrypted_blob);
+        pthread_mutex_unlock(&wallet_mutex);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Base64 encoding failed\"}");
+        return wallet_response_buffer;
+    }
+    free(encrypted_blob);
+    
     snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
-        "{\"success\":false,\"error\":\"Export feature not yet fully implemented\"}");
+        "{\"success\":true,\"encrypted_data\":\"%s\"}", base64_output);
+    free(base64_output);
+    
+    pthread_mutex_unlock(&wallet_mutex);
+    
+    MXD_LOG_INFO("wallet", "Wallet exported successfully");
     return wallet_response_buffer;
 }
 
 const char* mxd_handle_wallet_import(const char* encrypted_data, const char* password) {
+    if (!wallet_initialized || !encrypted_data || !password || strlen(password) == 0) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Invalid parameters\"}");
+        return wallet_response_buffer;
+    }
+    
+    size_t encrypted_blob_len = strlen(encrypted_data) * 3 / 4 + 10;
+    uint8_t* encrypted_blob = malloc(encrypted_blob_len);
+    if (!encrypted_blob) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Memory allocation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    size_t bin_len;
+    if (sodium_base642bin(encrypted_blob, encrypted_blob_len, encrypted_data, strlen(encrypted_data),
+                          NULL, &bin_len, NULL, sodium_base64_VARIANT_ORIGINAL) != 0) {
+        free(encrypted_blob);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Invalid base64 data\"}");
+        return wallet_response_buffer;
+    }
+    
+    if (bin_len < crypto_pwhash_SALTBYTES + crypto_secretbox_NONCEBYTES + crypto_secretbox_MACBYTES) {
+        free(encrypted_blob);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Invalid encrypted data format\"}");
+        return wallet_response_buffer;
+    }
+    
+    uint8_t* salt = encrypted_blob;
+    uint8_t* nonce = encrypted_blob + crypto_pwhash_SALTBYTES;
+    uint8_t* ciphertext = encrypted_blob + crypto_pwhash_SALTBYTES + crypto_secretbox_NONCEBYTES;
+    size_t ciphertext_len = bin_len - crypto_pwhash_SALTBYTES - crypto_secretbox_NONCEBYTES;
+    
+    uint8_t key[crypto_secretbox_KEYBYTES];
+    if (mxd_argon2(password, salt, key, sizeof(key)) != 0) {
+        free(encrypted_blob);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Key derivation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    size_t plaintext_len = ciphertext_len - crypto_secretbox_MACBYTES;
+    uint8_t* plaintext = malloc(plaintext_len + 1);
+    if (!plaintext) {
+        sodium_memzero(key, sizeof(key));
+        free(encrypted_blob);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Memory allocation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    if (crypto_secretbox_open_easy(plaintext, ciphertext, ciphertext_len, nonce, key) != 0) {
+        sodium_memzero(key, sizeof(key));
+        free(plaintext);
+        free(encrypted_blob);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Decryption failed - wrong password or corrupted data\"}");
+        return wallet_response_buffer;
+    }
+    
+    sodium_memzero(key, sizeof(key));
+    free(encrypted_blob);
+    
+    plaintext[plaintext_len] = '\0';
+    
+    cJSON* root = cJSON_Parse((const char*)plaintext);
+    sodium_memzero(plaintext, plaintext_len);
+    free(plaintext);
+    
+    if (!root) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Invalid wallet data format\"}");
+        return wallet_response_buffer;
+    }
+    
+    cJSON* version = cJSON_GetObjectItem(root, "version");
+    cJSON* keypairs = cJSON_GetObjectItem(root, "keypairs");
+    
+    if (!version || !cJSON_IsNumber(version) || version->valueint != 1 || 
+        !keypairs || !cJSON_IsArray(keypairs)) {
+        cJSON_Delete(root);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Unsupported wallet format\"}");
+        return wallet_response_buffer;
+    }
+    
+    pthread_mutex_lock(&wallet_mutex);
+    
+    size_t old_count = wallet.keypair_count;
+    int imported_count = 0;
+    
+    cJSON* kp_item = NULL;
+    cJSON_ArrayForEach(kp_item, keypairs) {
+        if (wallet.keypair_count >= MXD_WALLET_MAX_KEYPAIRS) {
+            MXD_LOG_WARN("wallet", "Maximum keypair limit reached during import");
+            break;
+        }
+        
+        cJSON* algo_id = cJSON_GetObjectItem(kp_item, "algo_id");
+        cJSON* public_key = cJSON_GetObjectItem(kp_item, "public_key");
+        cJSON* private_key = cJSON_GetObjectItem(kp_item, "private_key");
+        cJSON* address = cJSON_GetObjectItem(kp_item, "address");
+        
+        if (!algo_id || !cJSON_IsNumber(algo_id) ||
+            !public_key || !cJSON_IsString(public_key) ||
+            !private_key || !cJSON_IsString(private_key) ||
+            !address || !cJSON_IsString(address)) {
+            MXD_LOG_WARN("wallet", "Skipping invalid keypair entry during import");
+            continue;
+        }
+        
+        uint8_t kp_algo_id = (uint8_t)algo_id->valueint;
+        if (kp_algo_id != MXD_SIGALG_ED25519 && kp_algo_id != MXD_SIGALG_DILITHIUM5) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with invalid algo_id: %u", kp_algo_id);
+            continue;
+        }
+        
+        const char* pubkey_hex = public_key->valuestring;
+        size_t pubkey_hex_len = strlen(pubkey_hex);
+        if (pubkey_hex_len % 2 != 0) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with odd-length public key hex");
+            continue;
+        }
+        
+        const char* privkey_hex = private_key->valuestring;
+        size_t privkey_hex_len = strlen(privkey_hex);
+        if (privkey_hex_len % 2 != 0) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with odd-length private key hex");
+            continue;
+        }
+        
+        size_t pub_bytes = pubkey_hex_len / 2;
+        size_t priv_bytes = privkey_hex_len / 2;
+        
+        if (pub_bytes > MXD_PUBKEY_MAX_LEN || priv_bytes > MXD_PRIVKEY_MAX_LEN) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with oversized keys (pub: %zu, priv: %zu)", 
+                         pub_bytes, priv_bytes);
+            continue;
+        }
+        
+        size_t expected_pubkey_len = mxd_sig_pubkey_len(kp_algo_id);
+        size_t expected_privkey_len = mxd_sig_privkey_len(kp_algo_id);
+        if (pub_bytes != expected_pubkey_len || priv_bytes != expected_privkey_len) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with incorrect key lengths for algo %u (expected pub: %zu, priv: %zu, got pub: %zu, priv: %zu)",
+                         kp_algo_id, expected_pubkey_len, expected_privkey_len, pub_bytes, priv_bytes);
+            continue;
+        }
+        
+        mxd_wallet_keypair_t* new_kp = &wallet.keypairs[wallet.keypair_count];
+        new_kp->algo_id = kp_algo_id;
+        new_kp->public_key_length = pub_bytes;
+        new_kp->private_key_length = priv_bytes;
+        
+        new_kp->public_key = malloc(pub_bytes);
+        new_kp->private_key = malloc(priv_bytes);
+        if (!new_kp->public_key || !new_kp->private_key) {
+            if (new_kp->public_key) free(new_kp->public_key);
+            if (new_kp->private_key) free(new_kp->private_key);
+            new_kp->public_key = NULL;
+            new_kp->private_key = NULL;
+            MXD_LOG_WARN("wallet", "Memory allocation failed for keypair during import");
+            continue;
+        }
+        
+        for (size_t i = 0; i < pub_bytes; i++) {
+            char byte_str[3] = {pubkey_hex[i*2], pubkey_hex[i*2+1], '\0'};
+            new_kp->public_key[i] = (uint8_t)strtol(byte_str, NULL, 16);
+        }
+        
+        for (size_t i = 0; i < priv_bytes; i++) {
+            char byte_str[3] = {privkey_hex[i*2], privkey_hex[i*2+1], '\0'};
+            new_kp->private_key[i] = (uint8_t)strtol(byte_str, NULL, 16);
+        }
+        
+        strncpy(new_kp->address, address->valuestring, sizeof(new_kp->address) - 1);
+        new_kp->address[sizeof(new_kp->address) - 1] = '\0';
+        
+        wallet.keypair_count++;
+        imported_count++;
+    }
+    
+    cJSON_Delete(root);
+    
+    if (imported_count > 0) {
+        if (mxd_save_wallet_to_file(MXD_WALLET_FILE_PATH) != 0) {
+            MXD_LOG_WARN("wallet", "Failed to persist imported wallet to disk");
+        }
+    }
+    
+    pthread_mutex_unlock(&wallet_mutex);
+    
     snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
-        "{\"success\":false,\"error\":\"Import feature not yet fully implemented\"}");
+        "{\"success\":true,\"imported\":%d,\"total\":%zu}", 
+        imported_count, wallet.keypair_count);
+    
+    MXD_LOG_INFO("wallet", "Imported %d keypairs (total: %zu)", imported_count, wallet.keypair_count);
     return wallet_response_buffer;
 }
 
