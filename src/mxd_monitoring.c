@@ -32,6 +32,9 @@ static int wallet_initialized = 0;
 static char wallet_response_buffer[8192];
 static pthread_mutex_t wallet_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+#define MXD_WALLET_MAX_KEYPAIRS (sizeof(wallet.keypairs) / sizeof(wallet.keypairs[0]))
+#define MXD_WALLET_FILE_PATH "wallet.json"
+
 static mxd_transaction_history_entry_t transaction_history[1000];
 static size_t transaction_history_count = 0;
 static pthread_mutex_t history_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -563,7 +566,7 @@ const char* mxd_handle_wallet_generate_with_algo(uint8_t algo_id) {
     
     pthread_mutex_lock(&wallet_mutex);
     
-    if (wallet.keypair_count >= 10) {
+    if (wallet.keypair_count >= MXD_WALLET_MAX_KEYPAIRS) {
         pthread_mutex_unlock(&wallet_mutex);
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Maximum number of addresses reached\"}");
@@ -1165,20 +1168,30 @@ const char* mxd_handle_wallet_export(const char* password) {
     memcpy(encrypted_blob + sizeof(salt) + sizeof(nonce), ciphertext, ciphertext_len);
     free(ciphertext);
     
-    char* base64_output = sodium_bin2base64(NULL, 0, encrypted_blob, encrypted_blob_len, 
-                                             sodium_base64_VARIANT_ORIGINAL);
-    free(encrypted_blob);
-    
+    size_t b64_len = ((encrypted_blob_len + 2) / 3) * 4 + 1;
+    char* base64_output = malloc(b64_len);
     if (!base64_output) {
+        free(encrypted_blob);
+        pthread_mutex_unlock(&wallet_mutex);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Memory allocation failed\"}");
+        return wallet_response_buffer;
+    }
+    
+    if (sodium_bin2base64(base64_output, b64_len, encrypted_blob, encrypted_blob_len, 
+                          sodium_base64_VARIANT_ORIGINAL) == NULL) {
+        free(base64_output);
+        free(encrypted_blob);
         pthread_mutex_unlock(&wallet_mutex);
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Base64 encoding failed\"}");
         return wallet_response_buffer;
     }
+    free(encrypted_blob);
     
     snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
         "{\"success\":true,\"encrypted_data\":\"%s\"}", base64_output);
-    sodium_free(base64_output);
+    free(base64_output);
     
     pthread_mutex_unlock(&wallet_mutex);
     
@@ -1282,7 +1295,7 @@ const char* mxd_handle_wallet_import(const char* encrypted_data, const char* pas
     
     cJSON* kp_item = NULL;
     cJSON_ArrayForEach(kp_item, keypairs) {
-        if (wallet.keypair_count >= MXD_MAX_KEYPAIRS) {
+        if (wallet.keypair_count >= MXD_WALLET_MAX_KEYPAIRS) {
             MXD_LOG_WARN("wallet", "Maximum keypair limit reached during import");
             break;
         }
@@ -1296,26 +1309,69 @@ const char* mxd_handle_wallet_import(const char* encrypted_data, const char* pas
             !public_key || !cJSON_IsString(public_key) ||
             !private_key || !cJSON_IsString(private_key) ||
             !address || !cJSON_IsString(address)) {
+            MXD_LOG_WARN("wallet", "Skipping invalid keypair entry during import");
             continue;
         }
         
-        mxd_keypair_t* new_kp = &wallet.keypairs[wallet.keypair_count];
-        new_kp->algo_id = (uint8_t)algo_id->valueint;
+        uint8_t kp_algo_id = (uint8_t)algo_id->valueint;
+        if (kp_algo_id != MXD_SIGALG_ED25519 && kp_algo_id != MXD_SIGALG_DILITHIUM5) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with invalid algo_id: %u", kp_algo_id);
+            continue;
+        }
         
         const char* pubkey_hex = public_key->valuestring;
         size_t pubkey_hex_len = strlen(pubkey_hex);
-        new_kp->public_key_length = pubkey_hex_len / 2;
-        
-        for (size_t i = 0; i < new_kp->public_key_length; i++) {
-            char byte_str[3] = {pubkey_hex[i*2], pubkey_hex[i*2+1], '\0'};
-            new_kp->public_key[i] = (uint8_t)strtol(byte_str, NULL, 16);
+        if (pubkey_hex_len % 2 != 0) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with odd-length public key hex");
+            continue;
         }
         
         const char* privkey_hex = private_key->valuestring;
         size_t privkey_hex_len = strlen(privkey_hex);
-        new_kp->private_key_length = privkey_hex_len / 2;
+        if (privkey_hex_len % 2 != 0) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with odd-length private key hex");
+            continue;
+        }
         
-        for (size_t i = 0; i < new_kp->private_key_length; i++) {
+        size_t pub_bytes = pubkey_hex_len / 2;
+        size_t priv_bytes = privkey_hex_len / 2;
+        
+        if (pub_bytes > MXD_PUBKEY_MAX_LEN || priv_bytes > MXD_PRIVKEY_MAX_LEN) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with oversized keys (pub: %zu, priv: %zu)", 
+                         pub_bytes, priv_bytes);
+            continue;
+        }
+        
+        size_t expected_pubkey_len = mxd_sig_pubkey_len(kp_algo_id);
+        size_t expected_privkey_len = mxd_sig_privkey_len(kp_algo_id);
+        if (pub_bytes != expected_pubkey_len || priv_bytes != expected_privkey_len) {
+            MXD_LOG_WARN("wallet", "Skipping keypair with incorrect key lengths for algo %u (expected pub: %zu, priv: %zu, got pub: %zu, priv: %zu)",
+                         kp_algo_id, expected_pubkey_len, expected_privkey_len, pub_bytes, priv_bytes);
+            continue;
+        }
+        
+        mxd_wallet_keypair_t* new_kp = &wallet.keypairs[wallet.keypair_count];
+        new_kp->algo_id = kp_algo_id;
+        new_kp->public_key_length = pub_bytes;
+        new_kp->private_key_length = priv_bytes;
+        
+        new_kp->public_key = malloc(pub_bytes);
+        new_kp->private_key = malloc(priv_bytes);
+        if (!new_kp->public_key || !new_kp->private_key) {
+            if (new_kp->public_key) free(new_kp->public_key);
+            if (new_kp->private_key) free(new_kp->private_key);
+            new_kp->public_key = NULL;
+            new_kp->private_key = NULL;
+            MXD_LOG_WARN("wallet", "Memory allocation failed for keypair during import");
+            continue;
+        }
+        
+        for (size_t i = 0; i < pub_bytes; i++) {
+            char byte_str[3] = {pubkey_hex[i*2], pubkey_hex[i*2+1], '\0'};
+            new_kp->public_key[i] = (uint8_t)strtol(byte_str, NULL, 16);
+        }
+        
+        for (size_t i = 0; i < priv_bytes; i++) {
             char byte_str[3] = {privkey_hex[i*2], privkey_hex[i*2+1], '\0'};
             new_kp->private_key[i] = (uint8_t)strtol(byte_str, NULL, 16);
         }
@@ -1328,6 +1384,13 @@ const char* mxd_handle_wallet_import(const char* encrypted_data, const char* pas
     }
     
     cJSON_Delete(root);
+    
+    if (imported_count > 0) {
+        if (mxd_save_wallet_to_file(MXD_WALLET_FILE_PATH) != 0) {
+            MXD_LOG_WARN("wallet", "Failed to persist imported wallet to disk");
+        }
+    }
+    
     pthread_mutex_unlock(&wallet_mutex);
     
     snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
