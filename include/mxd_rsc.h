@@ -119,7 +119,7 @@ typedef struct {
     uint16_t signature_length;
 } mxd_genesis_member_t;
 
-int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey);
+int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey, uint8_t algo_id);
 
 void mxd_cleanup_genesis_coordination(void);
 

@@ -378,7 +378,7 @@ int main(int argc, char** argv) {
                              address_str, mxd_sig_alg_name(algo_id));
             }
             
-            if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey) == 0) {
+            if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey, algo_id) == 0) {
                 genesis_initialized = 1;
             } else {
                 MXD_LOG_WARN("node", "Failed to initialize genesis coordination");

@@ -1646,17 +1646,12 @@ int mxd_init_p2p(uint16_t port, uint8_t algo_id, const uint8_t* public_key, cons
     memset(&node_config, 0, sizeof(node_config));
     node_config.port = port;
     
-    uint8_t address[20];
-    if (mxd_derive_address(algo_id, public_key, pubkey_len, address) == 0) {
-        if (base58_encode(address, 20, node_config.node_id, sizeof(node_config.node_id)) == 0) {
-            MXD_LOG_INFO("p2p", "Derived node_id from wallet address (algo: %s): %s", 
-                         mxd_sig_alg_name(algo_id), node_config.node_id);
-        } else {
-            MXD_LOG_ERROR("p2p", "Failed to encode address to Base58");
-            snprintf(node_config.node_id, sizeof(node_config.node_id), "mx_error");
-        }
+    if (mxd_address_to_string_v2(algo_id, public_key, pubkey_len, 
+                                 node_config.node_id, sizeof(node_config.node_id)) == 0) {
+        MXD_LOG_INFO("p2p", "Derived node_id from wallet address (algo: %s): %s", 
+                     mxd_sig_alg_name(algo_id), node_config.node_id);
     } else {
-        MXD_LOG_ERROR("p2p", "Failed to derive address from public key");
+        MXD_LOG_ERROR("p2p", "Failed to generate address string");
         snprintf(node_config.node_id, sizeof(node_config.node_id), "mx_error");
     }
     
