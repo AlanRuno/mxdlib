@@ -69,9 +69,11 @@ MXD (Mexican Denarius) represents a groundbreaking advancement in digital financ
 ## 📚 Documentation
 
 Detailed documentation is available in the `docs` directory:
+- [Hybrid Cryptography Guide](docs/HYBRID_CRYPTO.md) - **Comprehensive guide to Ed25519 and Dilithium5 support**
 - [Module Documentation](docs/MODULES.md)
 - [Build Instructions](docs/BUILD.md)
 - [Integration Guide](docs/INTEGRATION.md)
+- [Implementation Matrix](docs/IMPLEMENTATION_MATRIX.md)
 - [MXD Whitepaper (English)](https://mxd.com.mx/WhitePaper_En.pdf)
 
 The library's architecture is designed for optimal performance and security in cryptocurrency operations, with a focus on rapid transaction processing and network efficiency. Our modular design separates concerns into distinct components:
@@ -366,35 +368,76 @@ Note: Some tests require network connectivity for P2P simulations
 
 ## 💡 Basic Usage
 
-### Generate MXD Address
+For comprehensive examples and detailed API documentation, see [docs/HYBRID_CRYPTO.md](docs/HYBRID_CRYPTO.md).
+
+### Generate MXD Address (Ed25519)
 ```c
 #include <mxd_address.h>
 #include <mxd_crypto.h>
 
-// Generate Ed25519 keypair (default)
+// Generate Ed25519 keypair (default, production-ready)
 uint8_t algo_id = MXD_SIGALG_ED25519;
 uint8_t public_key[MXD_PUBKEY_MAX_LEN];
 uint8_t private_key[MXD_PRIVKEY_MAX_LEN];
 mxd_sig_keygen(algo_id, public_key, private_key);
 
+// Get actual key lengths for the algorithm
+size_t pubkey_len = mxd_sig_pubkey_len(algo_id);  // Returns 32 for Ed25519
+
 // Derive address (includes algo_id to prevent collisions)
 uint8_t address[20];
-size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
 mxd_derive_address(algo_id, public_key, pubkey_len, address);
 
-// Generate Base58Check address string
+// Generate Base58Check address string (v2 format)
 char address_str[42];
-mxd_generate_address(public_key, address_str, sizeof(address_str));
+mxd_address_to_string_v2(algo_id, public_key, pubkey_len, 
+                         address_str, sizeof(address_str));
+```
+
+### Generate MXD Address (Dilithium5 - Post-Quantum)
+```c
+#include <mxd_address.h>
+#include <mxd_crypto.h>
+
+// Generate Dilithium5 keypair (post-quantum secure)
+uint8_t algo_id = MXD_SIGALG_DILITHIUM5;
+uint8_t public_key[MXD_PUBKEY_MAX_LEN];
+uint8_t private_key[MXD_PRIVKEY_MAX_LEN];
+mxd_sig_keygen(algo_id, public_key, private_key);
+
+// Get actual key lengths for the algorithm
+size_t pubkey_len = mxd_sig_pubkey_len(algo_id);  // Returns 2592 for Dilithium5
+
+// Derive address with algorithm identification
+char address_str[42];
+mxd_address_to_string_v2(algo_id, public_key, pubkey_len,
+                         address_str, sizeof(address_str));
 ```
 
 ### Create Transaction
 ```c
 #include <mxd_transaction.h>
 
+// Create transaction
 mxd_transaction_t tx;
 mxd_create_transaction(&tx);
-mxd_add_tx_output(&tx, recipient_key, 1.0);
-mxd_sign_tx_input(&tx, 0, private_key);
+
+// Add input with algorithm specification
+uint8_t prev_tx_hash[64] = {/* ... */};
+uint8_t algo_id = MXD_SIGALG_ED25519;
+uint8_t public_key[32];
+mxd_add_tx_input(&tx, prev_tx_hash, 0, algo_id, public_key, 32);
+
+// Add output
+uint8_t recipient_addr[20] = {/* ... */};
+mxd_add_tx_output(&tx, recipient_addr, 1.0);
+
+// Sign input with private key
+uint8_t private_key[64];
+mxd_sign_tx_input(&tx, 0, algo_id, private_key);
+
+// Cleanup
+mxd_free_transaction(&tx);
 ```
 
 ### Deploy Smart Contract
