@@ -360,25 +360,39 @@ int main(int argc, char** argv) {
     mxd_set_message_handler(mxd_message_multiplexer);
     MXD_LOG_INFO("node", "Message multiplexer registered (genesis + validation handlers)");
     
-    uint8_t algo_id = algo_specified ? override_algo_id : 
-                      (current_config.preferred_sign_algo ? current_config.preferred_sign_algo : MXD_SIGALG_ED25519);
-    MXD_LOG_INFO("node", "Using signature algorithm: %s (source: %s)", 
-                 mxd_sig_alg_name(algo_id),
-                 algo_specified ? "CLI" : (current_config.preferred_sign_algo ? "config" : "default"));
+    // Get the actual node algo_id from P2P (based on persisted keys)
+    uint8_t node_algo_id = MXD_SIGALG_ED25519; // Default fallback
+    if (mxd_get_node_algo_id(&node_algo_id) != 0) {
+        MXD_LOG_WARN("node", "Failed to retrieve node algo_id from P2P, using default Ed25519");
+    }
+    
+    uint8_t requested_algo_id = algo_specified ? override_algo_id : 
+                                 (current_config.preferred_sign_algo ? current_config.preferred_sign_algo : MXD_SIGALG_ED25519);
+    
+    if (requested_algo_id != node_algo_id) {
+        MXD_LOG_WARN("node", "CLI/config requested %s but persisted node keys are %s", 
+                     mxd_sig_alg_name(requested_algo_id), mxd_sig_alg_name(node_algo_id));
+        MXD_LOG_WARN("node", "Using persisted algo_id %s. To change, delete data/node_keypair.bin and restart", 
+                     mxd_sig_alg_name(node_algo_id));
+    }
+    
+    MXD_LOG_INFO("node", "Using signature algorithm: %s (from persisted keys)", 
+                 mxd_sig_alg_name(node_algo_id));
+    
     uint8_t node_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
     uint8_t node_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
     uint8_t node_address[20] = {0};
     
     if (mxd_get_node_keys(node_pubkey, node_privkey) == 0) {
-        size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
-        if (mxd_derive_address(algo_id, node_pubkey, pubkey_len, node_address) == 0) {
+        size_t pubkey_len = mxd_sig_pubkey_len(node_algo_id);
+        if (mxd_derive_address(node_algo_id, node_pubkey, pubkey_len, node_address) == 0) {
             char address_str[64] = {0};
-            if (mxd_address_to_string_v2(algo_id, node_pubkey, pubkey_len, address_str, sizeof(address_str)) == 0) {
+            if (mxd_address_to_string_v2(node_algo_id, node_pubkey, pubkey_len, address_str, sizeof(address_str)) == 0) {
                 MXD_LOG_INFO("node", "Genesis coordination initialized with node address: %s (algo=%s)", 
-                             address_str, mxd_sig_alg_name(algo_id));
+                             address_str, mxd_sig_alg_name(node_algo_id));
             }
             
-            if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey, algo_id) == 0) {
+            if (mxd_init_genesis_coordination(node_address, node_pubkey, node_privkey, node_algo_id) == 0) {
                 genesis_initialized = 1;
             } else {
                 MXD_LOG_WARN("node", "Failed to initialize genesis coordination");

@@ -2245,3 +2245,18 @@ int mxd_get_node_keys(uint8_t *public_key_out, uint8_t *private_key_out) {
     
     return 0;
 }
+
+int mxd_get_node_algo_id(uint8_t *out_algo_id) {
+    if (!p2p_initialized) {
+        MXD_LOG_ERROR("p2p", "P2P not initialized, cannot retrieve node algo_id");
+        return -1;
+    }
+    
+    if (!out_algo_id) {
+        MXD_LOG_ERROR("p2p", "Invalid parameter: out_algo_id is NULL");
+        return -1;
+    }
+    
+    *out_algo_id = node_algo_id;
+    return 0;
+}

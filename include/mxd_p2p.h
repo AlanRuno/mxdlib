@@ -187,6 +187,7 @@ int mxd_get_unified_peers(mxd_peer_info_t* peer_info, size_t* count);
 
 // Get node's public and private keys
 int mxd_get_node_keys(uint8_t *public_key_out, uint8_t *private_key_out);
+int mxd_get_node_algo_id(uint8_t *out_algo_id);
 
 #ifdef __cplusplus
 }
