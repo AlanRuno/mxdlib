@@ -372,8 +372,8 @@ int main(int argc, char** argv) {
     if (mxd_get_node_keys(node_pubkey, node_privkey) == 0) {
         size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
         if (mxd_derive_address(algo_id, node_pubkey, pubkey_len, node_address) == 0) {
-            char address_str[42] = {0};
-            if (mxd_generate_address(node_pubkey, address_str, sizeof(address_str)) == 0) {
+            char address_str[64] = {0};
+            if (mxd_address_to_string_v2(algo_id, node_pubkey, pubkey_len, address_str, sizeof(address_str)) == 0) {
                 MXD_LOG_INFO("node", "Genesis coordination initialized with node address: %s (algo=%s)", 
                              address_str, mxd_sig_alg_name(algo_id));
             }
