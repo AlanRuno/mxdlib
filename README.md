@@ -212,13 +212,12 @@ The node supports the following command-line flags:
 
 **Algorithm Override:**
 Override the `preferred_sign_algo` from configuration file:
-- `--ed25519`: Force use of Ed25519 signatures (32-byte keys, 64-byte signatures)
+- `--algo <algorithm>`: Force use of specific signature algorithm
+  - `--algo ed25519`: Use Ed25519 signatures (32-byte keys, 64-byte signatures)
+  - `--algo dilithium5`: Use Dilithium5 signatures (2592-byte keys, 4595-byte signatures)
   ```bash
-  ./mxd_node --ed25519
-  ```
-- `--dilithium5`: Force use of Dilithium5 signatures (2592-byte keys, 4595-byte signatures)
-  ```bash
-  ./mxd_node --dilithium5
+  ./mxd_node --algo ed25519
+  ./mxd_node --algo dilithium5
   ```
 
 **Network:**
@@ -234,10 +233,10 @@ Override the `preferred_sign_algo` from configuration file:
 **Example Usage:**
 ```bash
 # Start with Ed25519 on custom port
-./mxd_node --ed25519 --port 9000
+./mxd_node --algo ed25519 --port 9000
 
 # Start with Dilithium5 using custom config
-./mxd_node --config testnet.json --dilithium5
+./mxd_node --config testnet.json --algo dilithium5
 
 # Start as bootstrap node with default settings
 ./mxd_node --bootstrap
@@ -252,7 +251,7 @@ Override the `preferred_sign_algo` from configuration file:
 ### 🔐 Cryptographic Implementation Status:
 - **Hybrid System**: Both Ed25519 and Dilithium5 supported simultaneously on the same network
 - **Default Algorithm**: Ed25519 signatures via libsodium (production ready)
-- **Post-Quantum**: Dilithium5 signatures available (requires `-DMXD_PQC_DILITHIUM=ON` at build time)
+- **Post-Quantum**: Dilithium5 signatures available (both backends always compiled and linked)
 - **Runtime Selection**: Nodes can use different algorithms; `algo_id` field identifies which algorithm each address uses
 - **Wire Protocol**: Self-describing messages include `algo_id` and length fields for variable-size keys/signatures
 - **Address Derivation**: `HASH160(algo_id || pubkey)` prevents cross-algorithm address collisions
