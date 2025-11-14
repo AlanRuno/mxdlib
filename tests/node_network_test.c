@@ -10,8 +10,8 @@
 #include "mxd_config.h"
 #include "test_utils.h"
 
-#define TEST_PORT_1 12345
-#define TEST_PORT_2 12346
+#define TEST_PORT_1 13000
+#define TEST_PORT_2 13001
 #define MAX_LATENCY_MS 3000
 
 static void test_node_network(void) {
