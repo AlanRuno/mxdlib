@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <cjson/cJSON.h>
+#include <sodium.h>
 
 static mxd_system_metrics_t current_metrics = {0};
 static mxd_health_status_t current_health = {0};
@@ -30,6 +31,14 @@ static mxd_wallet_t wallet = {0};
 static int wallet_initialized = 0;
 static char wallet_response_buffer[8192];
 static pthread_mutex_t wallet_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static mxd_transaction_history_entry_t transaction_history[1000];
+static size_t transaction_history_count = 0;
+static pthread_mutex_t history_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static mxd_hybrid_crypto_metrics_t hybrid_metrics = {0};
+static pthread_mutex_t hybrid_metrics_mutex = PTHREAD_MUTEX_INITIALIZER;
+static char hybrid_metrics_buffer[2048];
 
 int mxd_init_monitoring(uint16_t http_port) {
     if (monitoring_initialized) {
@@ -269,6 +278,13 @@ const char* mxd_get_wallet_html(void) {
         "            <div class=\"card\">\n"
         "                <h2>Generate New Address</h2>\n"
         "                <div class=\"form-group\">\n"
+        "                    <label for=\"algorithm\">Algorithm:</label>\n"
+        "                    <select id=\"algorithm\" style=\"width: 100%; padding: 12px; border: 2px solid #e1e5e9; border-radius: 8px; font-size: 14px;\">\n"
+        "                        <option value=\"ed25519\">Ed25519 (Classical)</option>\n"
+        "                        <option value=\"dilithium5\">Dilithium5 (Post-Quantum)</option>\n"
+        "                    </select>\n"
+        "                </div>\n"
+        "                <div class=\"form-group\">\n"
         "                    <label for=\"passphrase\">Passphrase (optional):</label>\n"
         "                    <input type=\"password\" id=\"passphrase\" placeholder=\"Enter passphrase for key derivation\">\n"
         "                </div>\n"
@@ -307,6 +323,19 @@ const char* mxd_get_wallet_html(void) {
         "                    <p style=\"color: #666; text-align: center; padding: 20px;\">No addresses generated yet</p>\n"
         "                </div>\n"
         "                <button class=\"btn\" onclick=\"refreshAddresses()\">Refresh Balances</button>\n"
+        "                <button class=\"btn\" onclick=\"listAddresses()\" style=\"margin-left: 10px;\">List All Addresses</button>\n"
+        "            </div>\n"
+        "            <div class=\"card\">\n"
+        "                <h2>Wallet Management</h2>\n"
+        "                <div class=\"form-group\">\n"
+        "                    <label>Export/Import Wallet (Coming Soon)</label>\n"
+        "                    <p style=\"color: #666; font-size: 14px;\">Encrypted wallet export/import with Argon2id will be available in the next update.</p>\n"
+        "                </div>\n"
+        "                <div class=\"form-group\">\n"
+        "                    <label>Transaction History</label>\n"
+        "                    <button class=\"btn\" onclick=\"viewHistory()\">View Transaction History</button>\n"
+        "                    <div id=\"historyStatus\"></div>\n"
+        "                </div>\n"
         "            </div>\n"
         "        </div>\n"
         "    </div>\n"
@@ -317,18 +346,19 @@ const char* mxd_get_wallet_html(void) {
         "            element.innerHTML = '<div class=\"status ' + type + '\">' + message + '</div>';\n"
         "        }\n"
         "        async function generateAddress() {\n"
+        "            const algorithm = document.getElementById('algorithm').value;\n"
         "            const passphrase = document.getElementById('passphrase').value;\n"
-        "            showStatus('generateStatus', 'Generating address...', 'info');\n"
+        "            showStatus('generateStatus', 'Generating ' + algorithm + ' address...', 'info');\n"
         "            try {\n"
-        "                const response = await fetch('/wallet/generate', {\n"
+        "                const response = await fetch('/wallet/generate?algo=' + algorithm, {\n"
         "                    method: 'POST',\n"
         "                    headers: { 'Content-Type': 'application/json' },\n"
         "                    body: JSON.stringify({ passphrase: passphrase })\n"
         "                });\n"
         "                const data = await response.json();\n"
         "                if (data.success) {\n"
-        "                    addresses.push(data.address);\n"
-        "                    showStatus('generateStatus', 'Address generated: ' + data.address, 'success');\n"
+        "                    addresses.push({address: data.address, algo: data.algo});\n"
+        "                    showStatus('generateStatus', 'Address generated (' + data.algo + '): ' + data.address, 'success');\n"
         "                    updateAddressList();\n"
         "                    document.getElementById('passphrase').value = '';\n"
         "                } else {\n"
@@ -388,6 +418,18 @@ const char* mxd_get_wallet_html(void) {
         "        async function refreshAddresses() {\n"
         "            updateAddressList();\n"
         "        }\n"
+        "        async function listAddresses() {\n"
+        "            try {\n"
+        "                const response = await fetch('/wallet/addresses');\n"
+        "                const data = await response.json();\n"
+        "                if (data.success) {\n"
+        "                    addresses = data.addresses;\n"
+        "                    updateAddressList();\n"
+        "                }\n"
+        "            } catch (error) {\n"
+        "                console.error('Failed to list addresses:', error);\n"
+        "            }\n"
+        "        }\n"
         "        async function updateAddressList() {\n"
         "            const listElement = document.getElementById('addressList');\n"
         "            if (addresses.length === 0) {\n"
@@ -395,20 +437,42 @@ const char* mxd_get_wallet_html(void) {
         "                return;\n"
         "            }\n"
         "            let html = '';\n"
-        "            for (const address of addresses) {\n"
+        "            for (const addrObj of addresses) {\n"
+        "                const address = addrObj.address || addrObj;\n"
+        "                const algo = addrObj.algo_name || addrObj.algo || 'Unknown';\n"
         "                try {\n"
         "                    const response = await fetch('/wallet/balance?address=' + encodeURIComponent(address));\n"
         "                    const data = await response.json();\n"
         "                    const balance = data.success ? data.balance : 'Error';\n"
-        "                    html += '<div class=\"address-item\"><div class=\"address\">' + address + '</div><div class=\"balance\">Balance: ' + balance + ' MXD</div></div>';\n"
+        "                    html += '<div class=\"address-item\"><div class=\"address\">' + address + ' <span style=\"color: #667eea; font-weight: bold;\">[' + algo + ']</span></div><div class=\"balance\">Balance: ' + balance + ' MXD</div></div>';\n"
         "                } catch (error) {\n"
-        "                    html += '<div class=\"address-item\"><div class=\"address\">' + address + '</div><div class=\"balance\">Balance: Error loading</div></div>';\n"
+        "                    html += '<div class=\"address-item\"><div class=\"address\">' + address + ' <span style=\"color: #667eea; font-weight: bold;\">[' + algo + ']</span></div><div class=\"balance\">Balance: Error loading</div></div>';\n"
         "                }\n"
         "            }\n"
         "            listElement.innerHTML = html;\n"
         "        }\n"
+        "        async function viewHistory() {\n"
+        "            try {\n"
+        "                const response = await fetch('/wallet/history');\n"
+        "                const data = await response.json();\n"
+        "                if (data.success) {\n"
+        "                    let html = '<h3>Transaction History</h3>';\n"
+        "                    if (data.transactions.length === 0) {\n"
+        "                        html += '<p>No transactions yet</p>';\n"
+        "                    } else {\n"
+        "                        for (const tx of data.transactions) {\n"
+        "                            html += '<div class=\"address-item\"><small>' + tx.txid.substring(0, 16) + '...</small><br>';\n"
+        "                            html += 'From: ' + tx.from + '<br>To: ' + tx.to + '<br>Amount: ' + tx.amount + ' MXD</div>';\n"
+        "                        }\n"
+        "                    }\n"
+        "                    showStatus('historyStatus', html, 'info');\n"
+        "                }\n"
+        "            } catch (error) {\n"
+        "                showStatus('historyStatus', 'Error loading history: ' + error.message, 'error');\n"
+        "            }\n"
+        "        }\n"
         "        window.onload = function() {\n"
-        "            updateAddressList();\n"
+        "            listAddresses();\n"
         "        };\n"
         "    </script>\n"
         "</body>\n"
@@ -625,6 +689,335 @@ const char* mxd_handle_wallet_send(const char* recipient, const char* amount) {
     return wallet_response_buffer;
 }
 
+const char* mxd_handle_wallet_list_addresses(void) {
+    if (!wallet_initialized) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Wallet not initialized\"}");
+        return wallet_response_buffer;
+    }
+    
+    pthread_mutex_lock(&wallet_mutex);
+    
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", 1);
+    cJSON* addresses = cJSON_CreateArray();
+    
+    for (size_t i = 0; i < wallet.keypair_count; i++) {
+        cJSON* addr_obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(addr_obj, "address", wallet.keypairs[i].address);
+        cJSON_AddNumberToObject(addr_obj, "algo_id", wallet.keypairs[i].algo_id);
+        cJSON_AddStringToObject(addr_obj, "algo_name", 
+            wallet.keypairs[i].algo_id == 1 ? "Ed25519" : "Dilithium5");
+        cJSON_AddItemToArray(addresses, addr_obj);
+    }
+    
+    cJSON_AddItemToObject(root, "addresses", addresses);
+    
+    char* json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    
+    strncpy(wallet_response_buffer, json_str, sizeof(wallet_response_buffer) - 1);
+    free(json_str);
+    
+    pthread_mutex_unlock(&wallet_mutex);
+    
+    return wallet_response_buffer;
+}
+
+int mxd_add_transaction_to_history(const char* txid, const char* from_addr, 
+                                    const char* to_addr, double amount, 
+                                    uint64_t timestamp, uint8_t algo_id) {
+    if (!txid || !from_addr || !to_addr) {
+        return -1;
+    }
+    
+    pthread_mutex_lock(&history_mutex);
+    
+    if (transaction_history_count >= 1000) {
+        memmove(&transaction_history[0], &transaction_history[1], 
+                sizeof(mxd_transaction_history_entry_t) * 999);
+        transaction_history_count = 999;
+    }
+    
+    mxd_transaction_history_entry_t* entry = &transaction_history[transaction_history_count];
+    strncpy(entry->txid, txid, sizeof(entry->txid) - 1);
+    strncpy(entry->from_address, from_addr, sizeof(entry->from_address) - 1);
+    strncpy(entry->to_address, to_addr, sizeof(entry->to_address) - 1);
+    entry->amount = amount;
+    entry->timestamp = timestamp;
+    entry->algo_id = algo_id;
+    strncpy(entry->status, "confirmed", sizeof(entry->status) - 1);
+    
+    transaction_history_count++;
+    
+    pthread_mutex_unlock(&history_mutex);
+    
+    return 0;
+}
+
+const char* mxd_handle_wallet_transaction_history(const char* address) {
+    if (!wallet_initialized) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Wallet not initialized\"}");
+        return wallet_response_buffer;
+    }
+    
+    pthread_mutex_lock(&history_mutex);
+    
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "success", 1);
+    cJSON* transactions = cJSON_CreateArray();
+    
+    for (size_t i = 0; i < transaction_history_count; i++) {
+        if (!address || 
+            strcmp(transaction_history[i].from_address, address) == 0 ||
+            strcmp(transaction_history[i].to_address, address) == 0) {
+            
+            cJSON* tx_obj = cJSON_CreateObject();
+            cJSON_AddStringToObject(tx_obj, "txid", transaction_history[i].txid);
+            cJSON_AddStringToObject(tx_obj, "from", transaction_history[i].from_address);
+            cJSON_AddStringToObject(tx_obj, "to", transaction_history[i].to_address);
+            cJSON_AddNumberToObject(tx_obj, "amount", transaction_history[i].amount);
+            cJSON_AddNumberToObject(tx_obj, "timestamp", transaction_history[i].timestamp);
+            cJSON_AddNumberToObject(tx_obj, "algo_id", transaction_history[i].algo_id);
+            cJSON_AddStringToObject(tx_obj, "status", transaction_history[i].status);
+            cJSON_AddItemToArray(transactions, tx_obj);
+        }
+    }
+    
+    cJSON_AddItemToObject(root, "transactions", transactions);
+    
+    char* json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    
+    strncpy(wallet_response_buffer, json_str, sizeof(wallet_response_buffer) - 1);
+    free(json_str);
+    
+    pthread_mutex_unlock(&history_mutex);
+    
+    return wallet_response_buffer;
+}
+
+int mxd_update_hybrid_crypto_metrics(const mxd_hybrid_crypto_metrics_t* metrics) {
+    if (!metrics) {
+        return -1;
+    }
+    
+    pthread_mutex_lock(&hybrid_metrics_mutex);
+    hybrid_metrics = *metrics;
+    pthread_mutex_unlock(&hybrid_metrics_mutex);
+    
+    return 0;
+}
+
+const char* mxd_get_hybrid_crypto_metrics_json(void) {
+    pthread_mutex_lock(&hybrid_metrics_mutex);
+    
+    snprintf(hybrid_metrics_buffer, sizeof(hybrid_metrics_buffer),
+        "{"
+        "\"ed25519_addresses\":%u,"
+        "\"dilithium5_addresses\":%u,"
+        "\"ed25519_transactions\":%u,"
+        "\"dilithium5_transactions\":%u,"
+        "\"ed25519_volume\":%.8f,"
+        "\"dilithium5_volume\":%.8f,"
+        "\"total_addresses\":%u,"
+        "\"total_transactions\":%u,"
+        "\"total_volume\":%.8f"
+        "}",
+        hybrid_metrics.ed25519_addresses,
+        hybrid_metrics.dilithium5_addresses,
+        hybrid_metrics.ed25519_transactions,
+        hybrid_metrics.dilithium5_transactions,
+        hybrid_metrics.ed25519_volume,
+        hybrid_metrics.dilithium5_volume,
+        hybrid_metrics.ed25519_addresses + hybrid_metrics.dilithium5_addresses,
+        hybrid_metrics.ed25519_transactions + hybrid_metrics.dilithium5_transactions,
+        hybrid_metrics.ed25519_volume + hybrid_metrics.dilithium5_volume
+    );
+    
+    pthread_mutex_unlock(&hybrid_metrics_mutex);
+    
+    return hybrid_metrics_buffer;
+}
+
+int mxd_save_wallet_to_file(const char* filepath) {
+    if (!wallet_initialized || !filepath) {
+        return -1;
+    }
+    
+    pthread_mutex_lock(&wallet_mutex);
+    
+    cJSON* root = cJSON_CreateObject();
+    cJSON* addresses = cJSON_CreateArray();
+    
+    for (size_t i = 0; i < wallet.keypair_count; i++) {
+        cJSON* addr_obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(addr_obj, "address", wallet.keypairs[i].address);
+        cJSON_AddNumberToObject(addr_obj, "algo_id", wallet.keypairs[i].algo_id);
+        
+        char pubkey_hex[MXD_PUBKEY_MAX_LEN * 2 + 1];
+        for (size_t j = 0; j < wallet.keypairs[i].public_key_length; j++) {
+            snprintf(pubkey_hex + (j * 2), 3, "%02x", wallet.keypairs[i].public_key[j]);
+        }
+        pubkey_hex[wallet.keypairs[i].public_key_length * 2] = '\0';
+        cJSON_AddStringToObject(addr_obj, "public_key", pubkey_hex);
+        
+        char privkey_hex[MXD_PRIVKEY_MAX_LEN * 2 + 1];
+        for (size_t j = 0; j < wallet.keypairs[i].private_key_length; j++) {
+            snprintf(privkey_hex + (j * 2), 3, "%02x", wallet.keypairs[i].private_key[j]);
+        }
+        privkey_hex[wallet.keypairs[i].private_key_length * 2] = '\0';
+        cJSON_AddStringToObject(addr_obj, "private_key", privkey_hex);
+        
+        cJSON_AddStringToObject(addr_obj, "passphrase", wallet.keypairs[i].passphrase);
+        
+        cJSON_AddItemToArray(addresses, addr_obj);
+    }
+    
+    cJSON_AddItemToObject(root, "addresses", addresses);
+    cJSON_AddNumberToObject(root, "version", 2);
+    cJSON_AddNumberToObject(root, "timestamp", time(NULL));
+    
+    char* json_str = cJSON_Print(root);
+    cJSON_Delete(root);
+    
+    if (!json_str) {
+        pthread_mutex_unlock(&wallet_mutex);
+        MXD_LOG_ERROR("wallet", "Failed to serialize wallet to JSON");
+        return -2;
+    }
+    
+    FILE* fp = fopen(filepath, "wb");
+    if (!fp) {
+        pthread_mutex_unlock(&wallet_mutex);
+        free(json_str);
+        MXD_LOG_ERROR("wallet", "Failed to open wallet file '%s' for writing", filepath);
+        return -1;
+    }
+    
+    if (fputs(json_str, fp) == EOF) {
+        fclose(fp);
+        free(json_str);
+        pthread_mutex_unlock(&wallet_mutex);
+        MXD_LOG_ERROR("wallet", "Failed to write wallet data to '%s'", filepath);
+        return -3;
+    }
+    
+    if (fflush(fp) != 0) {
+        MXD_LOG_WARN("wallet", "fflush failed for '%s'", filepath);
+    }
+    
+    fclose(fp);
+    free(json_str);
+    
+    pthread_mutex_unlock(&wallet_mutex);
+    
+    MXD_LOG_INFO("wallet", "Wallet saved to %s", filepath);
+    return 0;
+}
+
+int mxd_load_wallet_from_file(const char* filepath) {
+    if (!wallet_initialized || !filepath) {
+        return -1;
+    }
+    
+    FILE* fp = fopen(filepath, "r");
+    if (!fp) {
+        MXD_LOG_ERROR("wallet", "Failed to open wallet file: %s", filepath);
+        return -1;
+    }
+    
+    fseek(fp, 0, SEEK_END);
+    long fsize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    
+    char* json_str = (char*)malloc(fsize + 1);
+    if (!json_str) {
+        fclose(fp);
+        return -1;
+    }
+    
+    fread(json_str, 1, fsize, fp);
+    fclose(fp);
+    json_str[fsize] = '\0';
+    
+    cJSON* root = cJSON_Parse(json_str);
+    free(json_str);
+    
+    if (!root) {
+        MXD_LOG_ERROR("wallet", "Failed to parse wallet JSON");
+        return -1;
+    }
+    
+    pthread_mutex_lock(&wallet_mutex);
+    
+    for (size_t i = 0; i < wallet.keypair_count; i++) {
+        if (wallet.keypairs[i].public_key) free(wallet.keypairs[i].public_key);
+        if (wallet.keypairs[i].private_key) free(wallet.keypairs[i].private_key);
+    }
+    memset(&wallet, 0, sizeof(wallet));
+    
+    cJSON* addresses = cJSON_GetObjectItem(root, "addresses");
+    if (addresses && cJSON_IsArray(addresses)) {
+        int count = cJSON_GetArraySize(addresses);
+        for (int i = 0; i < count && i < 10; i++) {
+            cJSON* addr_obj = cJSON_GetArrayItem(addresses, i);
+            
+            cJSON* address = cJSON_GetObjectItem(addr_obj, "address");
+            cJSON* algo_id = cJSON_GetObjectItem(addr_obj, "algo_id");
+            cJSON* pubkey = cJSON_GetObjectItem(addr_obj, "public_key");
+            cJSON* privkey = cJSON_GetObjectItem(addr_obj, "private_key");
+            cJSON* passphrase = cJSON_GetObjectItem(addr_obj, "passphrase");
+            
+            if (address && algo_id && pubkey && privkey) {
+                mxd_wallet_keypair_t* kp = &wallet.keypairs[wallet.keypair_count];
+                
+                strncpy(kp->address, address->valuestring, sizeof(kp->address) - 1);
+                kp->algo_id = (uint8_t)algo_id->valueint;
+                
+                size_t pubkey_len = strlen(pubkey->valuestring) / 2;
+                kp->public_key = (uint8_t*)malloc(pubkey_len);
+                kp->public_key_length = (uint16_t)pubkey_len;
+                for (size_t j = 0; j < pubkey_len; j++) {
+                    sscanf(pubkey->valuestring + (j * 2), "%2hhx", &kp->public_key[j]);
+                }
+                
+                size_t privkey_len = strlen(privkey->valuestring) / 2;
+                kp->private_key = (uint8_t*)malloc(privkey_len);
+                kp->private_key_length = (uint16_t)privkey_len;
+                for (size_t j = 0; j < privkey_len; j++) {
+                    sscanf(privkey->valuestring + (j * 2), "%2hhx", &kp->private_key[j]);
+                }
+                
+                if (passphrase && cJSON_IsString(passphrase)) {
+                    strncpy(kp->passphrase, passphrase->valuestring, sizeof(kp->passphrase) - 1);
+                }
+                
+                wallet.keypair_count++;
+            }
+        }
+    }
+    
+    cJSON_Delete(root);
+    pthread_mutex_unlock(&wallet_mutex);
+    
+    MXD_LOG_INFO("wallet", "Wallet loaded from %s with %zu addresses", filepath, wallet.keypair_count);
+    return 0;
+}
+
+const char* mxd_handle_wallet_export(const char* password) {
+    snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+        "{\"success\":false,\"error\":\"Export feature not yet fully implemented\"}");
+    return wallet_response_buffer;
+}
+
+const char* mxd_handle_wallet_import(const char* encrypted_data, const char* password) {
+    snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+        "{\"success\":false,\"error\":\"Import feature not yet fully implemented\"}");
+    return wallet_response_buffer;
+}
+
 static void handle_http_request(int client_socket) {
     char buffer[2048];
     ssize_t bytes_read = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
@@ -675,6 +1068,22 @@ static void handle_http_request(int client_socket) {
             response_body = mxd_handle_wallet_balance(decoded_address);
             content_type = "application/json";
             status_code = 200;
+        } else if (strcmp(path, "/wallet/addresses") == 0) {
+            response_body = mxd_handle_wallet_list_addresses();
+            content_type = "application/json";
+            status_code = 200;
+        } else if (strncmp(path, "/wallet/history", 15) == 0) {
+            const char* address = NULL;
+            if (strncmp(path, "/wallet/history?address=", 24) == 0) {
+                address = path + 24;
+            }
+            response_body = mxd_handle_wallet_transaction_history(address);
+            content_type = "application/json";
+            status_code = 200;
+        } else if (strcmp(path, "/metrics/hybrid") == 0) {
+            response_body = mxd_get_hybrid_crypto_metrics_json();
+            content_type = "application/json";
+            status_code = 200;
         }
     } else if (strcmp(method, "POST") == 0) {
         if (strcmp(path, "/wallet/generate") == 0 || strncmp(path, "/wallet/generate?", 17) == 0) {
@@ -700,6 +1109,47 @@ static void handle_http_request(int client_socket) {
                     cJSON* amount = cJSON_GetObjectItem(json, "amount");
                     if (to && amount && cJSON_IsString(to) && cJSON_IsString(amount)) {
                         response_body = mxd_handle_wallet_send(to->valuestring, amount->valuestring);
+                        content_type = "application/json";
+                        status_code = 200;
+                    }
+                    cJSON_Delete(json);
+                }
+            }
+            if (!response_body) {
+                response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
+                content_type = "application/json";
+                status_code = 400;
+            }
+        } else if (strcmp(path, "/wallet/export") == 0) {
+            char* body_start = strstr(buffer, "\r\n\r\n");
+            if (body_start) {
+                body_start += 4;
+                cJSON* json = cJSON_Parse(body_start);
+                if (json) {
+                    cJSON* password = cJSON_GetObjectItem(json, "password");
+                    if (password && cJSON_IsString(password)) {
+                        response_body = mxd_handle_wallet_export(password->valuestring);
+                        content_type = "application/json";
+                        status_code = 200;
+                    }
+                    cJSON_Delete(json);
+                }
+            }
+            if (!response_body) {
+                response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
+                content_type = "application/json";
+                status_code = 400;
+            }
+        } else if (strcmp(path, "/wallet/import") == 0) {
+            char* body_start = strstr(buffer, "\r\n\r\n");
+            if (body_start) {
+                body_start += 4;
+                cJSON* json = cJSON_Parse(body_start);
+                if (json) {
+                    cJSON* encrypted_data = cJSON_GetObjectItem(json, "encrypted_data");
+                    cJSON* password = cJSON_GetObjectItem(json, "password");
+                    if (encrypted_data && password && cJSON_IsString(encrypted_data) && cJSON_IsString(password)) {
+                        response_body = mxd_handle_wallet_import(encrypted_data->valuestring, password->valuestring);
                         content_type = "application/json";
                         status_code = 200;
                     }

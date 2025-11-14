@@ -67,6 +67,42 @@ const char* mxd_handle_wallet_generate(void);
 const char* mxd_handle_wallet_balance(const char* address);
 const char* mxd_handle_wallet_send(const char* recipient, const char* amount);
 
+// Wallet persistence and export/import
+int mxd_save_wallet_to_file(const char* filepath);
+int mxd_load_wallet_from_file(const char* filepath);
+const char* mxd_handle_wallet_export(const char* password);
+const char* mxd_handle_wallet_import(const char* encrypted_data, const char* password);
+const char* mxd_handle_wallet_list_addresses(void);
+
+// Transaction history
+typedef struct {
+    char txid[129];
+    char from_address[64];
+    char to_address[64];
+    double amount;
+    uint64_t timestamp;
+    uint8_t algo_id;
+    char status[32];
+} mxd_transaction_history_entry_t;
+
+int mxd_add_transaction_to_history(const char* txid, const char* from_addr, 
+                                    const char* to_addr, double amount, 
+                                    uint64_t timestamp, uint8_t algo_id);
+const char* mxd_handle_wallet_transaction_history(const char* address);
+
+// Hybrid crypto metrics
+typedef struct {
+    uint32_t ed25519_addresses;
+    uint32_t dilithium5_addresses;
+    uint32_t ed25519_transactions;
+    uint32_t dilithium5_transactions;
+    double ed25519_volume;
+    double dilithium5_volume;
+} mxd_hybrid_crypto_metrics_t;
+
+int mxd_update_hybrid_crypto_metrics(const mxd_hybrid_crypto_metrics_t* metrics);
+const char* mxd_get_hybrid_crypto_metrics_json(void);
+
 #ifdef __cplusplus
 }
 #endif
