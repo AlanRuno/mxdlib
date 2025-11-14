@@ -93,6 +93,8 @@ static pthread_t peer_connector_thread;
 static volatile int peer_connector_running = 0;
 static int peer_connector_thread_created = 0;
 
+static int server_thread_created = 0;
+
 typedef struct {
     uint32_t magic;      // Network byte order
     uint8_t version;     // Protocol version
@@ -1715,6 +1717,7 @@ int mxd_start_p2p(void) {
     }
     
     server_running = 1;
+    server_thread_created = 0;
     pthread_attr_t server_attr;
     pthread_attr_init(&server_attr);
     pthread_attr_setstacksize(&server_attr, 512 * 1024); // 512KB stack
@@ -1727,6 +1730,7 @@ int mxd_start_p2p(void) {
         return 1;
     }
     pthread_attr_destroy(&server_attr);
+    server_thread_created = 1;
     
     usleep(50000);
     
@@ -1825,7 +1829,10 @@ int mxd_stop_p2p(void) {
     active_connection_count = 0;
     pthread_mutex_unlock(&peer_mutex);
     
-    pthread_join(server_thread, NULL);
+    if (server_thread_created) {
+        pthread_join(server_thread, NULL);
+        server_thread_created = 0;
+    }
     
     if (keepalive_thread_created) {
         pthread_join(keepalive_thread, NULL);
