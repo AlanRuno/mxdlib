@@ -717,8 +717,11 @@ static void handle_pong_message(const char *address, uint16_t port) {
     pthread_mutex_unlock(&peer_mutex);
 }
 
-static inline size_t handshake_wire_size(void) {
-    return 256 + 4 + 2 + 1 + 2 + MXD_PUBKEY_MAX_LEN + 32 + 2 + MXD_SIG_MAX_LEN;
+static inline size_t handshake_wire_size(const mxd_handshake_payload_t *handshake) {
+    if (!handshake) {
+        return 256 + 4 + 2 + 1 + 2 + MXD_PUBKEY_MAX_LEN + 32 + 2 + MXD_SIG_MAX_LEN;
+    }
+    return 256 + 4 + 2 + 1 + 2 + handshake->public_key_length + 32 + 2 + handshake->signature_length;
 }
 
 static size_t handshake_to_wire(const mxd_handshake_payload_t *handshake, uint8_t *buf, size_t buf_len) {
@@ -750,10 +753,10 @@ static size_t handshake_to_wire(const mxd_handshake_payload_t *handshake, uint8_
     memcpy(buf + offset, &pubkey_len_net, 2);
     offset += 2;
     
-    // public_key (MXD_PUBKEY_MAX_LEN bytes)
-    if (offset + MXD_PUBKEY_MAX_LEN > buf_len) return 0;
-    memcpy(buf + offset, handshake->public_key, MXD_PUBKEY_MAX_LEN);
-    offset += MXD_PUBKEY_MAX_LEN;
+    // public_key (variable length based on public_key_length)
+    if (offset + handshake->public_key_length > buf_len) return 0;
+    memcpy(buf + offset, handshake->public_key, handshake->public_key_length);
+    offset += handshake->public_key_length;
     
     if (offset + 32 > buf_len) return 0;
     memcpy(buf + offset, handshake->challenge, 32);
@@ -765,9 +768,10 @@ static size_t handshake_to_wire(const mxd_handshake_payload_t *handshake, uint8_
     memcpy(buf + offset, &sig_len_net, 2);
     offset += 2;
     
-    if (offset + MXD_SIG_MAX_LEN > buf_len) return 0;
-    memcpy(buf + offset, handshake->signature, MXD_SIG_MAX_LEN);
-    offset += MXD_SIG_MAX_LEN;
+    // signature (variable length based on signature_length)
+    if (offset + handshake->signature_length > buf_len) return 0;
+    memcpy(buf + offset, handshake->signature, handshake->signature_length);
+    offset += handshake->signature_length;
     
     return offset;
 }
@@ -804,10 +808,11 @@ static int wire_to_handshake(const uint8_t *buf, size_t buf_len, mxd_handshake_p
     handshake->public_key_length = ntohs(pubkey_len_net);
     offset += 2;
     
-    // public_key (MXD_PUBKEY_MAX_LEN bytes)
-    if (offset + MXD_PUBKEY_MAX_LEN > buf_len) return -1;
-    memcpy(handshake->public_key, buf + offset, MXD_PUBKEY_MAX_LEN);
-    offset += MXD_PUBKEY_MAX_LEN;
+    // public_key (variable length based on public_key_length)
+    if (handshake->public_key_length > MXD_PUBKEY_MAX_LEN) return -1;
+    if (offset + handshake->public_key_length > buf_len) return -1;
+    memcpy(handshake->public_key, buf + offset, handshake->public_key_length);
+    offset += handshake->public_key_length;
     
     if (offset + 32 > buf_len) return -1;
     memcpy(handshake->challenge, buf + offset, 32);
@@ -820,9 +825,11 @@ static int wire_to_handshake(const uint8_t *buf, size_t buf_len, mxd_handshake_p
     handshake->signature_length = ntohs(sig_len_net);
     offset += 2;
     
-    if (offset + MXD_SIG_MAX_LEN > buf_len) return -1;
-    memcpy(handshake->signature, buf + offset, MXD_SIG_MAX_LEN);
-    offset += MXD_SIG_MAX_LEN;
+    // signature (variable length based on signature_length)
+    if (handshake->signature_length > MXD_SIG_MAX_LEN) return -1;
+    if (offset + handshake->signature_length > buf_len) return -1;
+    memcpy(handshake->signature, buf + offset, handshake->signature_length);
+    offset += handshake->signature_length;
     
     return 0;
 }
@@ -964,8 +971,13 @@ static int handle_handshake_message(const char *address, uint16_t port,
         
         mxd_handshake_payload_t reply_handshake;
         if (create_signed_handshake(&reply_handshake, NULL, 0) == 0) {
-            uint8_t wire_buf[sizeof(mxd_handshake_payload_t)];
-            size_t wire_len = handshake_to_wire(&reply_handshake, wire_buf, sizeof(wire_buf));
+            size_t wire_buf_size = handshake_wire_size(&reply_handshake);
+            uint8_t *wire_buf = malloc(wire_buf_size);
+            if (!wire_buf) {
+                MXD_LOG_ERROR("p2p", "Failed to allocate wire buffer for handshake reply");
+                return -1;
+            }
+            size_t wire_len = handshake_to_wire(&reply_handshake, wire_buf, wire_buf_size);
             if (wire_len > 0 && send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, wire_buf, wire_len) == 0) {
                 MXD_LOG_INFO("p2p", "Sent HANDSHAKE reply to %s:%d", address, port);
                 
@@ -978,6 +990,7 @@ static int handle_handshake_message(const char *address, uint16_t port,
             } else {
                 MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE reply to %s:%d", address, port);
             }
+            free(wire_buf);
         } else {
             MXD_LOG_ERROR("p2p", "Failed to create HANDSHAKE reply for %s:%d", address, port);
         }
@@ -1074,13 +1087,21 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
         return -1;
     }
     
-    uint8_t wire_buf[sizeof(mxd_handshake_payload_t)];
-    size_t wire_len = handshake_to_wire(&handshake, wire_buf, sizeof(wire_buf));
-    if (wire_len == 0 || send_on_socket(sock, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
-        MXD_LOG_DEBUG("p2p", "Failed to send HANDSHAKE to %s:%d for persistent connection", address, port);
+    size_t wire_buf_size = handshake_wire_size(&handshake);
+    uint8_t *wire_buf = malloc(wire_buf_size);
+    if (!wire_buf) {
+        MXD_LOG_ERROR("p2p", "Failed to allocate wire buffer for handshake");
         close(sock);
         return -1;
     }
+    size_t wire_len = handshake_to_wire(&handshake, wire_buf, wire_buf_size);
+    if (wire_len == 0 || send_on_socket(sock, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
+        MXD_LOG_DEBUG("p2p", "Failed to send HANDSHAKE to %s:%d for persistent connection", address, port);
+        free(wire_buf);
+        close(sock);
+        return -1;
+    }
+    free(wire_buf);
     
     uint8_t header_buffer[76];
     int read_result = read_n(sock, header_buffer, sizeof(header_buffer));
@@ -1346,14 +1367,23 @@ static void* connection_handler(void* arg) {
         return NULL;
     }
     
-    uint8_t wire_buf[sizeof(mxd_handshake_payload_t)];
-    size_t wire_len = handshake_to_wire(&handshake, wire_buf, sizeof(wire_buf));
-    if (wire_len == 0 || send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
-        MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE to %s:%d", conn->address, conn->port);
+    size_t wire_buf_size = handshake_wire_size(&handshake);
+    uint8_t *wire_buf = malloc(wire_buf_size);
+    if (!wire_buf) {
+        MXD_LOG_ERROR("p2p", "Failed to allocate wire buffer for handshake");
         close(conn->socket);
         conn->active = 0;
         return NULL;
     }
+    size_t wire_len = handshake_to_wire(&handshake, wire_buf, wire_buf_size);
+    if (wire_len == 0 || send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE to %s:%d", conn->address, conn->port);
+        free(wire_buf);
+        close(conn->socket);
+        conn->active = 0;
+        return NULL;
+    }
+    free(wire_buf);
     
     MXD_LOG_INFO("p2p", "Sent HANDSHAKE to %s:%d", conn->address, conn->port);
     
@@ -1971,13 +2001,21 @@ int mxd_send_message(const char* address, uint16_t port,
         return -1;
     }
     
-    uint8_t wire_buf[sizeof(mxd_handshake_payload_t)];
-    size_t wire_len = handshake_to_wire(&handshake, wire_buf, sizeof(wire_buf));
-    if (wire_len == 0 || send_on_socket(sock, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
-        MXD_LOG_DEBUG("p2p", "Failed to send HANDSHAKE to %s:%d", address, port);
+    size_t wire_buf_size = handshake_wire_size(&handshake);
+    uint8_t *wire_buf = malloc(wire_buf_size);
+    if (!wire_buf) {
+        MXD_LOG_ERROR("p2p", "Failed to allocate wire buffer for handshake");
         close(sock);
         return -1;
     }
+    size_t wire_len = handshake_to_wire(&handshake, wire_buf, wire_buf_size);
+    if (wire_len == 0 || send_on_socket(sock, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
+        MXD_LOG_DEBUG("p2p", "Failed to send HANDSHAKE to %s:%d", address, port);
+        free(wire_buf);
+        close(sock);
+        return -1;
+    }
+    free(wire_buf);
     
     struct timeval short_timeout;
     short_timeout.tv_sec = 0;
