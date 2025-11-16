@@ -178,8 +178,7 @@ install_system_deps() {
     fi
     
     if ! verify_system_deps; then
-        log "Error: Some system dependencies are still missing"
-        exit 1
+        log "Warning: Some system dependencies may be missing, but continuing with custom dependency installation"
     fi
 }
 
