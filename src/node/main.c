@@ -19,6 +19,7 @@
 #include "../include/mxd_monitoring.h"
 #include "../include/mxd_address.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_ntp.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
 
@@ -436,7 +437,34 @@ int main(int argc, char** argv) {
                 }
             }
             if (!found) {
-                mxd_add_to_rapid_table(&rapid_table, &node_stake, current_config.node_id);
+                int should_add = 1;
+                if (blockchain_height > 0) {
+                    // Calculate total stake
+                    double total_stake = 0.0;
+                    for (size_t i = 0; i < rapid_table.count; i++) {
+                        if (rapid_table.nodes[i]) {
+                            total_stake += rapid_table.nodes[i]->stake_amount;
+                        }
+                    }
+                    total_stake += node_stake.stake_amount;
+                    
+                    if (mxd_validate_node_stake(&node_stake, total_stake) != 0) {
+                        MXD_LOG_DEBUG("node", "Node %s does not meet stake requirement", node_stake.node_id);
+                        should_add = 0;
+                    }
+                    
+                    if (should_add) {
+                        uint64_t current_time = mxd_now_ms();
+                        if (mxd_validate_node_performance(&node_stake, current_time) != 0) {
+                            MXD_LOG_DEBUG("node", "Node %s does not meet performance requirements", node_stake.node_id);
+                            should_add = 0;
+                        }
+                    }
+                }
+                
+                if (should_add) {
+                    mxd_add_to_rapid_table(&rapid_table, &node_stake, current_config.node_id);
+                }
             }
         }
         
