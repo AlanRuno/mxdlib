@@ -105,4 +105,10 @@ int mxd_load_config(const char* config_file, mxd_config_t* config);
 // Returns 0 on success (including fallback), -1 on critical failure
 int mxd_fetch_bootstrap_nodes(mxd_config_t* config);
 
+// Get the global configuration instance
+mxd_config_t* mxd_get_config(void);
+
+// Set the global configuration instance
+void mxd_set_global_config(mxd_config_t* config);
+
 #endif // MXD_CONFIG_H

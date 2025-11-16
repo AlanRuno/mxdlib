@@ -210,7 +210,8 @@ target_sources(mxd PRIVATE
     src/mxd_blockchain_sync.c
     src/mxd_blockchain_db.c
     src/node/metrics_display.c
-    src/utils/mxd_http.c)
+    src/utils/mxd_http.c
+    src/metrics/mxd_prometheus.c)
 
 # Add main node executable
 add_executable(mxd_node src/node/main.c)

@@ -8,6 +8,16 @@
 #include "utils/mxd_http.h"
 #include "mxd_logging.h"
 
+static mxd_config_t* global_config = NULL;
+
+mxd_config_t* mxd_get_config(void) {
+    return global_config;
+}
+
+void mxd_set_global_config(mxd_config_t* config) {
+    global_config = config;
+}
+
 static char* trim(char* str) {
     char* end;
     while(isspace((unsigned char)*str)) str++;
