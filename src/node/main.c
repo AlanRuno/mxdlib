@@ -19,6 +19,7 @@
 #include "../include/mxd_monitoring.h"
 #include "../include/mxd_address.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_ntp.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
 
@@ -418,6 +419,10 @@ int main(int argc, char** argv) {
         mxd_node_stake_t snapshot_storage[100];
         size_t snapshot_count = 0;
         
+        mxd_get_blockchain_height(&blockchain_height);
+        int is_genesis_mode = (genesis_initialized && blockchain_height == 0);
+        int is_locked = mxd_is_genesis_locked();
+        
         pthread_mutex_lock(&metrics_mutex);
         
         local_metrics = node_metrics;
@@ -426,7 +431,7 @@ int main(int argc, char** argv) {
         local_stake.active = mxd_validate_performance(&local_metrics);
         local_stake.rank = (int)(local_metrics.performance_score * 100);
         
-        if (rapid_table.count == 0 || rapid_table.count < 10) {
+        if (rapid_table.count < 10) {
             int found = 0;
             for (size_t i = 0; i < rapid_table.count; i++) {
                 if (rapid_table.nodes[i] && strcmp(rapid_table.nodes[i]->node_id, node_stake.node_id) == 0) {
@@ -436,7 +441,39 @@ int main(int argc, char** argv) {
                 }
             }
             if (!found) {
-                mxd_add_to_rapid_table(&rapid_table, &node_stake, current_config.node_id);
+                int should_add = 1;
+                
+                if (is_genesis_mode && is_locked) {
+                    MXD_LOG_DEBUG("node", "Genesis coordination locked, rejecting new member %s", node_stake.node_id);
+                    should_add = 0;
+                }
+                
+                if (should_add && !is_genesis_mode) {
+                    double total_stake = 0.0;
+                    for (size_t i = 0; i < rapid_table.count; i++) {
+                        if (rapid_table.nodes[i]) {
+                            total_stake += rapid_table.nodes[i]->stake_amount;
+                        }
+                    }
+                    total_stake += node_stake.stake_amount;
+                    
+                    if (mxd_validate_node_stake(&node_stake, total_stake) != 0) {
+                        MXD_LOG_DEBUG("node", "Node %s does not meet stake requirement", node_stake.node_id);
+                        should_add = 0;
+                    }
+                    
+                    if (should_add) {
+                        uint64_t current_time = mxd_now_ms();
+                        if (mxd_validate_node_performance(&node_stake, current_time) != 0) {
+                            MXD_LOG_DEBUG("node", "Node %s does not meet performance requirements", node_stake.node_id);
+                            should_add = 0;
+                        }
+                    }
+                }
+                
+                if (should_add) {
+                    mxd_add_to_rapid_table(&rapid_table, &node_stake, current_config.node_id);
+                }
             }
         }
         
