@@ -79,16 +79,36 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     // Set default configuration first
     mxd_set_default_config(config);
     
-    // If no config file specified, validate and use defaults
-    if (config_file == NULL) {
-        MXD_LOG_INFO("config", "Using default configuration");
-        return mxd_validate_config(config);
+    // If no config file specified, try default locations
+    const char* config_paths[3] = {NULL, NULL, NULL};
+    int path_count = 0;
+    
+    if (config_file != NULL) {
+        // User-specified config file
+        config_paths[path_count++] = config_file;
+    } else {
+        config_paths[path_count++] = "default_config.json";  // Same directory as executable
+        config_paths[path_count++] = "config/default_node.json";  // Config subdirectory
     }
     
-    // Try to open config file
-    FILE* fp = fopen(config_file, "r");
+    FILE* fp = NULL;
+    const char* loaded_path = NULL;
+    for (int i = 0; i < path_count; i++) {
+        if (config_paths[i] == NULL) continue;
+        
+        fp = fopen(config_paths[i], "r");
+        if (fp) {
+            loaded_path = config_paths[i];
+            MXD_LOG_INFO("config", "Loading configuration from: %s", loaded_path);
+            break;
+        } else {
+            MXD_LOG_DEBUG("config", "Config file not found: %s", config_paths[i]);
+        }
+    }
+    
+    // If no config file found, use defaults
     if (!fp) {
-        MXD_LOG_WARN("config", "Failed to open config file: %s, using default configuration", config_file);
+        MXD_LOG_INFO("config", "No config file found, using default configuration");
         if (mxd_fetch_bootstrap_nodes(config) != 0) {
             MXD_LOG_WARN("config", "Failed to fetch bootstrap nodes from network API with defaults");
         } else {

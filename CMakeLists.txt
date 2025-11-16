@@ -162,9 +162,12 @@ else()
         ${ROCKSDB_LIBRARY}
         -Wl,--no-whole-archive
         m
-        pthread
-        dl
-        rt)
+        pthread)
+    
+    # Platform-specific libraries (not available on macOS)
+    if(NOT APPLE)
+        target_link_libraries(mxd dl rt)
+    endif()
 endif()
 
 if(MXD_WITH_WASI)
@@ -219,21 +222,22 @@ install(TARGETS mxd_node
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/src/node/default_config.json
     DESTINATION bin)
 
-# Ensure whole-archive linking
-set_target_properties(mxd_node PROPERTIES
-    LINK_FLAGS "-Wl,--whole-archive"
-    LINK_WHAT_YOU_USE TRUE)
+# Note: Removed invalid LINK_FLAGS that opened --whole-archive without closing it
+# The mxd_node executable doesn't need whole-archive linking
 
 # Add enterprise features test executable
 add_executable(mxd_enterprise_features_tests
     tests/test_enterprise_features.c
 )
 
+# Use Threads::Threads for cross-platform pthread support
+find_package(Threads REQUIRED)
+
 target_link_libraries(mxd_enterprise_features_tests
     mxd
     ${OPENSSL_LIBRARIES}
     sodium
-    pthread
+    Threads::Threads
 )
 
 # Add test for enterprise features
