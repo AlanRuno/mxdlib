@@ -41,6 +41,105 @@ static rate_limit_entry_t rate_limits[100];
 static int rate_limit_count = 0;
 static pthread_mutex_t rate_limit_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static int constant_time_compare(const char* a, const char* b, size_t len) {
+    volatile unsigned char result = 0;
+    for (size_t i = 0; i < len; i++) {
+        result |= a[i] ^ b[i];
+    }
+    return result == 0;
+}
+
+static int check_rate_limit(const char* client_ip) {
+    if (!global_config || global_config->http.rate_limit_per_minute == 0) {
+        return 1;
+    }
+    
+    pthread_mutex_lock(&rate_limit_mutex);
+    
+    time_t now = time(NULL);
+    int found = 0;
+    
+    for (int i = 0; i < rate_limit_count; i++) {
+        if (strcmp(rate_limits[i].ip, client_ip) == 0) {
+            found = 1;
+            if (now - rate_limits[i].last_request >= 60) {
+                rate_limits[i].request_count = 1;
+                rate_limits[i].last_request = now;
+            } else {
+                rate_limits[i].request_count++;
+                if (rate_limits[i].request_count > (int)global_config->http.rate_limit_per_minute) {
+                    pthread_mutex_unlock(&rate_limit_mutex);
+                    mxd_metrics_increment("mxd_http_rate_limit_violations_total");
+                    return 0;
+                }
+            }
+            break;
+        }
+    }
+    
+    if (!found && rate_limit_count < 100) {
+        strncpy(rate_limits[rate_limit_count].ip, client_ip, sizeof(rate_limits[rate_limit_count].ip) - 1);
+        rate_limits[rate_limit_count].last_request = now;
+        rate_limits[rate_limit_count].request_count = 1;
+        rate_limit_count++;
+    }
+    
+    pthread_mutex_unlock(&rate_limit_mutex);
+    return 1;
+}
+
+static int check_bearer_token(const char* auth_header) {
+    if (!global_config || !global_config->http.require_auth) {
+        return 1;
+    }
+    
+    if (global_config->http.api_token[0] == '\0') {
+        return 1;
+    }
+    
+    if (!auth_header || strncmp(auth_header, "Bearer ", 7) != 0) {
+        mxd_metrics_increment("mxd_http_auth_failures_total");
+        return 0;
+    }
+    
+    const char* token = auth_header + 7;
+    size_t token_len = strlen(token);
+    size_t expected_len = strlen(global_config->http.api_token);
+    
+    if (token_len != expected_len) {
+        mxd_metrics_increment("mxd_http_auth_failures_total");
+        return 0;
+    }
+    
+    if (!constant_time_compare(token, global_config->http.api_token, token_len)) {
+        mxd_metrics_increment("mxd_http_auth_failures_total");
+        return 0;
+    }
+    
+    return 1;
+}
+
+static int check_wallet_access(const char* auth_header, const char** error_response, const char** error_content_type, int* error_status) {
+    if (global_config && !global_config->http.wallet_enabled) {
+        *error_response = "{\"error\":\"Wallet endpoints are disabled\"}";
+        *error_content_type = "application/json";
+        *error_status = 403;
+        mxd_metrics_increment("mxd_http_wallet_requests_total");
+        return 0;
+    }
+    
+    if (!check_bearer_token(auth_header)) {
+        *error_response = "{\"error\":\"Unauthorized\"}";
+        *error_content_type = "application/json";
+        *error_status = 401;
+        mxd_metrics_increment("mxd_http_wallet_requests_total");
+        return 0;
+    }
+    
+    mxd_metrics_increment("mxd_http_wallet_requests_total");
+    return 1;
+}
+
 static mxd_wallet_t wallet = {0};
 static int wallet_initialized = 0;
 static char wallet_response_buffer[8192];
@@ -1425,15 +1524,47 @@ static void handle_http_request(int client_socket) {
     
     buffer[bytes_read] = '\0';
     
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    getpeername(client_socket, (struct sockaddr*)&client_addr, &addr_len);
+    char client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+    
+    if (!check_rate_limit(client_ip)) {
+        const char* rate_limit_response = 
+            "HTTP/1.1 429 Too Many Requests\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: 60\r\n"
+            "Retry-After: 60\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"error\":\"Rate limit exceeded\",\"retry_after_seconds\":60}";
+        send(client_socket, rate_limit_response, strlen(rate_limit_response), 0);
+        close(client_socket);
+        return;
+    }
+    
     char method[16], path[256], version[16];
     if (sscanf(buffer, "%15s %255s %15s", method, path, version) != 3) {
         close(client_socket);
         return;
     }
     
+    char* auth_header = NULL;
+    char* line = strtok(buffer, "\r\n");
+    while (line != NULL) {
+        if (strncasecmp(line, "Authorization:", 14) == 0) {
+            auth_header = line + 14;
+            while (*auth_header == ' ') auth_header++;
+            break;
+        }
+        line = strtok(NULL, "\r\n");
+    }
+    
     const char* response_body = NULL;
     const char* content_type = "text/plain";
     int status_code = 404;
+    int is_wallet_endpoint = 0;
     
     if (strcmp(method, "GET") == 0) {
         if (strcmp(path, "/health") == 0) {
@@ -1445,10 +1576,15 @@ static void handle_http_request(int client_socket) {
             content_type = "text/plain";
             status_code = 200;
         } else if (strcmp(path, "/wallet") == 0) {
-            response_body = mxd_get_wallet_html();
-            content_type = "text/html";
-            status_code = 200;
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
+                response_body = mxd_get_wallet_html();
+                content_type = "text/html";
+                status_code = 200;
+            }
         } else if (strncmp(path, "/wallet/balance?address=", 24) == 0) {
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
             char* address = path + 24;
             char decoded_address[256];
             int j = 0;
