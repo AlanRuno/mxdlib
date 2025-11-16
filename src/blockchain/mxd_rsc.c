@@ -1110,6 +1110,7 @@ static mxd_genesis_signature_t collected_signatures[10];
 static size_t collected_signature_count = 0;
 static uint8_t pending_genesis_digest[64] = {0};
 static int genesis_sign_request_sent = 0;
+static int genesis_locked = 0;
 
 int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey, uint8_t algo_id) {
     if (!local_address || !local_pubkey || !local_privkey) {
@@ -1318,9 +1319,22 @@ int mxd_get_pending_genesis_count(void) {
     return (int)pending_genesis_count;
 }
 
+int mxd_is_genesis_locked(void) {
+    return genesis_locked;
+}
+
+void mxd_set_genesis_locked(int locked) {
+    genesis_locked = locked;
+}
+
 int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char *local_node_id) {
     if (!genesis_coordination_initialized || !table) {
         return -1;
+    }
+    
+    if (genesis_locked) {
+        MXD_LOG_DEBUG("rsc", "Genesis coordination locked, skipping sync to rapid table");
+        return 0;
     }
     
     for (size_t i = 0; i < pending_genesis_count; i++) {
@@ -1415,6 +1429,9 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         MXD_LOG_WARN("rsc", "Already signed genesis block");
         return -1;
     }
+    
+    genesis_locked = 1;
+    MXD_LOG_INFO("rsc", "Genesis coordination locked - no new members will be accepted");
     
     uint8_t signature[MXD_SIGNATURE_MAX];
     size_t signature_len = sizeof(signature);
@@ -1575,6 +1592,9 @@ int mxd_try_coordinate_genesis_block(void) {
         self_sig->signature_length = (uint16_t)self_sig_len;
         self_sig->received = 1;
         collected_signature_count++;
+        
+        genesis_locked = 1;
+        MXD_LOG_INFO("rsc", "Genesis coordination locked - no new members will be accepted");
         
         for (size_t i = 0; i < pending_genesis_count && i < 3; i++) {
             if (memcmp(pending_genesis_members[i].node_address, local_genesis_address, 20) != 0) {
