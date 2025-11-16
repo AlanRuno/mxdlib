@@ -14,6 +14,60 @@ typedef struct {
     uint8_t has_crypto_info;   // 1 if algo_id and public_key are available, 0 otherwise
 } mxd_bootstrap_node_t;
 
+// HTTP server security configuration
+typedef struct {
+    char bind_address[64];     // HTTP bind address (default: 127.0.0.1)
+    uint16_t port;             // HTTP port (default: 8080)
+    int require_auth;          // Require Bearer token authentication
+    char api_token[256];       // API authentication token
+    int wallet_enabled;        // Enable wallet endpoints (default: false)
+    uint32_t rate_limit_per_minute; // Rate limit per IP
+    uint32_t timeout_seconds;  // Request timeout
+} mxd_http_config_t;
+
+// Bootstrap security configuration
+typedef struct {
+    char endpoint[256];        // Bootstrap API endpoint
+    int verify_tls;            // Enable TLS verification
+    char pinned_keys[10][256]; // Certificate pinned keys
+    int pinned_keys_count;     // Number of pinned keys
+    char fallback_nodes[10][256]; // Hardcoded fallback nodes
+    int fallback_count;        // Number of fallback nodes
+    uint32_t min_subnet_diversity; // Minimum unique /24 subnets
+} mxd_bootstrap_config_t;
+
+// Mempool security configuration
+typedef struct {
+    uint32_t max_size;         // Maximum mempool size
+    uint32_t max_tx_per_peer;  // Max transactions per peer
+    uint64_t max_bytes_per_peer; // Max bytes per peer
+    uint32_t min_fee_per_byte; // Minimum fee per byte
+    uint32_t max_tx_per_sec_per_peer; // Rate limit per peer
+} mxd_mempool_config_t;
+
+// Smart contract security configuration
+typedef struct {
+    uint64_t gas_limit_default; // Default gas limit
+    uint32_t timeout_seconds;   // Execution timeout
+    int metering_enabled;       // Enable gas metering
+    uint32_t max_memory_pages;  // Maximum WASM memory pages
+} mxd_contracts_config_t;
+
+// Consensus security configuration
+typedef struct {
+    uint32_t blacklist_duration_blocks; // Blacklist duration
+    uint32_t min_unique_validators;     // Minimum validators
+    uint32_t signature_cache_size;      // Signature cache size
+} mxd_consensus_config_t;
+
+// P2P security configuration
+typedef struct {
+    uint32_t challenge_cache_size;      // Challenge cache size
+    uint32_t challenge_ttl_seconds;     // Challenge TTL
+    uint32_t session_timeout_seconds;   // Session timeout
+    uint32_t timestamp_tolerance_seconds; // Timestamp tolerance
+} mxd_p2p_security_config_t;
+
 typedef struct {
     char node_id[64];
     uint16_t port;
@@ -30,6 +84,16 @@ typedef struct {
     int enable_upnp;           // Enable UPnP port mapping (1=enabled, 0=disabled)
     int bootstrap_refresh_interval;  // Seconds between bootstrap list refreshes (from network_info.update_interval)
     uint8_t preferred_sign_algo;     // Preferred signature algorithm (1=Ed25519, 2=Dilithium5)
+    
+    // Security configurations
+    mxd_http_config_t http;
+    mxd_bootstrap_config_t bootstrap;
+    mxd_mempool_config_t mempool;
+    mxd_contracts_config_t contracts;
+    mxd_consensus_config_t consensus;
+    mxd_p2p_security_config_t p2p_security;
+    
+    uint32_t protocol_version;  // Protocol version (v3)
 } mxd_config_t;
 
 // Load configuration from file or use built-in defaults.

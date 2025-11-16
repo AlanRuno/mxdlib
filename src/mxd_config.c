@@ -73,6 +73,44 @@ static void mxd_set_default_config(mxd_config_t* config) {
     config->enable_upnp = 1;
     config->bootstrap_refresh_interval = 300;
     config->preferred_sign_algo = 1;
+    config->protocol_version = 3;
+    
+    strncpy(config->http.bind_address, "127.0.0.1", sizeof(config->http.bind_address) - 1);
+    config->http.port = 8080;
+    config->http.require_auth = 1;
+    config->http.api_token[0] = '\0';
+    config->http.wallet_enabled = 0;
+    config->http.rate_limit_per_minute = 60;
+    config->http.timeout_seconds = 30;
+    
+    strncpy(config->bootstrap.endpoint, "https://mxd.network/bootstrap/test", sizeof(config->bootstrap.endpoint) - 1);
+    config->bootstrap.verify_tls = 1;
+    config->bootstrap.pinned_keys_count = 0;
+    config->bootstrap.fallback_count = 3;
+    strncpy(config->bootstrap.fallback_nodes[0], "bootstrap1.mxd.network:8000", sizeof(config->bootstrap.fallback_nodes[0]) - 1);
+    strncpy(config->bootstrap.fallback_nodes[1], "bootstrap2.mxd.network:8000", sizeof(config->bootstrap.fallback_nodes[1]) - 1);
+    strncpy(config->bootstrap.fallback_nodes[2], "bootstrap3.mxd.network:8000", sizeof(config->bootstrap.fallback_nodes[2]) - 1);
+    config->bootstrap.min_subnet_diversity = 2;
+    
+    config->mempool.max_size = 50000;
+    config->mempool.max_tx_per_peer = 100;
+    config->mempool.max_bytes_per_peer = 10485760;
+    config->mempool.min_fee_per_byte = 1;
+    config->mempool.max_tx_per_sec_per_peer = 10;
+    
+    config->contracts.gas_limit_default = 1000000;
+    config->contracts.timeout_seconds = 5;
+    config->contracts.metering_enabled = 1;
+    config->contracts.max_memory_pages = 256;
+    
+    config->consensus.blacklist_duration_blocks = 1000;
+    config->consensus.min_unique_validators = 3;
+    config->consensus.signature_cache_size = 10000;
+    
+    config->p2p_security.challenge_cache_size = 10000;
+    config->p2p_security.challenge_ttl_seconds = 300;
+    config->p2p_security.session_timeout_seconds = 3600;
+    config->p2p_security.timestamp_tolerance_seconds = 60;
 }
 
 int mxd_load_config(const char* config_file, mxd_config_t* config) {
@@ -202,6 +240,139 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
         if (algo == 1 || algo == 2) {
             config->preferred_sign_algo = algo;
         }
+    }
+    
+    // Parse HTTP security configuration
+    cJSON* http = cJSON_GetObjectItem(root, "http");
+    if (http && cJSON_IsObject(http)) {
+        if ((item = cJSON_GetObjectItem(http, "bind_address")) && cJSON_IsString(item)) {
+            strncpy(config->http.bind_address, item->valuestring, sizeof(config->http.bind_address) - 1);
+        }
+        if ((item = cJSON_GetObjectItem(http, "port")) && cJSON_IsNumber(item)) {
+            config->http.port = (uint16_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(http, "require_auth")) && cJSON_IsBool(item)) {
+            config->http.require_auth = cJSON_IsTrue(item);
+        }
+        if ((item = cJSON_GetObjectItem(http, "api_token")) && cJSON_IsString(item)) {
+            strncpy(config->http.api_token, item->valuestring, sizeof(config->http.api_token) - 1);
+        }
+        if ((item = cJSON_GetObjectItem(http, "wallet_enabled")) && cJSON_IsBool(item)) {
+            config->http.wallet_enabled = cJSON_IsTrue(item);
+        }
+        if ((item = cJSON_GetObjectItem(http, "rate_limit_per_minute")) && cJSON_IsNumber(item)) {
+            config->http.rate_limit_per_minute = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(http, "timeout_seconds")) && cJSON_IsNumber(item)) {
+            config->http.timeout_seconds = (uint32_t)item->valueint;
+        }
+    }
+    
+    // Parse bootstrap security configuration
+    cJSON* bootstrap = cJSON_GetObjectItem(root, "bootstrap");
+    if (bootstrap && cJSON_IsObject(bootstrap)) {
+        if ((item = cJSON_GetObjectItem(bootstrap, "endpoint")) && cJSON_IsString(item)) {
+            strncpy(config->bootstrap.endpoint, item->valuestring, sizeof(config->bootstrap.endpoint) - 1);
+        }
+        if ((item = cJSON_GetObjectItem(bootstrap, "verify_tls")) && cJSON_IsBool(item)) {
+            config->bootstrap.verify_tls = cJSON_IsTrue(item);
+        }
+        if ((item = cJSON_GetObjectItem(bootstrap, "min_subnet_diversity")) && cJSON_IsNumber(item)) {
+            config->bootstrap.min_subnet_diversity = (uint32_t)item->valueint;
+        }
+        
+        cJSON* fallback_nodes = cJSON_GetObjectItem(bootstrap, "fallback_nodes");
+        if (fallback_nodes && cJSON_IsArray(fallback_nodes)) {
+            config->bootstrap.fallback_count = 0;
+            cJSON* node;
+            cJSON_ArrayForEach(node, fallback_nodes) {
+                if (cJSON_IsString(node) && config->bootstrap.fallback_count < 10) {
+                    strncpy(config->bootstrap.fallback_nodes[config->bootstrap.fallback_count],
+                           node->valuestring, sizeof(config->bootstrap.fallback_nodes[0]) - 1);
+                    config->bootstrap.fallback_count++;
+                }
+            }
+        }
+    }
+    
+    // Parse mempool security configuration
+    cJSON* mempool = cJSON_GetObjectItem(root, "mempool");
+    if (mempool && cJSON_IsObject(mempool)) {
+        if ((item = cJSON_GetObjectItem(mempool, "max_size")) && cJSON_IsNumber(item)) {
+            config->mempool.max_size = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(mempool, "max_tx_per_peer")) && cJSON_IsNumber(item)) {
+            config->mempool.max_tx_per_peer = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(mempool, "max_bytes_per_peer")) && cJSON_IsNumber(item)) {
+            config->mempool.max_bytes_per_peer = (uint64_t)item->valuedouble;
+        }
+        if ((item = cJSON_GetObjectItem(mempool, "min_fee_per_byte")) && cJSON_IsNumber(item)) {
+            config->mempool.min_fee_per_byte = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(mempool, "max_tx_per_sec_per_peer")) && cJSON_IsNumber(item)) {
+            config->mempool.max_tx_per_sec_per_peer = (uint32_t)item->valueint;
+        }
+    }
+    
+    // Parse smart contract security configuration
+    cJSON* contracts = cJSON_GetObjectItem(root, "contracts");
+    if (contracts && cJSON_IsObject(contracts)) {
+        if ((item = cJSON_GetObjectItem(contracts, "gas_limit_default")) && cJSON_IsNumber(item)) {
+            config->contracts.gas_limit_default = (uint64_t)item->valuedouble;
+        }
+        if ((item = cJSON_GetObjectItem(contracts, "timeout_seconds")) && cJSON_IsNumber(item)) {
+            config->contracts.timeout_seconds = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(contracts, "metering_enabled")) && cJSON_IsBool(item)) {
+            config->contracts.metering_enabled = cJSON_IsTrue(item);
+        }
+        if ((item = cJSON_GetObjectItem(contracts, "max_memory_pages")) && cJSON_IsNumber(item)) {
+            config->contracts.max_memory_pages = (uint32_t)item->valueint;
+        }
+    }
+    
+    // Parse consensus security configuration
+    cJSON* consensus = cJSON_GetObjectItem(root, "consensus");
+    if (consensus && cJSON_IsObject(consensus)) {
+        if ((item = cJSON_GetObjectItem(consensus, "blacklist_duration_blocks")) && cJSON_IsNumber(item)) {
+            config->consensus.blacklist_duration_blocks = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(consensus, "min_unique_validators")) && cJSON_IsNumber(item)) {
+            config->consensus.min_unique_validators = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(consensus, "signature_cache_size")) && cJSON_IsNumber(item)) {
+            config->consensus.signature_cache_size = (uint32_t)item->valueint;
+        }
+    }
+    
+    // Parse P2P security configuration
+    cJSON* p2p_security = cJSON_GetObjectItem(root, "p2p_security");
+    if (p2p_security && cJSON_IsObject(p2p_security)) {
+        if ((item = cJSON_GetObjectItem(p2p_security, "challenge_cache_size")) && cJSON_IsNumber(item)) {
+            config->p2p_security.challenge_cache_size = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(p2p_security, "challenge_ttl_seconds")) && cJSON_IsNumber(item)) {
+            config->p2p_security.challenge_ttl_seconds = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(p2p_security, "session_timeout_seconds")) && cJSON_IsNumber(item)) {
+            config->p2p_security.session_timeout_seconds = (uint32_t)item->valueint;
+        }
+        if ((item = cJSON_GetObjectItem(p2p_security, "timestamp_tolerance_seconds")) && cJSON_IsNumber(item)) {
+            config->p2p_security.timestamp_tolerance_seconds = (uint32_t)item->valueint;
+        }
+    }
+    
+    const char* env_api_token = getenv("MXD_API_TOKEN");
+    if (env_api_token) {
+        strncpy(config->http.api_token, env_api_token, sizeof(config->http.api_token) - 1);
+        MXD_LOG_INFO("config", "API token loaded from environment variable");
+    }
+    
+    const char* env_bind_address = getenv("MXD_BIND_ADDRESS");
+    if (env_bind_address) {
+        strncpy(config->http.bind_address, env_bind_address, sizeof(config->http.bind_address) - 1);
+        MXD_LOG_INFO("config", "HTTP bind address overridden from environment: %s", env_bind_address);
     }
     
     cJSON_Delete(root);
