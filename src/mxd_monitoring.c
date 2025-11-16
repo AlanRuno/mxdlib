@@ -4,6 +4,8 @@
 #include "../include/mxd_transaction.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_config.h"
+#include "metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +28,18 @@ static char health_buffer[1024];
 static int server_socket = -1;
 static pthread_t server_thread;
 static volatile int server_running = 0;
+
+static mxd_config_t* global_config = NULL;
+
+typedef struct {
+    char ip[64];
+    time_t last_request;
+    int request_count;
+} rate_limit_entry_t;
+
+static rate_limit_entry_t rate_limits[100];
+static int rate_limit_count = 0;
+static pthread_mutex_t rate_limit_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static mxd_wallet_t wallet = {0};
 static int wallet_initialized = 0;
