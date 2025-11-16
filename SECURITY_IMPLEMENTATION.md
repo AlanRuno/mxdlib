@@ -12,6 +12,7 @@ This document tracks the implementation of the comprehensive security blueprint 
 
 ### ✅ Phase 0: Foundations (COMPLETED)
 **Status:** Committed (37f5556, 425e479)
+**Commits:** 37f5556, 425e479, 9591719
 
 **Completed:**
 - ✅ Created `config/default_node.json` with secure defaults
@@ -21,6 +22,7 @@ This document tracks the implementation of the comprehensive security blueprint 
 - ✅ Added support for HTTP, bootstrap, mempool, contracts, consensus, and P2P security configs
 - ✅ Protocol version bumped to v3
 - ✅ Environment variable overrides (MXD_API_TOKEN, MXD_BIND_ADDRESS)
+- ✅ Created SECURITY_IMPLEMENTATION.md progress tracking document
 
 **Configuration Structures Added:**
 - `mxd_http_config_t` - HTTP server security
@@ -38,40 +40,48 @@ This document tracks the implementation of the comprehensive security blueprint 
 - `mxd_handshake_replay_detected_total`
 - And 11 more security metrics
 
-### 🔄 Phase 1: Secure Wallet HTTP Server (IN PROGRESS)
+### ✅ Phase 1: Secure Wallet HTTP Server (COMPLETED)
 **Priority:** CRITICAL - Blocks remote exploitation  
-**Status:** Started (425e479)
+**Status:** Committed (92771de, 8a3b7c1)
+**Commits:** 92771de, 8a3b7c1
+
+**Completed:**
+- ✅ Implemented Bearer token authentication in `handle_http_request()`
+- ✅ Added constant-time token comparison
+- ✅ Changed default binding from `INADDR_ANY` to `127.0.0.1`
+- ✅ Implemented per-IP rate limiting (60 requests/minute)
+- ✅ Added security headers (CSP, X-Frame-Options, X-Content-Type-Options, HSTS)
+- ✅ Removed wildcard CORS
+- ✅ Disabled wallet endpoints by default (check `config->http.wallet_enabled`)
+- ✅ Added authentication metrics tracking
+- ✅ Applied authentication to all wallet endpoints (GET and POST)
+- ✅ Added proper HTTP status codes (401, 403, 429)
+- ✅ Initialized global_config and metrics in mxd_init_monitoring
+
+**Files Modified:**
+- `src/mxd_monitoring.c` - HTTP server implementation with full security
+
+**Security Impact:** ✅ Eliminates CVSS 9.8 vulnerability (unauthenticated wallet control)
+
+### 🔄 Phase 2: TLS Verification (IN PROGRESS)
+**Priority:** CRITICAL - Blocks network-level attacks
+**Status:** Partial (aeb711b)
+**Commits:** aeb711b
+
+**Completed:**
+- ✅ Enabled `CURLOPT_SSL_VERIFYPEER` and `CURLOPT_SSL_VERIFYHOST` in `src/utils/mxd_http.c`
+- ✅ Set minimum TLS version to 1.2
+- ✅ Configured system CA bundle paths (Linux/macOS/Windows)
+- ✅ Added TLS error detection and metrics tracking
+- ✅ Added configuration override for testing (verify_tls flag)
 
 **Remaining Tasks:**
-- [ ] Implement Bearer token authentication in `handle_http_request()`
-- [ ] Add constant-time token comparison
-- [ ] Change default binding from `INADDR_ANY` to `127.0.0.1`
-- [ ] Implement per-IP rate limiting (60 requests/minute)
-- [ ] Add security headers (CSP, X-Frame-Options, X-Content-Type-Options)
-- [ ] Remove wildcard CORS (`Access-Control-Allow-Origin: *`)
-- [ ] Disable wallet endpoints by default (check `config->http.wallet_enabled`)
-- [ ] Add authentication metrics tracking
-
-**Files to Modify:**
-- `src/mxd_monitoring.c` - HTTP server implementation
-- `src/mxd_monitoring.h` - Add auth configuration structures
-
-**Security Impact:** Eliminates CVSS 9.8 vulnerability (unauthenticated wallet control)
-
-### ⏳ Phase 2: TLS Verification (PENDING)
-**Priority:** CRITICAL - Blocks network-level attacks
-
-**Tasks:**
-- [ ] Enable `CURLOPT_SSL_VERIFYPEER` and `CURLOPT_SSL_VERIFYHOST` in `src/utils/mxd_http.c`
-- [ ] Set minimum TLS version to 1.2
-- [ ] Configure system CA bundle paths (Linux/macOS/Windows)
 - [ ] Create `src/utils/mxd_cert_pinning.{h,c}` for certificate pinning
 - [ ] Implement optional certificate pinning for `mxd.network`
-- [ ] Add hardcoded fallback bootstrap nodes
+- [ ] Add hardcoded fallback bootstrap nodes to config
 - [ ] Implement bootstrap node diversity validation (≥2 /24 subnets) in `src/mxd_dht.c`
-- [ ] Add TLS verification metrics
 
-**Security Impact:** Eliminates CVSS 9.1 vulnerability (eclipse attacks, MITM)
+**Security Impact:** Partially eliminates CVSS 9.1 vulnerability (eclipse attacks, MITM)
 
 ### ⏳ Phase 3: WASM Gas Metering (PENDING)
 **Priority:** HIGH - Blocks validator DoS
