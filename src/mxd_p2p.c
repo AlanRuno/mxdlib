@@ -21,6 +21,8 @@
 #include "mxd_secrets.h"
 #include "mxd_address.h"
 #include "base58.h"
+#include "utils/mxd_replay.h"
+#include "metrics/mxd_prometheus.h"
 
 static struct {
     char address[256];
@@ -83,7 +85,7 @@ static pthread_mutex_t unified_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define MXD_KEEPALIVE_INTERVAL 30
 #define MXD_KEEPALIVE_TIMEOUT 90
 #define MXD_MAX_KEEPALIVE_FAILURES 3
-#define MXD_PROTOCOL_VERSION 2
+#define MXD_PROTOCOL_VERSION 3
 
 static pthread_t keepalive_thread;
 static volatile int keepalive_running = 0;
@@ -106,12 +108,13 @@ typedef struct {
 
 typedef struct {
     char node_id[256];                      // Node identifier (wallet address)
-    uint32_t protocol_version;              // Protocol version (now v2 for hybrid crypto)
+    uint32_t protocol_version;              // Protocol version (now v3 for anti-replay)
     uint16_t listen_port;                   // Listening port
     uint8_t algo_id;                        // Algorithm ID (1=Ed25519, 2=Dilithium5)
     uint16_t public_key_length;             // Length of public key
     uint8_t public_key[MXD_PUBKEY_MAX_LEN]; // Public key (variable size)
     uint8_t challenge[32];                  // Random challenge nonce
+    uint64_t timestamp;                     // Unix timestamp for anti-replay
     uint16_t signature_length;              // Length of signature
     uint8_t signature[MXD_SIG_MAX_LEN];     // Signature (variable size)
 } mxd_handshake_payload_t;
@@ -719,9 +722,9 @@ static void handle_pong_message(const char *address, uint16_t port) {
 
 static inline size_t handshake_wire_size(const mxd_handshake_payload_t *handshake) {
     if (!handshake) {
-        return 256 + 4 + 2 + 1 + 2 + MXD_PUBKEY_MAX_LEN + 32 + 2 + MXD_SIG_MAX_LEN;
+        return 256 + 4 + 2 + 1 + 2 + MXD_PUBKEY_MAX_LEN + 32 + 8 + 2 + MXD_SIG_MAX_LEN;
     }
-    return 256 + 4 + 2 + 1 + 2 + handshake->public_key_length + 32 + 2 + handshake->signature_length;
+    return 256 + 4 + 2 + 1 + 2 + handshake->public_key_length + 32 + 8 + 2 + handshake->signature_length;
 }
 
 static size_t handshake_to_wire(const mxd_handshake_payload_t *handshake, uint8_t *buf, size_t buf_len) {
@@ -761,6 +764,12 @@ static size_t handshake_to_wire(const mxd_handshake_payload_t *handshake, uint8_
     if (offset + 32 > buf_len) return 0;
     memcpy(buf + offset, handshake->challenge, 32);
     offset += 32;
+    
+    // timestamp (8 bytes, network order)
+    if (offset + 8 > buf_len) return 0;
+    uint64_t timestamp_net = htobe64(handshake->timestamp);
+    memcpy(buf + offset, &timestamp_net, 8);
+    offset += 8;
     
     // signature_length (2 bytes, network order)
     if (offset + 2 > buf_len) return 0;
@@ -818,6 +827,13 @@ static int wire_to_handshake(const uint8_t *buf, size_t buf_len, mxd_handshake_p
     memcpy(handshake->challenge, buf + offset, 32);
     offset += 32;
     
+    // timestamp (8 bytes, network order)
+    if (offset + 8 > buf_len) return -1;
+    uint64_t timestamp_net;
+    memcpy(&timestamp_net, buf + offset, 8);
+    handshake->timestamp = be64toh(timestamp_net);
+    offset += 8;
+    
     // signature_length (2 bytes, network order)
     if (offset + 2 > buf_len) return -1;
     uint16_t sig_len_net;
@@ -839,8 +855,9 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
     
     strncpy(handshake->node_id, node_config.node_id, sizeof(handshake->node_id) - 1);
     handshake->node_id[sizeof(handshake->node_id) - 1] = '\0';
-    handshake->protocol_version = 2;
+    handshake->protocol_version = 3;
     handshake->listen_port = p2p_port;
+    handshake->timestamp = (uint64_t)time(NULL);
     
     handshake->algo_id = node_algo_id;
     size_t pubkey_len = mxd_sig_pubkey_len(node_algo_id);
@@ -884,7 +901,7 @@ static int handle_handshake_message(const char *address, uint16_t port,
                                      const void *payload, size_t length,
                                      peer_connection_t *conn) {
     // Check minimum size (fixed fields before variable-length data)
-    size_t min_size = 256 + 4 + 2 + 1 + 2 + 32 + 2; // All fixed fields + length fields
+    size_t min_size = 256 + 4 + 2 + 1 + 2 + 32 + 8 + 2; // All fixed fields + length fields (added 8 for timestamp)
     if (!payload || length < min_size) {
         MXD_LOG_WARN("p2p", "Invalid HANDSHAKE payload from %s:%d (length=%zu, minimum=%zu)", 
                      address, port, length, min_size);
@@ -897,9 +914,14 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    if (handshake.protocol_version != 2) {
-        MXD_LOG_WARN("p2p", "Incompatible protocol version %u from %s:%d (expected v2)", 
+    if (handshake.protocol_version != 3) {
+        MXD_LOG_WARN("p2p", "Incompatible protocol version %u from %s:%d (expected v3)", 
                    handshake.protocol_version, address, port);
+        return -1;
+    }
+    
+    if (mxd_replay_check(handshake.challenge, handshake.timestamp) != 0) {
+        MXD_LOG_WARN("p2p", "Replay attack detected or timestamp invalid from %s:%d", address, port);
         return -1;
     }
     
@@ -963,6 +985,8 @@ static int handle_handshake_message(const char *address, uint16_t port,
     MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u, algo: %s) - signature verified", 
                address, port, handshake.node_id, handshake.protocol_version, 
                handshake.listen_port, mxd_sig_alg_name(handshake.algo_id));
+    
+    mxd_replay_record(handshake.challenge, handshake.timestamp);
     
     if (conn) {
         strncpy(conn->address, address, sizeof(conn->address) - 1);
@@ -1659,6 +1683,11 @@ int mxd_init_p2p(uint16_t port, uint8_t algo_id, const uint8_t* public_key, cons
     memset(manual_peers, 0, sizeof(manual_peers));
     manual_peer_count = 0;
     
+    if (mxd_replay_init() != 0) {
+        MXD_LOG_ERROR("p2p", "Failed to initialize replay detection");
+        return -1;
+    }
+    
     p2p_initialized = 1;
     MXD_LOG_INFO("p2p", "P2P initialized on port %d with node_id: %s (algo: %s)", 
                  port, node_config.node_id, mxd_sig_alg_name(algo_id));
@@ -1834,6 +1863,8 @@ int mxd_stop_p2p(void) {
         pthread_join(peer_connector_thread, NULL);
         peer_connector_thread_created = 0;
     }
+    
+    mxd_replay_cleanup();
     
     p2p_initialized = 0;
     MXD_LOG_INFO("p2p", "P2P stopped");

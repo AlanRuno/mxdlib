@@ -215,6 +215,7 @@ target_sources(mxd PRIVATE
     src/node/metrics_display.c
     src/utils/mxd_http.c
     src/utils/mxd_cert_pinning.c
+    src/utils/mxd_replay.c
     src/metrics/mxd_prometheus.c)
 
 # Add main node executable
