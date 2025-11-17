@@ -547,6 +547,64 @@ int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
         return -1;
     }
     
+    // Validate subnet diversity (require at least 2 different /24 subnets)
+    if (config->bootstrap.min_subnet_diversity > 0) {
+        uint32_t subnets[10] = {0};
+        int subnet_count = 0;
+        
+        for (int i = 0; i < config->bootstrap_count; i++) {
+            const char* addr = config->bootstrap_nodes_v2[i].address;
+            unsigned int a, b, c, d;
+            
+            if (sscanf(addr, "%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
+                uint32_t subnet = (a << 24) | (b << 16) | (c << 8);
+                
+                int found = 0;
+                for (int j = 0; j < subnet_count; j++) {
+                    if (subnets[j] == subnet) {
+                        found = 1;
+                        break;
+                    }
+                }
+                
+                if (!found && subnet_count < 10) {
+                    subnets[subnet_count++] = subnet;
+                }
+            }
+        }
+        
+        if (subnet_count < (int)config->bootstrap.min_subnet_diversity) {
+            MXD_LOG_WARN("config", "Bootstrap nodes have insufficient subnet diversity: %d unique /24 subnets (minimum: %u)",
+                        subnet_count, config->bootstrap.min_subnet_diversity);
+            
+            if (config->bootstrap.fallback_count > 0) {
+                MXD_LOG_INFO("config", "Using %d hardcoded fallback bootstrap nodes", config->bootstrap.fallback_count);
+                config->bootstrap_count = 0;
+                
+                for (int i = 0; i < config->bootstrap.fallback_count && config->bootstrap_count < 10; i++) {
+                    strncpy(config->bootstrap_nodes[config->bootstrap_count], 
+                           config->bootstrap.fallback_nodes[i],
+                           sizeof(config->bootstrap_nodes[0]) - 1);
+                    
+                    char host[256];
+                    int port;
+                    if (sscanf(config->bootstrap.fallback_nodes[i], "%255[^:]:%d", host, &port) == 2) {
+                        mxd_bootstrap_node_t* node_v2 = &config->bootstrap_nodes_v2[config->bootstrap_count];
+                        memset(node_v2, 0, sizeof(mxd_bootstrap_node_t));
+                        strncpy(node_v2->address, host, sizeof(node_v2->address) - 1);
+                        node_v2->port = (uint16_t)port;
+                        node_v2->has_crypto_info = 0;
+                    }
+                    
+                    config->bootstrap_count++;
+                }
+            }
+        } else {
+            MXD_LOG_INFO("config", "Bootstrap nodes have sufficient subnet diversity: %d unique /24 subnets",
+                        subnet_count);
+        }
+    }
+    
     cJSON* network_info = cJSON_GetObjectItem(root, "network_info");
     if (network_info && cJSON_IsObject(network_info)) {
         cJSON* update_interval = cJSON_GetObjectItem(network_info, "update_interval");
