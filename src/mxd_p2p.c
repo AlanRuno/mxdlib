@@ -13,6 +13,18 @@
 #include <openssl/sha.h>
 #include <openssl/ripemd.h>
 #include <openssl/rand.h>
+
+#ifdef __APPLE__
+#include <libkern/OSByteOrder.h>
+#define htobe64(x) OSSwapHostToBigInt64(x)
+#define be64toh(x) OSSwapBigToHostInt64(x)
+#elif defined(__linux__)
+#include <endian.h>
+#elif defined(_WIN32)
+#include <winsock2.h>
+#define htobe64(x) htonll(x)
+#define be64toh(x) ntohll(x)
+#endif
 #include "mxd_config.h"
 #include "mxd_crypto.h"
 #include "mxd_dht.h"
@@ -62,6 +74,8 @@ typedef struct {
     time_t last_keepalive_received;
     int active;
     int keepalive_failures;
+    uint8_t session_token[16];
+    int has_session_token;
 } peer_connection_t;
 
 static peer_connection_t active_connections[MXD_MAX_PEERS];
@@ -104,6 +118,7 @@ typedef struct {
     uint8_t reserved[2]; // Padding for alignment
     uint32_t length;     // Network byte order
     uint8_t checksum[64]; // SHA-512 checksum
+    uint8_t session_token[16]; // Session token (protocol v3)
 } __attribute__((packed)) mxd_wire_header_t;
 
 typedef struct {
@@ -181,6 +196,7 @@ static void header_to_wire(const mxd_message_header_t *header, mxd_wire_header_t
     wire->reserved[1] = 0;
     wire->length = htonl(header->length);
     memcpy(wire->checksum, header->checksum, 64);
+    memcpy(wire->session_token, header->session_token, 16);
 }
 
 static void wire_to_header(const mxd_wire_header_t *wire, mxd_message_header_t *header) {
@@ -188,6 +204,7 @@ static void wire_to_header(const mxd_wire_header_t *wire, mxd_message_header_t *
     header->type = (mxd_message_type_t)wire->type;
     header->length = ntohl(wire->length);
     memcpy(header->checksum, wire->checksum, 64);
+    memcpy(header->session_token, wire->session_token, 16);
 }
 
 static int parse_wire_header(const uint8_t *buffer, mxd_message_header_t *header, uint32_t expected_magic) {
@@ -223,6 +240,48 @@ static int parse_wire_header(const uint8_t *buffer, mxd_message_header_t *header
     header->type = (mxd_message_type_t)type;
     header->length = length;
     memcpy(header->checksum, wire->checksum, 64);
+    memcpy(header->session_token, wire->session_token, 16);
+    
+    return 0;
+}
+
+static int send_on_connection(peer_connection_t *conn, mxd_message_type_t type, const void *payload, size_t payload_length) {
+    if (!conn || !conn->active || !payload || payload_length > MXD_MAX_MESSAGE_SIZE) {
+        return -1;
+    }
+    
+    const mxd_secrets_t *secrets = mxd_get_secrets();
+    if (!secrets) {
+        MXD_LOG_ERROR("p2p", "Secrets not initialized");
+        return -1;
+    }
+    
+    mxd_message_header_t header = {
+        .magic = secrets->network_magic,
+        .type = type,
+        .length = payload_length
+    };
+    
+    if (conn->has_session_token) {
+        memcpy(header.session_token, conn->session_token, 16);
+    } else {
+        memset(header.session_token, 0, 16);
+    }
+    
+    if (mxd_sha512(payload, payload_length, header.checksum) != 0) {
+        return -1;
+    }
+    
+    mxd_wire_header_t wire_header;
+    header_to_wire(&header, &wire_header);
+    
+    if (write_n(conn->socket, &wire_header, sizeof(wire_header)) != 0) {
+        return -1;
+    }
+    
+    if (write_n(conn->socket, payload, payload_length) != 0) {
+        return -1;
+    }
     
     return 0;
 }
@@ -243,6 +302,8 @@ static int send_on_socket(int sock, mxd_message_type_t type, const void* payload
         .type = type,
         .length = payload_length
     };
+    
+    memset(header.session_token, 0, 16);
     
     if (mxd_sha512(payload, payload_length, header.checksum) != 0) {
         return -1;
@@ -384,7 +445,21 @@ int mxd_reset_rate_limit(void) {
 }
 
 // Message validation function
-static int validate_message(const mxd_message_header_t *header, const void *payload) {
+static peer_connection_t* find_connection(const char *address, uint16_t port) {
+    pthread_mutex_lock(&peer_mutex);
+    for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
+        if (active_connections[i].active && 
+            strcmp(active_connections[i].address, address) == 0 &&
+            active_connections[i].port == port) {
+            pthread_mutex_unlock(&peer_mutex);
+            return &active_connections[i];
+        }
+    }
+    pthread_mutex_unlock(&peer_mutex);
+    return NULL;
+}
+
+static int validate_message(const mxd_message_header_t *header, const void *payload, peer_connection_t *conn) {
     if (!header || !payload) {
         return -1;
     }
@@ -418,6 +493,20 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
     if (header->length == 0) {
         MXD_LOG_WARN("p2p", "Empty message payload");
         return -1;
+    }
+
+    // Session token validation (protocol v3)
+    // Allow empty token only for HANDSHAKE and SESSION_TOKEN messages
+    if (header->type != MXD_MSG_HANDSHAKE && header->type != MXD_MSG_SESSION_TOKEN) {
+        if (conn && conn->has_session_token) {
+            if (memcmp(header->session_token, conn->session_token, 16) != 0) {
+                MXD_LOG_WARN("p2p", "Session token mismatch for message type %d", header->type);
+                return -1;
+            }
+        } else {
+            MXD_LOG_WARN("p2p", "No session token for message type %d", header->type);
+            return -1;
+        }
     }
 
     // Compute and verify SHA-512 checksum
@@ -879,13 +968,15 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
         return -1;
     }
     
-    uint8_t message_to_sign[32 + 1 + 20];
+    uint8_t message_to_sign[32 + 8 + 1 + 20];
     memcpy(message_to_sign, handshake->challenge, 32);
-    message_to_sign[32] = node_algo_id;
-    memcpy(message_to_sign + 33, addr20, 20);
+    uint64_t timestamp_net = htobe64(handshake->timestamp);
+    memcpy(message_to_sign + 32, &timestamp_net, 8);
+    message_to_sign[40] = node_algo_id;
+    memcpy(message_to_sign + 41, addr20, 20);
     
     size_t sig_len = 0;
-    if (mxd_sig_sign(node_algo_id, handshake->signature, &sig_len, message_to_sign, 53, node_private_key) != 0) {
+    if (mxd_sig_sign(node_algo_id, handshake->signature, &sig_len, message_to_sign, 61, node_private_key) != 0) {
         MXD_LOG_ERROR("p2p", "Failed to sign handshake");
         return -1;
     }
@@ -900,6 +991,8 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
 static int handle_handshake_message(const char *address, uint16_t port, 
                                      const void *payload, size_t length,
                                      peer_connection_t *conn) {
+    mxd_replay_cleanup_expired();
+    
     // Check minimum size (fixed fields before variable-length data)
     size_t min_size = 256 + 4 + 2 + 1 + 2 + 32 + 8 + 2; // All fixed fields + length fields (added 8 for timestamp)
     if (!payload || length < min_size) {
@@ -970,13 +1063,15 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    uint8_t message_to_verify[32 + 1 + 20];
+    uint8_t message_to_verify[32 + 8 + 1 + 20];
     memcpy(message_to_verify, handshake.challenge, 32);
-    message_to_verify[32] = handshake.algo_id;
-    memcpy(message_to_verify + 33, addr_hash, 20);
+    uint64_t timestamp_net = htobe64(handshake.timestamp);
+    memcpy(message_to_verify + 32, &timestamp_net, 8);
+    message_to_verify[40] = handshake.algo_id;
+    memcpy(message_to_verify + 41, addr_hash, 20);
     
     if (mxd_sig_verify(handshake.algo_id, handshake.signature, handshake.signature_length, 
-                       message_to_verify, 53, handshake.public_key) != 0) {
+                       message_to_verify, 61, handshake.public_key) != 0) {
         MXD_LOG_WARN("p2p", "Signature verification failed for %s:%d (node_id: %s, algo: %s)", 
                    address, port, handshake.node_id, mxd_sig_alg_name(handshake.algo_id));
         return -1;
@@ -997,6 +1092,12 @@ static int handle_handshake_message(const char *address, uint16_t port,
         conn->last_keepalive_received = time(NULL);
         conn->keepalive_failures = 0;
         
+        if (RAND_bytes(conn->session_token, 16) != 1) {
+            MXD_LOG_ERROR("p2p", "Failed to generate session token for %s:%d", address, port);
+            return -1;
+        }
+        conn->has_session_token = 1;
+        
         mxd_handshake_payload_t reply_handshake;
         if (create_signed_handshake(&reply_handshake, NULL, 0) == 0) {
             size_t wire_buf_size = handshake_wire_size(&reply_handshake);
@@ -1009,8 +1110,14 @@ static int handle_handshake_message(const char *address, uint16_t port,
             if (wire_len > 0 && send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, wire_buf, wire_len) == 0) {
                 MXD_LOG_INFO("p2p", "Sent HANDSHAKE reply to %s:%d", address, port);
                 
+                if (send_on_connection(conn, MXD_MSG_SESSION_TOKEN, conn->session_token, 16) == 0) {
+                    MXD_LOG_INFO("p2p", "Sent SESSION_TOKEN to %s:%d", address, port);
+                } else {
+                    MXD_LOG_ERROR("p2p", "Failed to send SESSION_TOKEN to %s:%d", address, port);
+                }
+                
                 uint16_t my_listen_port = p2p_port;
-                if (send_on_socket(conn->socket, MXD_MSG_GET_PEERS, &my_listen_port, sizeof(uint16_t)) == 0) {
+                if (send_on_connection(conn, MXD_MSG_GET_PEERS, &my_listen_port, sizeof(uint16_t)) == 0) {
                     MXD_LOG_INFO("p2p", "Sent GET_PEERS to %s:%d over TCP after handshake", address, port);
                 } else {
                     MXD_LOG_DEBUG("p2p", "Failed to send GET_PEERS to %s:%d over TCP", address, port);
@@ -1041,7 +1148,9 @@ static int handle_incoming_message(const char *address, uint16_t port,
         return -1;
     }
 
-    if (validate_message(header, payload) != 0) {
+    peer_connection_t *conn = find_connection(address, port);
+    
+    if (validate_message(header, payload, conn) != 0) {
         consecutive_errors++;
         if (consecutive_errors >= 10) {
             return -1;
@@ -1054,6 +1163,15 @@ static int handle_incoming_message(const char *address, uint16_t port,
     update_unified_peer_received(address, port);
 
     switch (header->type) {
+        case MXD_MSG_SESSION_TOKEN:
+            if (conn && header->length == 16) {
+                memcpy(conn->session_token, payload, 16);
+                conn->has_session_token = 1;
+                MXD_LOG_INFO("p2p", "Received SESSION_TOKEN from %s:%d", address, port);
+            } else {
+                MXD_LOG_WARN("p2p", "Invalid SESSION_TOKEN from %s:%d", address, port);
+            }
+            break;
         case MXD_MSG_PING:
             handle_ping_message(address, port);
             break;
@@ -1131,7 +1249,7 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     }
     free(wire_buf);
     
-    uint8_t header_buffer[76];
+    uint8_t header_buffer[92];
     int read_result = read_n(sock, header_buffer, sizeof(header_buffer));
     if (read_result != 0) {
         MXD_LOG_DEBUG("p2p", "Failed to read HANDSHAKE response from %s:%d", address, port);
@@ -2057,7 +2175,7 @@ int mxd_send_message(const char* address, uint16_t port,
     short_timeout.tv_usec = 250000;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &short_timeout, sizeof(short_timeout));
     
-    uint8_t header_buffer[76];
+    uint8_t header_buffer[92];
     int read_result = read_n(sock, header_buffer, sizeof(header_buffer));
     if (read_result == 0) {
         mxd_message_header_t server_header;
