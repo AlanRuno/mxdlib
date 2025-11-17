@@ -55,6 +55,9 @@ if(MXD_WITH_WASI)
 endif()
 pkg_check_modules(WASM3 REQUIRED wasm3)
 
+# Enable WASM3 gas metering for Phase 3 security implementation
+add_definitions(-DM3_COMPILE_WITH_METERING=1)
+
 # Find RocksDB using find_library instead of pkg-config
 find_path(ROCKSDB_INCLUDE_DIR rocksdb/c.h PATHS /usr/include /usr/local/include)
 find_library(ROCKSDB_LIBRARY rocksdb PATHS /usr/lib /usr/local/lib)
