@@ -1,7 +1,7 @@
 #include "../include/mxd_mempool.h"
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_config.h"
-#include "../metrics/mxd_prometheus.h"
+#include "metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

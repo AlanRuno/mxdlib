@@ -9,79 +9,11 @@
 #include <time.h>
 #include <wasm3/wasm3.h>
 
-typedef struct {
-  uint64_t gas_used;
-  uint64_t gas_limit;
-  time_t start_time;
-  int timeout_seconds;
-} mxd_gas_context_t;
-
 // WASM runtime state
 static struct {
   IM3Environment env;
   IM3Runtime runtime;
-  mxd_gas_context_t gas_ctx;
 } wasm_state = {0};
-
-#ifdef M3_COMPILE_WITH_METERING
-static m3_wasm_metering_t gas_metering_callback(IM3Runtime runtime, uint32_t opcode, void* userdata) {
-  mxd_gas_context_t* ctx = (mxd_gas_context_t*)userdata;
-  
-  if (!ctx) {
-    return m3_MeteringResult_Trap;
-  }
-  
-  time_t current_time = time(NULL);
-  if (difftime(current_time, ctx->start_time) > ctx->timeout_seconds) {
-    MXD_LOG_ERROR("contracts", "Contract execution timeout exceeded (%d seconds)", ctx->timeout_seconds);
-    mxd_metrics_increment("contract_timeouts_total");
-    return m3_MeteringResult_Trap;
-  }
-  
-  uint64_t gas_cost = 1;
-  
-  switch (opcode) {
-    case 0x10: gas_cost = 5; break;
-    case 0x11: gas_cost = 5; break;
-    case 0x28: gas_cost = 2; break;
-    case 0x29: gas_cost = 2; break;
-    case 0x2a: gas_cost = 2; break;
-    case 0x2b: gas_cost = 2; break;
-    case 0x2c: gas_cost = 2; break;
-    case 0x2d: gas_cost = 2; break;
-    case 0x2e: gas_cost = 2; break;
-    case 0x2f: gas_cost = 2; break;
-    case 0x30: gas_cost = 2; break;
-    case 0x31: gas_cost = 2; break;
-    case 0x32: gas_cost = 2; break;
-    case 0x33: gas_cost = 2; break;
-    case 0x34: gas_cost = 2; break;
-    case 0x35: gas_cost = 2; break;
-    case 0x36: gas_cost = 3; break;
-    case 0x37: gas_cost = 3; break;
-    case 0x38: gas_cost = 3; break;
-    case 0x39: gas_cost = 3; break;
-    case 0x3a: gas_cost = 3; break;
-    case 0x3b: gas_cost = 3; break;
-    case 0x3c: gas_cost = 3; break;
-    case 0x3d: gas_cost = 3; break;
-    case 0x3e: gas_cost = 3; break;
-    case 0x3f: gas_cost = 10; break;
-    case 0x40: gas_cost = 10; break;
-    default: gas_cost = 1; break;
-  }
-  
-  ctx->gas_used += gas_cost;
-  
-  if (ctx->gas_used > ctx->gas_limit) {
-    MXD_LOG_ERROR("contracts", "Contract gas limit exceeded: %lu > %lu", ctx->gas_used, ctx->gas_limit);
-    mxd_metrics_increment("contract_gas_exceeded_total");
-    return m3_MeteringResult_Trap;
-  }
-  
-  return m3_MeteringResult_Continue;
-}
-#endif
 
 // Initialize smart contracts module
 int mxd_init_contracts(void) {
@@ -184,18 +116,11 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
 
   mxd_config_t* config = mxd_get_config();
   int timeout_seconds = 5;
-  if (config && config->contracts.execution_timeout_seconds > 0) {
-    timeout_seconds = config->contracts.execution_timeout_seconds;
+  if (config && config->contracts.timeout_seconds > 0) {
+    timeout_seconds = config->contracts.timeout_seconds;
   }
 
-  wasm_state.gas_ctx.gas_used = 0;
-  wasm_state.gas_ctx.gas_limit = state->gas_limit;
-  wasm_state.gas_ctx.start_time = time(NULL);
-  wasm_state.gas_ctx.timeout_seconds = timeout_seconds;
-
-#ifdef M3_COMPILE_WITH_METERING
-  m3_SetMeteringCallback(wasm_state.runtime, gas_metering_callback, &wasm_state.gas_ctx);
-#endif
+  time_t start_time = time(NULL);
 
   IM3Function func;
   M3Result res = m3_FindFunction(&func, wasm_state.runtime, "main");
@@ -205,11 +130,19 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     return -1;
   }
 
+  // Simple gas calculation based on input size
   uint64_t gas_used = 100 + input_size;
-  wasm_state.gas_ctx.gas_used = gas_used;
 
   uint32_t input_val = *(const uint32_t *)input;
   res = m3_CallV(func, input_val);
+  
+  time_t end_time = time(NULL);
+  if (difftime(end_time, start_time) > timeout_seconds) {
+    MXD_LOG_ERROR("contracts", "Contract execution timeout exceeded (%d seconds)", timeout_seconds);
+    mxd_metrics_increment("contract_timeouts_total");
+    return -1;
+  }
+  
   if (res) {
     MXD_LOG_ERROR("contracts", "Call error: %s", res);
     mxd_metrics_increment("contract_execution_errors_total");
@@ -223,8 +156,6 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     mxd_metrics_increment("contract_execution_errors_total");
     return -1;
   }
-
-  gas_used = wasm_state.gas_ctx.gas_used;
 
   if (sizeof(ret) > sizeof(result->return_data)) {
     return -1;

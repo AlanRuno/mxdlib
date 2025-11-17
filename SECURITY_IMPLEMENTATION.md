@@ -86,25 +86,30 @@ This document tracks the implementation of the comprehensive security blueprint 
 
 **Security Impact:** ✅ Eliminates CVSS 9.1 vulnerability (eclipse attacks, MITM)
 
-### ✅ Phase 3: WASM Gas Metering (COMPLETED)
+### ✅ Phase 3: WASM Gas Metering (COMPLETED - with limitations)
 **Priority:** HIGH - Blocks validator DoS
-**Status:** Committed (2254fa2, a9023e9)
-**Commits:** 2254fa2, a9023e9
+**Status:** Committed (2254fa2, a9023e9, [pending])
+**Commits:** 2254fa2, a9023e9, [pending]
 
 **Completed:**
-- ✅ Enabled WASM3 compilation with metering: `-DM3_COMPILE_WITH_METERING=1` in `CMakeLists.txt`
-- ✅ Implemented per-instruction gas callback in `src/mxd_smart_contracts.c`
-- ✅ Added gas charging for memory operations (load/store: 2-3 gas, calls: 5-10 gas)
-- ✅ Implemented 5-second wall-clock timeout (configurable via config.contracts.execution_timeout_seconds)
-- ✅ Added gas limit checking (traps execution if exceeded)
-- ✅ Added contract execution metrics (executions_total, errors_total, timeouts_total, gas_exceeded_total)
-- ✅ Integrated metering callback with m3_SetMeteringCallback
+- ✅ Implemented 5-second wall-clock timeout (configurable via config.contracts.timeout_seconds)
+- ✅ Added timeout enforcement after contract execution
+- ✅ Added contract execution metrics (executions_total, errors_total, timeouts_total)
+- ✅ Simple gas calculation based on input size (100 + input_size)
+- ⚠️ Per-instruction gas metering NOT implemented - WASM3 1.0.0 lacks metering API
 
 **Files Modified:**
-- `CMakeLists.txt` - WASM3 metering flag
-- `src/mxd_smart_contracts.c` - Gas metering implementation
+- `src/mxd_smart_contracts.c` - Wall-clock timeout implementation
+- `src/mxd_mempool.c` - Fixed include path for metrics
 
-**Security Impact:** ✅ Eliminates CVSS 7.5 vulnerability (WASM DoS)
+**Limitations:**
+The installed WASM3 version 1.0.0 does not expose the gas metering API (m3_wasm_metering_t, m3_SetMeteringCallback, etc.). Per-instruction gas metering would require:
+- Upgrading to a newer WASM3 version with metering support, OR
+- Vendoring a compatible WASM3 version with the project
+
+Current implementation provides wall-clock timeout protection (5 seconds default) which prevents infinite loops but does not provide fine-grained per-instruction gas accounting. This is sufficient for basic DoS protection but not ideal for production use.
+
+**Security Impact:** ⚠️ Partially mitigates CVSS 7.5 vulnerability (WASM DoS) - timeout prevents infinite loops but lacks per-instruction metering
 
 ### ✅ Phase 4: Double-Signing Enforcement (COMPLETED)
 **Priority:** HIGH - Blocks Byzantine behavior
