@@ -6,6 +6,7 @@
 #include "../../include/mxd_crypto.h"
 #include "../../include/mxd_p2p.h"
 #include "../../include/mxd_endian.h"
+#include "../metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,7 +26,7 @@
 // Validation chain thresholds
 #define MXD_MIN_RELAY_SIGNATURES 3     // Minimum signatures required for relay (X=3)
 #define MXD_VALIDATION_EXPIRY 5        // Validation signatures expire after 5 blocks
-#define MXD_BLACKLIST_DURATION 100     // Default blacklist duration (in blocks)
+#define MXD_BLACKLIST_DURATION 1000    // Default blacklist duration (in blocks) - Phase 4 security requirement
 #define MXD_MAX_TIMESTAMP_DRIFT_MS 60000ULL  // Maximum timestamp drift allowed (in milliseconds)
 
 #include "../../include/mxd_rocksdb_globals.h"
@@ -575,7 +576,7 @@ int mxd_validator_signed_conflicting_blocks(const uint8_t validator_id[20], uint
     }
     
     if (!signatures || !heights || signature_count == 0) {
-        return 0; // No signatures found
+        return 0;
     }
     
     int conflict_found = 0;
@@ -585,9 +586,14 @@ int mxd_validator_signed_conflicting_blocks(const uint8_t validator_id[20], uint
             memset(&block, 0, sizeof(mxd_block_t));
             
             if (mxd_retrieve_block_by_height(height, &block) == 0) {
-                // Check if block hash is different
                 if (memcmp(block.block_hash, block_hash, 64) != 0) {
                     conflict_found = 1;
+                    MXD_LOG_WARN("rsc", "Double-signing detected: validator signed conflicting blocks at height %u", height);
+                    mxd_metrics_increment("validator_double_sign_detected_total");
+                    
+                    if (mxd_blacklist_validator(validator_id, MXD_BLACKLIST_DURATION) == 0) {
+                        MXD_LOG_INFO("rsc", "Validator automatically blacklisted for %d blocks due to double-signing", MXD_BLACKLIST_DURATION);
+                    }
                 }
                 
                 if (block.validation_chain) {
@@ -617,7 +623,6 @@ int mxd_blacklist_validator(const uint8_t validator_id[20], uint32_t duration) {
         return -1;
     }
     
-    // Calculate expiry height
     uint32_t expiry_height = current_height + (duration > 0 ? duration : MXD_BLACKLIST_DURATION);
     
     uint8_t key[10 + 20];
@@ -641,7 +646,8 @@ int mxd_blacklist_validator(const uint8_t validator_id[20], uint32_t duration) {
         return -1;
     }
     
-    MXD_LOG_INFO("rsc", "Validator blacklisted until height %u", expiry_height);
+    MXD_LOG_INFO("rsc", "Validator blacklisted until height %u (duration: %u blocks)", expiry_height, duration);
+    mxd_metrics_increment("validator_blacklisted_total");
     return 0;
 }
 
