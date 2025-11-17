@@ -93,7 +93,7 @@ static char* get_cert_spki_hash(X509* cert) {
     }
     
     for (unsigned int i = 0; i < hash_len; i++) {
-        sprintf(hash_str + (i * 2), "%02x", hash[i]);
+        snprintf(hash_str + (i * 2), 3, "%02x", hash[i]);
     }
     hash_str[hash_len * 2] = '\0';
     
