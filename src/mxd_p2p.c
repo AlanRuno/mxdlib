@@ -69,6 +69,7 @@ typedef struct {
     int socket;
     char address[256];
     uint16_t port;
+    uint16_t peer_listen_port;
     time_t connected_at;
     time_t last_keepalive_sent;
     time_t last_keepalive_received;
@@ -459,6 +460,32 @@ static peer_connection_t* find_connection(const char *address, uint16_t port) {
     return NULL;
 }
 
+static peer_connection_t* find_connection_by_socket(int sock) {
+    pthread_mutex_lock(&peer_mutex);
+    for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
+        if (active_connections[i].active && active_connections[i].socket == sock) {
+            pthread_mutex_unlock(&peer_mutex);
+            return &active_connections[i];
+        }
+    }
+    pthread_mutex_unlock(&peer_mutex);
+    return NULL;
+}
+
+static peer_connection_t* find_connection_for_peer(const char *address, uint16_t port) {
+    pthread_mutex_lock(&peer_mutex);
+    for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
+        if (active_connections[i].active &&
+            strcmp(active_connections[i].address, address) == 0 &&
+            (active_connections[i].port == port || active_connections[i].peer_listen_port == port)) {
+            pthread_mutex_unlock(&peer_mutex);
+            return &active_connections[i];
+        }
+    }
+    pthread_mutex_unlock(&peer_mutex);
+    return NULL;
+}
+
 static int validate_message(const mxd_message_header_t *header, const void *payload, peer_connection_t *conn) {
     if (!header || !payload) {
         return -1;
@@ -682,10 +709,19 @@ static void handle_get_peers_on_socket(int sock, const char *address, uint16_t p
     MXD_LOG_DEBUG("p2p", "PEERS response (socket): count=%u, serialized=%zu, payload_size=%zu, actual_offset=%zu", 
                  count, serialized_count, payload_size, offset);
     
-    if (send_on_socket(sock, MXD_MSG_PEERS, response, offset) != 0) {
-        MXD_LOG_WARN("p2p", "Failed to send PEERS response to %s:%d on persistent connection", address, peer_listening_port);
+    peer_connection_t *conn = find_connection_by_socket(sock);
+    if (conn) {
+        if (send_on_connection(conn, MXD_MSG_PEERS, response, offset) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to send PEERS response to %s:%d on persistent connection", address, peer_listening_port);
+        } else {
+            MXD_LOG_INFO("p2p", "Sent %u active peers to %s:%d on persistent connection (payload: %zu bytes)", count, address, peer_listening_port, offset);
+        }
     } else {
-        MXD_LOG_INFO("p2p", "Sent %u active peers to %s:%d on persistent connection (payload: %zu bytes)", count, address, peer_listening_port, offset);
+        if (send_on_socket(sock, MXD_MSG_PEERS, response, offset) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to send PEERS response to %s:%d", address, peer_listening_port);
+        } else {
+            MXD_LOG_INFO("p2p", "Sent %u active peers to %s:%d (payload: %zu bytes)", count, address, peer_listening_port, offset);
+        }
     }
     
     free(response);
@@ -1086,7 +1122,7 @@ static int handle_handshake_message(const char *address, uint16_t port,
     if (conn) {
         strncpy(conn->address, address, sizeof(conn->address) - 1);
         conn->address[sizeof(conn->address) - 1] = '\0';
-        conn->port = handshake.listen_port;
+        conn->peer_listen_port = handshake.listen_port;
         conn->active = 1;
         conn->connected_at = time(NULL);
         conn->last_keepalive_received = time(NULL);
@@ -1322,11 +1358,14 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     strncpy(active_connections[slot].address, address, sizeof(active_connections[slot].address) - 1);
     active_connections[slot].address[sizeof(active_connections[slot].address) - 1] = '\0';
     active_connections[slot].port = port;
+    active_connections[slot].peer_listen_port = 0;
     active_connections[slot].socket = sock;
     active_connections[slot].active = 1;
     active_connections[slot].connected_at = time(NULL);
     active_connections[slot].last_keepalive_received = time(NULL);
     active_connections[slot].keepalive_failures = 0;
+    memset(active_connections[slot].session_token, 0, 16);
+    active_connections[slot].has_session_token = 0;
     active_connection_count++;
     
     pthread_t thread;
@@ -1488,6 +1527,8 @@ static void* keepalive_thread_func(void* arg) {
                 MXD_LOG_WARN("p2p", "Incoming connection %s:%d timed out, closing socket",
                            active_connections[i].address, active_connections[i].port);
                 close(active_connections[i].socket);
+                memset(active_connections[i].session_token, 0, 16);
+                active_connections[i].has_session_token = 0;
                 active_connections[i].active = 0;
                 active_connection_count--;
             }
@@ -1533,7 +1574,7 @@ static void* connection_handler(void* arg) {
     
     MXD_LOG_INFO("p2p", "Sent HANDSHAKE to %s:%d", conn->address, conn->port);
     
-    uint8_t header_buffer[76];
+    uint8_t header_buffer[92];
     int read_result = read_n(conn->socket, header_buffer, sizeof(header_buffer));
     if (read_result != 0) {
         MXD_LOG_WARN("p2p", "Failed to read HANDSHAKE from %s:%d (v2 protocol requires HANDSHAKE)", 
@@ -1597,7 +1638,7 @@ static void* connection_handler(void* arg) {
                conn->address, conn->port);
     
     while (conn->active && server_running) {
-        uint8_t header_buffer[76];
+        uint8_t header_buffer[92];
         
         int read_result = read_n(conn->socket, header_buffer, sizeof(header_buffer));
         if (read_result != 0) {
@@ -1719,10 +1760,13 @@ static void* server_thread_func(void* arg) {
         active_connections[slot].socket = client_socket;
         strncpy(active_connections[slot].address, client_ip, sizeof(active_connections[slot].address) - 1);
         active_connections[slot].port = client_port;
+        active_connections[slot].peer_listen_port = 0;
         active_connections[slot].connected_at = now;
         active_connections[slot].last_keepalive_sent = now;
         active_connections[slot].last_keepalive_received = now;
         active_connections[slot].keepalive_failures = 0;
+        memset(active_connections[slot].session_token, 0, 16);
+        active_connections[slot].has_session_token = 0;
         active_connections[slot].active = 1;
         
         pthread_attr_t conn_attr;
@@ -1961,6 +2005,8 @@ int mxd_stop_p2p(void) {
     for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
         if (active_connections[i].active) {
             close(active_connections[i].socket);
+            memset(active_connections[i].session_token, 0, 16);
+            active_connections[i].has_session_token = 0;
             active_connections[i].active = 0;
         }
     }
@@ -2106,128 +2152,54 @@ int mxd_send_message(const char* address, uint16_t port,
         return -1;
     }
     
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        MXD_LOG_WARN("p2p", "Failed to create socket for sending: %s", strerror(errno));
-        return -1;
-    }
+    peer_connection_t *conn = find_connection_for_peer(address, port);
     
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
-    int set = 1;
-    setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &set, sizeof(set));
-#endif
-    
-    struct timeval timeout;
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    
-    struct sockaddr_in peer_addr;
-    memset(&peer_addr, 0, sizeof(peer_addr));
-    peer_addr.sin_family = AF_INET;
-    peer_addr.sin_port = htons(port);
-    
-    if (inet_pton(AF_INET, address, &peer_addr.sin_addr) <= 0) {
-        MXD_LOG_WARN("p2p", "Invalid address: %s", address);
-        close(sock);
-        return -1;
-    }
-    
-    if (connect(sock, (struct sockaddr*)&peer_addr, sizeof(peer_addr)) < 0) {
-        MXD_LOG_WARN("p2p", "Failed to connect to %s:%d: %s", address, port, strerror(errno));
-        close(sock);
-        return -1;
-    }
-    
-    const mxd_secrets_t *secrets = mxd_get_secrets();
-    if (!secrets) {
-        MXD_LOG_ERROR("p2p", "Secrets not initialized");
-        close(sock);
-        return -1;
-    }
-    
-    mxd_handshake_payload_t handshake;
-    if (create_signed_handshake(&handshake, NULL, 0) != 0) {
-        MXD_LOG_ERROR("p2p", "Failed to create signed handshake for %s:%d", address, port);
-        close(sock);
-        return -1;
-    }
-    
-    size_t wire_buf_size = handshake_wire_size(&handshake);
-    uint8_t *wire_buf = malloc(wire_buf_size);
-    if (!wire_buf) {
-        MXD_LOG_ERROR("p2p", "Failed to allocate wire buffer for handshake");
-        close(sock);
-        return -1;
-    }
-    size_t wire_len = handshake_to_wire(&handshake, wire_buf, wire_buf_size);
-    if (wire_len == 0 || send_on_socket(sock, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
-        MXD_LOG_DEBUG("p2p", "Failed to send HANDSHAKE to %s:%d", address, port);
-        free(wire_buf);
-        close(sock);
-        return -1;
-    }
-    free(wire_buf);
-    
-    struct timeval short_timeout;
-    short_timeout.tv_sec = 0;
-    short_timeout.tv_usec = 250000;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &short_timeout, sizeof(short_timeout));
-    
-    uint8_t header_buffer[92];
-    int read_result = read_n(sock, header_buffer, sizeof(header_buffer));
-    if (read_result == 0) {
-        mxd_message_header_t server_header;
-        if (parse_wire_header(header_buffer, &server_header, secrets->network_magic) == 0 &&
-            server_header.type == MXD_MSG_HANDSHAKE) {
-            
-            uint8_t *server_payload = malloc(server_header.length);
-            if (server_payload && read_n(sock, server_payload, server_header.length) == 0) {
-                MXD_LOG_DEBUG("p2p", "Received server HANDSHAKE from %s:%d", address, port);
-                free(server_payload);
-            } else {
-                if (server_payload) free(server_payload);
-            }
+    if (!conn) {
+        if (try_establish_persistent_connection(address, port) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to establish persistent connection to %s:%d", address, port);
+            return -1;
+        }
+        
+        for (int i = 0; i < 10; i++) {
+            usleep(20000); // 20ms
+            conn = find_connection_for_peer(address, port);
+            if (conn) break;
+        }
+        
+        if (!conn) {
+            MXD_LOG_WARN("p2p", "Connection to %s:%d not found after establishment", address, port);
+            return -1;
         }
     }
     
-    struct timeval normal_timeout;
-    normal_timeout.tv_sec = 5;
-    normal_timeout.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &normal_timeout, sizeof(normal_timeout));
+    int token_ready = 0;
+    for (int i = 0; i < 75; i++) {
+        pthread_mutex_lock(&peer_mutex);
+        if (conn->active && conn->has_session_token) {
+            token_ready = 1;
+            pthread_mutex_unlock(&peer_mutex);
+            break;
+        }
+        int still_active = conn->active;
+        pthread_mutex_unlock(&peer_mutex);
+        
+        if (!still_active) {
+            MXD_LOG_WARN("p2p", "Connection to %s:%d closed while waiting for token", address, port);
+            return -1;
+        }
+        
+        usleep(20000); // 20ms
+    }
     
-    mxd_message_header_t header = {
-        .magic = secrets->network_magic,
-        .type = type,
-        .length = payload_length
-    };
-    
-    if (mxd_sha512(payload, payload_length, header.checksum) != 0) {
-        close(sock);
+    if (!token_ready) {
+        MXD_LOG_WARN("p2p", "Session token not ready for %s:%d after 1.5s timeout", address, port);
         return -1;
     }
     
-    mxd_wire_header_t wire_header;
-    header_to_wire(&header, &wire_header);
-    
-    if (write_n(sock, &wire_header, sizeof(wire_header)) != 0) {
-        MXD_LOG_WARN("p2p", "Failed to send v2 header to %s:%d", address, port);
-        close(sock);
+    if (send_on_connection(conn, type, payload, payload_length) != 0) {
+        MXD_LOG_WARN("p2p", "Failed to send message to %s:%d on persistent connection", address, port);
         return -1;
     }
-    
-    if (write_n(sock, payload, payload_length) != 0) {
-        MXD_LOG_WARN("p2p", "Failed to send payload to %s:%d", address, port);
-        close(sock);
-        return -1;
-    }
-    
-    shutdown(sock, SHUT_WR);
-    
-    usleep(50000);  // 50ms
-    
-    close(sock);
     
     update_unified_peer_sent(address, port);
     
