@@ -201,6 +201,7 @@ static void test_node_lifecycle(void) {
         // Calculate hash for next transaction's input
         TEST_ASSERT(mxd_calculate_tx_hash(&transactions[i], prev_tx_hash) == 0,
                    "Transaction hash calculation");
+        memcpy(transactions[i].tx_hash, prev_tx_hash, 64);
         
         printf("Transaction %d created, now validating...\n", i + 1);
         

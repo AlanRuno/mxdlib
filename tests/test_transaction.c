@@ -152,11 +152,11 @@ static void test_transaction_hashing(void) {
 int main(void) {
   printf("Starting transaction tests...\n");
 
+  // Initialize UTXO database first
+  assert(mxd_init_utxo_db("./transaction_test_utxo.db") == 0);
+  
   // Initialize transaction validation system
   assert(mxd_init_transaction_validation() == 0);
-  
-  // Initialize UTXO database with a path
-  assert(mxd_init_utxo_db("./transaction_test_utxo.db") == 0);
 
   test_transaction_creation();
   test_input_output_management();

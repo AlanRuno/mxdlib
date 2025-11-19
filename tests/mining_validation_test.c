@@ -31,6 +31,9 @@ static void test_mining_validation(void) {
 
   // Initialize UTXO database
   TEST_ASSERT(mxd_init_utxo_db("./mining_test_utxo.db") == 0, "UTXO database initialization");
+  
+  // Initialize transaction validation system
+  TEST_ASSERT(mxd_init_transaction_validation() == 0, "Transaction validation initialization");
 
   // Initialize nodes with stakes and metrics
   for (size_t i = 0; i < TEST_NODE_COUNT; i++) {
@@ -140,6 +143,7 @@ static void test_mining_validation(void) {
     
     TEST_ASSERT(mxd_calculate_tx_hash(&transactions[i], prev_tx_hash) == 0,
                 "Transaction hash calculation");
+    memcpy(transactions[i].tx_hash, prev_tx_hash, 64);
 
     printf("Transaction %d created, now validating...\n", i + 1);
 
@@ -372,8 +376,6 @@ int main(void) {
 
   TEST_ASSERT(mxd_init_ntp() == 0, "NTP initialization");
   TEST_ASSERT(test_init_p2p_ed25519(12345, test_pub_key, test_priv_key) == 0, "P2P initialization");
-  TEST_ASSERT(mxd_init_transaction_validation() == 0,
-              "Transaction validation initialization");
 
   test_mining_validation();
 
