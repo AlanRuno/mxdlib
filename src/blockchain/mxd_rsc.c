@@ -632,7 +632,8 @@ int mxd_blacklist_validator(const uint8_t validator_id[20], uint32_t duration) {
     char value[10];
     snprintf(value, sizeof(value), "%u", expiry_height);
     
-    if (mxd_init_blockchain_db(NULL) != 0) {
+    if (!mxd_get_rocksdb_db()) {
+        MXD_LOG_ERROR("rsc", "Blockchain DB not initialized");
         return -1;
     }
     
@@ -666,7 +667,8 @@ int mxd_is_validator_blacklisted(const uint8_t validator_id[20]) {
     memcpy(key, "blacklist:", 10);
     memcpy(key + 10, validator_id, 20);
     
-    if (mxd_init_blockchain_db(NULL) != 0) {
+    if (!mxd_get_rocksdb_db()) {
+        MXD_LOG_ERROR("rsc", "Blockchain DB not initialized");
         return -1;
     }
     

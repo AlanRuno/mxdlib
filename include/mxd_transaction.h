@@ -103,6 +103,9 @@ int mxd_peek_voluntary_tip_from_bytes(const uint8_t *data, size_t length, double
 int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipient_addr[20],
                                    double reward_amount);
 
+// Deep copy transaction (including pointer fields)
+int mxd_tx_deep_copy(mxd_transaction_t *dst, const mxd_transaction_t *src);
+
 // Free transaction resources
 void mxd_free_transaction(mxd_transaction_t *tx);
 

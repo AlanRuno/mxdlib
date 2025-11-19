@@ -8,6 +8,7 @@
 #include <rocksdb/c.h>
 
 #include "../include/mxd_rocksdb_globals.h"
+#include <pthread.h>
 
 static rocksdb_options_t *options = NULL;
 static rocksdb_cache_t *block_cache = NULL;
@@ -17,6 +18,9 @@ static char *db_path_global = NULL;
 static size_t utxo_count = 0;
 static size_t pruned_count = 0;
 static double total_value = 0.0;
+
+static pthread_mutex_t db_init_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int utxo_db_initialized = 0;
 
 #define LRU_CACHE_SIZE 5000
 static mxd_utxo_t *lru_cache = NULL;
@@ -196,6 +200,12 @@ static int find_in_lru_cache(const uint8_t tx_hash[64], uint32_t output_index, m
 int mxd_init_utxo_db(const char *db_path) {
     if (!db_path) return -1;
     
+    pthread_mutex_lock(&db_init_mutex);
+    if (utxo_db_initialized) {
+        pthread_mutex_unlock(&db_init_mutex);
+        return 0;
+    }
+    
     if (mxd_get_rocksdb_db() != NULL) {
         mxd_close_utxo_db();
     }
@@ -239,18 +249,8 @@ int mxd_init_utxo_db(const char *db_path) {
     
     rocksdb_writeoptions_set_sync(writeoptions, 1);
     
+    // Open database (removed destructive rocksdb_destroy_db and LOCK removal)
     char *err = NULL;
-    rocksdb_destroy_db(options, db_path, &err);
-    if (err != NULL) {
-        free(err);
-        err = NULL;
-    }
-    
-    char lock_path[1024];
-    snprintf(lock_path, sizeof(lock_path), "%s/LOCK", db_path);
-    remove(lock_path);
-    
-    // Open database
     rocksdb_t *db = rocksdb_open(options, db_path, &err);
     
     if (err) {
@@ -265,6 +265,7 @@ int mxd_init_utxo_db(const char *db_path) {
         if (err) {
             MXD_LOG_ERROR("utxo", "Second attempt to open UTXO database failed: %s", err);
             free(err);
+            pthread_mutex_unlock(&db_init_mutex);
             return -1;
         }
     }
@@ -277,6 +278,7 @@ int mxd_init_utxo_db(const char *db_path) {
     if (init_lru_cache() != 0) {
         rocksdb_close(mxd_get_rocksdb_db());
         mxd_set_rocksdb_db(NULL);
+        pthread_mutex_unlock(&db_init_mutex);
         return -1;
     }
     
@@ -285,6 +287,34 @@ int mxd_init_utxo_db(const char *db_path) {
     pruned_count = 0;
     total_value = 0.0;
     
+    utxo_db_initialized = 1;
+    pthread_mutex_unlock(&db_init_mutex);
+    return 0;
+}
+
+int mxd_reset_utxo_db(const char *db_path) {
+    if (!db_path) return -1;
+    
+    pthread_mutex_lock(&db_init_mutex);
+    
+    if (mxd_get_rocksdb_db() != NULL) {
+        mxd_close_utxo_db();
+    }
+    
+    rocksdb_options_t *reset_options = rocksdb_options_create();
+    char *err = NULL;
+    rocksdb_destroy_db(reset_options, db_path, &err);
+    rocksdb_options_destroy(reset_options);
+    
+    if (err != NULL) {
+        MXD_LOG_ERROR("utxo", "Failed to destroy UTXO database: %s", err);
+        free(err);
+        pthread_mutex_unlock(&db_init_mutex);
+        return -1;
+    }
+    
+    utxo_db_initialized = 0;
+    pthread_mutex_unlock(&db_init_mutex);
     return 0;
 }
 

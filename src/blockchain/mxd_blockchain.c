@@ -280,6 +280,17 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
     return -1; // Invalid signature
   }
   
+  // Verify node_address matches derived address from public key
+  uint8_t derived_addr[20];
+  if (mxd_derive_address(algo_id, public_key, public_key_length, derived_addr) != 0) {
+    return -1;
+  }
+  
+  if (memcmp(node_address, derived_addr, 20) != 0) {
+    MXD_LOG_ERROR("blockchain", "Membership node_address doesn't match derived address");
+    return -1;
+  }
+  
   // Verify stake requirement (1% of total supply, or genesis mode)
   if (block->total_supply > 0.0) {
     uint8_t addr20[20];

@@ -13,10 +13,8 @@ static int validation_initialized = 0;
 // Initialize transaction validation system
 int mxd_init_transaction_validation(void) {
     if (!mxd_get_rocksdb_db()) {
-        if (mxd_init_utxo_db("transaction_validation_utxo.db") != 0) {
-            MXD_LOG_ERROR("transaction", "Failed to initialize UTXO database for transaction validation");
-            return -1;
-        }
+        MXD_LOG_ERROR("transaction", "UTXO database not initialized - must be initialized before transaction validation");
+        return -1;
     }
     
     validation_initialized = 1;
@@ -244,14 +242,10 @@ int mxd_validate_transaction(const mxd_transaction_t *tx) {
   }
 
   if (!tx->is_coinbase) {
-    // Verify all input signatures with error tracking
-    int signature_errors = 0;
     for (uint32_t i = 0; i < tx->input_count; i++) {
       if (mxd_verify_tx_input(tx, i) != 0) {
-        signature_errors++;
-        if (signature_errors > 10) {  // Allow some signature failures
-          return -1;
-        }
+        MXD_LOG_ERROR("transaction", "Invalid signature on input %u", i);
+        return -1;
       }
     }
     
@@ -378,13 +372,6 @@ int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, double *amount) {
   mxd_utxo_t utxo;
   if (mxd_get_utxo(input->prev_tx_hash, input->output_index, &utxo) != 0) {
     MXD_LOG_WARN("transaction", "UTXO not found for given input (index=%u)", input->output_index);
-    
-    if (input->amount > 0.0) {
-      MXD_LOG_INFO("transaction", "Using provided input amount for testing");
-      *amount = input->amount;
-      return 0;
-    }
-    
     return -1;
   }
   
@@ -499,6 +486,57 @@ int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipie
   }
   
   return mxd_calculate_tx_hash(tx, tx->tx_hash);
+}
+
+int mxd_tx_deep_copy(mxd_transaction_t *dst, const mxd_transaction_t *src) {
+  if (!dst || !src) return -1;
+  
+  memcpy(dst, src, sizeof(mxd_transaction_t));
+  dst->inputs = NULL;
+  dst->outputs = NULL;
+  
+  if (src->inputs && src->input_count > 0) {
+    dst->inputs = malloc(src->input_count * sizeof(mxd_tx_input_t));
+    if (!dst->inputs) return -1;
+    
+    for (uint32_t i = 0; i < src->input_count; i++) {
+      memcpy(&dst->inputs[i], &src->inputs[i], sizeof(mxd_tx_input_t));
+      dst->inputs[i].public_key = NULL;
+      dst->inputs[i].signature = NULL;
+      
+      if (src->inputs[i].public_key && src->inputs[i].public_key_length > 0) {
+        dst->inputs[i].public_key = malloc(src->inputs[i].public_key_length);
+        if (!dst->inputs[i].public_key) {
+          mxd_free_transaction(dst);
+          return -1;
+        }
+        memcpy(dst->inputs[i].public_key, src->inputs[i].public_key, 
+               src->inputs[i].public_key_length);
+      }
+      
+      if (src->inputs[i].signature && src->inputs[i].signature_length > 0) {
+        dst->inputs[i].signature = malloc(src->inputs[i].signature_length);
+        if (!dst->inputs[i].signature) {
+          mxd_free_transaction(dst);
+          return -1;
+        }
+        memcpy(dst->inputs[i].signature, src->inputs[i].signature,
+               src->inputs[i].signature_length);
+      }
+    }
+  }
+  
+  if (src->outputs && src->output_count > 0) {
+    dst->outputs = malloc(src->output_count * sizeof(mxd_tx_output_t));
+    if (!dst->outputs) {
+      mxd_free_transaction(dst);
+      return -1;
+    }
+    memcpy(dst->outputs, src->outputs, 
+           src->output_count * sizeof(mxd_tx_output_t));
+  }
+  
+  return 0;
 }
 
 void mxd_free_transaction(mxd_transaction_t *tx) {
