@@ -6,6 +6,7 @@
 #include "../../include/mxd_crypto.h"
 #include "../../include/mxd_p2p.h"
 #include "../../include/mxd_endian.h"
+#include "../../include/mxd_rocksdb_globals.h"
 #include "../metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>

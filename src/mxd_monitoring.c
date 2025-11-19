@@ -5,6 +5,7 @@
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_config.h"
+#include "../include/mxd_rocksdb_globals.h"
 #include "metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
