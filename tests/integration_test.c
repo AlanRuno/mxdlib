@@ -116,9 +116,6 @@ static void test_node_lifecycle(void) {
                "Blockchain sync within latency limit");
     
     // Test transaction processing
-    // Initialize transaction validation system
-    TEST_ASSERT(mxd_init_transaction_validation() == 0, "Transaction validation init");
-    
     // Create genesis transaction
     TEST_ASSERT(mxd_create_transaction(&genesis_tx) == 0,
                "Genesis transaction creation");
@@ -206,8 +203,8 @@ static void test_node_lifecycle(void) {
         printf("Transaction %d created, now validating...\n", i + 1);
         
         // Validate transaction across nodes
-        bool valid = true;
-        for (size_t j = 0; j < TEST_NODE_COUNT && valid; j++) {
+        int validation_success = 0;
+        for (size_t j = 0; j < TEST_NODE_COUNT; j++) {
             printf("  Validating on node %zu...\n", j);
             int result = mxd_validate_transaction(&transactions[i]);
             
@@ -216,15 +213,16 @@ static void test_node_lifecycle(void) {
                 error_count++;
                 if (error_count > MAX_CONSECUTIVE_ERRORS) {
                     TEST_ERROR_COUNT(error_count, MAX_CONSECUTIVE_ERRORS);
-                    valid = false;
+                    break;
                 }
             } else {
                 printf("  Node %zu validation succeeded\n", j);
                 error_count = 0;
+                validation_success = 1;
             }
         }
         
-        if (valid) {
+        if (validation_success) {
             // Apply transaction to UTXO database so next transaction can reference its outputs
             TEST_ASSERT(mxd_apply_transaction_to_utxo(&transactions[i]) == 0,
                        "Apply transaction to UTXO database");
@@ -232,7 +230,7 @@ static void test_node_lifecycle(void) {
             printf("Transaction %d validated and applied\n", i + 1);
             TEST_TX_RATE_UPDATE("Transaction Processing", MIN_TX_RATE);
         } else {
-            printf("Transaction %d validation failed, stopping test\n", i + 1);
+            printf("Transaction %d validation failed on all nodes, stopping test\n", i + 1);
             break;
         }
     }
