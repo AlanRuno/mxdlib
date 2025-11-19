@@ -4,6 +4,8 @@
 #include "../include/mxd_transaction.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_config.h"
+#include "metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +28,117 @@ static char health_buffer[1024];
 static int server_socket = -1;
 static pthread_t server_thread;
 static volatile int server_running = 0;
+
+static mxd_config_t* global_config = NULL;
+
+typedef struct {
+    char ip[64];
+    time_t last_request;
+    int request_count;
+} rate_limit_entry_t;
+
+static rate_limit_entry_t rate_limits[100];
+static int rate_limit_count = 0;
+static pthread_mutex_t rate_limit_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int constant_time_compare(const char* a, const char* b, size_t len) {
+    volatile unsigned char result = 0;
+    for (size_t i = 0; i < len; i++) {
+        result |= a[i] ^ b[i];
+    }
+    return result == 0;
+}
+
+static int check_rate_limit(const char* client_ip) {
+    if (!global_config || global_config->http.rate_limit_per_minute == 0) {
+        return 1;
+    }
+    
+    pthread_mutex_lock(&rate_limit_mutex);
+    
+    time_t now = time(NULL);
+    int found = 0;
+    
+    for (int i = 0; i < rate_limit_count; i++) {
+        if (strcmp(rate_limits[i].ip, client_ip) == 0) {
+            found = 1;
+            if (now - rate_limits[i].last_request >= 60) {
+                rate_limits[i].request_count = 1;
+                rate_limits[i].last_request = now;
+            } else {
+                rate_limits[i].request_count++;
+                if (rate_limits[i].request_count > (int)global_config->http.rate_limit_per_minute) {
+                    pthread_mutex_unlock(&rate_limit_mutex);
+                    mxd_metrics_increment("mxd_http_rate_limit_violations_total");
+                    return 0;
+                }
+            }
+            break;
+        }
+    }
+    
+    if (!found && rate_limit_count < 100) {
+        strncpy(rate_limits[rate_limit_count].ip, client_ip, sizeof(rate_limits[rate_limit_count].ip) - 1);
+        rate_limits[rate_limit_count].last_request = now;
+        rate_limits[rate_limit_count].request_count = 1;
+        rate_limit_count++;
+    }
+    
+    pthread_mutex_unlock(&rate_limit_mutex);
+    return 1;
+}
+
+static int check_bearer_token(const char* auth_header) {
+    if (!global_config || !global_config->http.require_auth) {
+        return 1;
+    }
+    
+    if (global_config->http.api_token[0] == '\0') {
+        return 1;
+    }
+    
+    if (!auth_header || strncmp(auth_header, "Bearer ", 7) != 0) {
+        mxd_metrics_increment("mxd_http_auth_failures_total");
+        return 0;
+    }
+    
+    const char* token = auth_header + 7;
+    size_t token_len = strlen(token);
+    size_t expected_len = strlen(global_config->http.api_token);
+    
+    if (token_len != expected_len) {
+        mxd_metrics_increment("mxd_http_auth_failures_total");
+        return 0;
+    }
+    
+    if (!constant_time_compare(token, global_config->http.api_token, token_len)) {
+        mxd_metrics_increment("mxd_http_auth_failures_total");
+        return 0;
+    }
+    
+    return 1;
+}
+
+static int check_wallet_access(const char* auth_header, const char** error_response, const char** error_content_type, int* error_status) {
+    if (global_config && !global_config->http.wallet_enabled) {
+        *error_response = "{\"error\":\"Wallet endpoints are disabled\"}";
+        *error_content_type = "application/json";
+        *error_status = 403;
+        mxd_metrics_increment("mxd_http_wallet_requests_total");
+        return 0;
+    }
+    
+    if (!check_bearer_token(auth_header)) {
+        *error_response = "{\"error\":\"Unauthorized\"}";
+        *error_content_type = "application/json";
+        *error_status = 401;
+        mxd_metrics_increment("mxd_http_wallet_requests_total");
+        return 0;
+    }
+    
+    mxd_metrics_increment("mxd_http_wallet_requests_total");
+    return 1;
+}
 
 static mxd_wallet_t wallet = {0};
 static int wallet_initialized = 0;
@@ -59,6 +172,15 @@ int mxd_init_monitoring(uint16_t http_port) {
     strcpy(current_health.status_message, "System operational");
     current_health.last_check_timestamp = time(NULL);
     
+    global_config = mxd_get_config();
+    if (!global_config) {
+        MXD_LOG_WARN("monitoring", "Failed to get global config, using defaults");
+    }
+    
+    if (mxd_metrics_init() != 0) {
+        MXD_LOG_WARN("monitoring", "Failed to initialize metrics registry");
+    }
+    
     if (mxd_init_wallet() != 0) {
         MXD_LOG_ERROR("monitoring", "Failed to initialize wallet");
         return -1;
@@ -66,6 +188,10 @@ int mxd_init_monitoring(uint16_t http_port) {
     
     monitoring_initialized = 1;
     MXD_LOG_INFO("monitoring", "Monitoring system initialized on port %d", http_port);
+    MXD_LOG_INFO("monitoring", "HTTP binding: %s, Auth: %s, Wallet: %s",
+        global_config ? global_config->http.bind_address : "127.0.0.1",
+        global_config && global_config->http.require_auth ? "enabled" : "disabled",
+        global_config && global_config->http.wallet_enabled ? "enabled" : "disabled");
     return 0;
 }
 
@@ -1411,15 +1537,47 @@ static void handle_http_request(int client_socket) {
     
     buffer[bytes_read] = '\0';
     
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    getpeername(client_socket, (struct sockaddr*)&client_addr, &addr_len);
+    char client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+    
+    if (!check_rate_limit(client_ip)) {
+        const char* rate_limit_response = 
+            "HTTP/1.1 429 Too Many Requests\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: 60\r\n"
+            "Retry-After: 60\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+            "{\"error\":\"Rate limit exceeded\",\"retry_after_seconds\":60}";
+        send(client_socket, rate_limit_response, strlen(rate_limit_response), 0);
+        close(client_socket);
+        return;
+    }
+    
     char method[16], path[256], version[16];
     if (sscanf(buffer, "%15s %255s %15s", method, path, version) != 3) {
         close(client_socket);
         return;
     }
     
+    char* auth_header = NULL;
+    char* line = strtok(buffer, "\r\n");
+    while (line != NULL) {
+        if (strncasecmp(line, "Authorization:", 14) == 0) {
+            auth_header = line + 14;
+            while (*auth_header == ' ') auth_header++;
+            break;
+        }
+        line = strtok(NULL, "\r\n");
+    }
+    
     const char* response_body = NULL;
     const char* content_type = "text/plain";
     int status_code = 404;
+    int is_wallet_endpoint = 0;
     
     if (strcmp(method, "GET") == 0) {
         if (strcmp(path, "/health") == 0) {
@@ -1431,10 +1589,15 @@ static void handle_http_request(int client_socket) {
             content_type = "text/plain";
             status_code = 200;
         } else if (strcmp(path, "/wallet") == 0) {
-            response_body = mxd_get_wallet_html();
-            content_type = "text/html";
-            status_code = 200;
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
+                response_body = mxd_get_wallet_html();
+                content_type = "text/html";
+                status_code = 200;
+            }
         } else if (strncmp(path, "/wallet/balance?address=", 24) == 0) {
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
             char* address = path + 24;
             char decoded_address[256];
             int j = 0;
@@ -1451,18 +1614,25 @@ static void handle_http_request(int client_socket) {
             response_body = mxd_handle_wallet_balance(decoded_address);
             content_type = "application/json";
             status_code = 200;
-        } else if (strcmp(path, "/wallet/addresses") == 0) {
-            response_body = mxd_handle_wallet_list_addresses();
-            content_type = "application/json";
-            status_code = 200;
-        } else if (strncmp(path, "/wallet/history", 15) == 0) {
-            const char* address = NULL;
-            if (strncmp(path, "/wallet/history?address=", 24) == 0) {
-                address = path + 24;
             }
-            response_body = mxd_handle_wallet_transaction_history(address);
-            content_type = "application/json";
-            status_code = 200;
+        } else if (strcmp(path, "/wallet/addresses") == 0) {
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
+                response_body = mxd_handle_wallet_list_addresses();
+                content_type = "application/json";
+                status_code = 200;
+            }
+        } else if (strncmp(path, "/wallet/history", 15) == 0) {
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
+                const char* address = NULL;
+                if (strncmp(path, "/wallet/history?address=", 24) == 0) {
+                    address = path + 24;
+                }
+                response_body = mxd_handle_wallet_transaction_history(address);
+                content_type = "application/json";
+                status_code = 200;
+            }
         } else if (strcmp(path, "/metrics/hybrid") == 0) {
             response_body = mxd_get_hybrid_crypto_metrics_json();
             content_type = "application/json";
@@ -1470,79 +1640,91 @@ static void handle_http_request(int client_socket) {
         }
     } else if (strcmp(method, "POST") == 0) {
         if (strcmp(path, "/wallet/generate") == 0 || strncmp(path, "/wallet/generate?", 17) == 0) {
-            uint8_t algo_id = MXD_SIGALG_ED25519; // Default
-            if (strncmp(path, "/wallet/generate?algo=", 22) == 0) {
-                char* algo_str = path + 22;
-                if (strncmp(algo_str, "dilithium5", 10) == 0) {
-                    algo_id = MXD_SIGALG_DILITHIUM5;
-                } else if (strncmp(algo_str, "ed25519", 7) == 0) {
-                    algo_id = MXD_SIGALG_ED25519;
-                }
-            }
-            response_body = mxd_handle_wallet_generate_with_algo(algo_id);
-            content_type = "application/json";
-            status_code = 200;
-        } else if (strcmp(path, "/wallet/send") == 0) {
-            char* body_start = strstr(buffer, "\r\n\r\n");
-            if (body_start) {
-                body_start += 4;
-                cJSON* json = cJSON_Parse(body_start);
-                if (json) {
-                    cJSON* to = cJSON_GetObjectItem(json, "to");
-                    cJSON* amount = cJSON_GetObjectItem(json, "amount");
-                    if (to && amount && cJSON_IsString(to) && cJSON_IsString(amount)) {
-                        response_body = mxd_handle_wallet_send(to->valuestring, amount->valuestring);
-                        content_type = "application/json";
-                        status_code = 200;
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
+                uint8_t algo_id = MXD_SIGALG_ED25519;
+                if (strncmp(path, "/wallet/generate?algo=", 22) == 0) {
+                    char* algo_str = path + 22;
+                    if (strncmp(algo_str, "dilithium5", 10) == 0) {
+                        algo_id = MXD_SIGALG_DILITHIUM5;
+                    } else if (strncmp(algo_str, "ed25519", 7) == 0) {
+                        algo_id = MXD_SIGALG_ED25519;
                     }
-                    cJSON_Delete(json);
                 }
-            }
-            if (!response_body) {
-                response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
+                response_body = mxd_handle_wallet_generate_with_algo(algo_id);
                 content_type = "application/json";
-                status_code = 400;
+                status_code = 200;
+            }
+        } else if (strcmp(path, "/wallet/send") == 0) {
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
+                char* body_start = strstr(buffer, "\r\n\r\n");
+                if (body_start) {
+                    body_start += 4;
+                    cJSON* json = cJSON_Parse(body_start);
+                    if (json) {
+                        cJSON* to = cJSON_GetObjectItem(json, "to");
+                        cJSON* amount = cJSON_GetObjectItem(json, "amount");
+                        if (to && amount && cJSON_IsString(to) && cJSON_IsString(amount)) {
+                            response_body = mxd_handle_wallet_send(to->valuestring, amount->valuestring);
+                            content_type = "application/json";
+                            status_code = 200;
+                        }
+                        cJSON_Delete(json);
+                    }
+                }
+                if (!response_body) {
+                    response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
+                    content_type = "application/json";
+                    status_code = 400;
+                }
             }
         } else if (strcmp(path, "/wallet/export") == 0) {
-            char* body_start = strstr(buffer, "\r\n\r\n");
-            if (body_start) {
-                body_start += 4;
-                cJSON* json = cJSON_Parse(body_start);
-                if (json) {
-                    cJSON* password = cJSON_GetObjectItem(json, "password");
-                    if (password && cJSON_IsString(password)) {
-                        response_body = mxd_handle_wallet_export(password->valuestring);
-                        content_type = "application/json";
-                        status_code = 200;
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
+                char* body_start = strstr(buffer, "\r\n\r\n");
+                if (body_start) {
+                    body_start += 4;
+                    cJSON* json = cJSON_Parse(body_start);
+                    if (json) {
+                        cJSON* password = cJSON_GetObjectItem(json, "password");
+                        if (password && cJSON_IsString(password)) {
+                            response_body = mxd_handle_wallet_export(password->valuestring);
+                            content_type = "application/json";
+                            status_code = 200;
+                        }
+                        cJSON_Delete(json);
                     }
-                    cJSON_Delete(json);
                 }
-            }
-            if (!response_body) {
-                response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
-                content_type = "application/json";
-                status_code = 400;
+                if (!response_body) {
+                    response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
+                    content_type = "application/json";
+                    status_code = 400;
+                }
             }
         } else if (strcmp(path, "/wallet/import") == 0) {
-            char* body_start = strstr(buffer, "\r\n\r\n");
-            if (body_start) {
-                body_start += 4;
-                cJSON* json = cJSON_Parse(body_start);
-                if (json) {
-                    cJSON* encrypted_data = cJSON_GetObjectItem(json, "encrypted_data");
-                    cJSON* password = cJSON_GetObjectItem(json, "password");
-                    if (encrypted_data && password && cJSON_IsString(encrypted_data) && cJSON_IsString(password)) {
-                        response_body = mxd_handle_wallet_import(encrypted_data->valuestring, password->valuestring);
-                        content_type = "application/json";
-                        status_code = 200;
+            if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
+            } else {
+                char* body_start = strstr(buffer, "\r\n\r\n");
+                if (body_start) {
+                    body_start += 4;
+                    cJSON* json = cJSON_Parse(body_start);
+                    if (json) {
+                        cJSON* encrypted_data = cJSON_GetObjectItem(json, "encrypted_data");
+                        cJSON* password = cJSON_GetObjectItem(json, "password");
+                        if (encrypted_data && password && cJSON_IsString(encrypted_data) && cJSON_IsString(password)) {
+                            response_body = mxd_handle_wallet_import(encrypted_data->valuestring, password->valuestring);
+                            content_type = "application/json";
+                            status_code = 200;
+                        }
+                        cJSON_Delete(json);
                     }
-                    cJSON_Delete(json);
                 }
-            }
-            if (!response_body) {
-                response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
-                content_type = "application/json";
-                status_code = 400;
+                if (!response_body) {
+                    response_body = "{\"success\":false,\"error\":\"Invalid request body\"}";
+                    content_type = "application/json";
+                    status_code = 400;
+                }
             }
         }
     }
@@ -1558,13 +1740,15 @@ static void handle_http_request(int client_socket) {
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
         "Connection: close\r\n"
-        "Access-Control-Allow-Origin: *\r\n"
-        "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-        "Access-Control-Allow-Headers: Content-Type\r\n"
+        "X-Content-Type-Options: nosniff\r\n"
+        "X-Frame-Options: DENY\r\n"
+        "X-XSS-Protection: 1; mode=block\r\n"
+        "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'\r\n"
+        "Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n"
         "\r\n"
         "%s",
         status_code,
-        status_code == 200 ? "OK" : (status_code == 400 ? "Bad Request" : "Not Found"),
+        status_code == 200 ? "OK" : (status_code == 400 ? "Bad Request" : (status_code == 401 ? "Unauthorized" : (status_code == 403 ? "Forbidden" : (status_code == 429 ? "Too Many Requests" : "Not Found")))),
         content_type,
         strlen(response_body),
         response_body);
@@ -1610,7 +1794,15 @@ int mxd_start_metrics_server(void) {
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
+    
+    const char* bind_addr = (global_config && global_config->http.bind_address[0]) 
+        ? global_config->http.bind_address : "127.0.0.1";
+    
+    if (inet_pton(AF_INET, bind_addr, &server_addr.sin_addr) <= 0) {
+        MXD_LOG_WARN("monitoring", "Invalid bind address %s, using 127.0.0.1", bind_addr);
+        inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+    }
+    
     server_addr.sin_port = htons(metrics_port);
     
     if (bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {

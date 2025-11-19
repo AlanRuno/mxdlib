@@ -2,8 +2,11 @@
 
 #include "../include/mxd_smart_contracts.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_config.h"
+#include "metrics/mxd_prometheus.h"
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <wasm3/wasm3.h>
 
 // WASM runtime state
@@ -109,40 +112,51 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     return -1;
   }
 
-  // Initialize result
   memset(result, 0, sizeof(mxd_execution_result_t));
 
-  // Find main function
+  mxd_config_t* config = mxd_get_config();
+  int timeout_seconds = 5;
+  if (config && config->contracts.timeout_seconds > 0) {
+    timeout_seconds = config->contracts.timeout_seconds;
+  }
+
+  time_t start_time = time(NULL);
+
   IM3Function func;
   M3Result res = m3_FindFunction(&func, wasm_state.runtime, "main");
   if (res) {
     MXD_LOG_ERROR("contracts", "Find function error: %s", res);
+    mxd_metrics_increment("contract_execution_errors_total");
     return -1;
   }
 
-  // Calculate initial gas cost (base cost + input size)
-  uint64_t gas_used = 100 + input_size; // Base cost of 100 gas units
+  // Simple gas calculation based on input size
+  uint64_t gas_used = 100 + input_size;
 
-  // Call function with input value
   uint32_t input_val = *(const uint32_t *)input;
   res = m3_CallV(func, input_val);
+  
+  time_t end_time = time(NULL);
+  if (difftime(end_time, start_time) > timeout_seconds) {
+    MXD_LOG_ERROR("contracts", "Contract execution timeout exceeded (%d seconds)", timeout_seconds);
+    mxd_metrics_increment("contract_timeouts_total");
+    return -1;
+  }
+  
   if (res) {
     MXD_LOG_ERROR("contracts", "Call error: %s", res);
+    mxd_metrics_increment("contract_execution_errors_total");
     return -1;
   }
 
-  // Get return value
   uint32_t ret = 0;
   res = m3_GetResultsV(func, &ret);
   if (res) {
     MXD_LOG_ERROR("contracts", "Get results error: %s", res);
+    mxd_metrics_increment("contract_execution_errors_total");
     return -1;
   }
 
-  // Add gas cost for computation (simplified model)
-  gas_used += 10; // Cost per operation
-
-  // Copy return value to result
   if (sizeof(ret) > sizeof(result->return_data)) {
     return -1;
   }
@@ -150,6 +164,8 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
   result->return_size = sizeof(ret);
   result->success = 1;
   result->gas_used = gas_used;
+
+  mxd_metrics_increment("contract_executions_total");
 
   return 0;
 }

@@ -56,7 +56,8 @@ typedef enum {
   MXD_MSG_GENESIS_ANNOUNCE = 14,
   MXD_MSG_GENESIS_SIGN_REQUEST = 15,
   MXD_MSG_GENESIS_SIGN_RESPONSE = 16,
-  MXD_MSG_MAX = MXD_MSG_GENESIS_SIGN_RESPONSE
+  MXD_MSG_SESSION_TOKEN = 17,
+  MXD_MSG_MAX = MXD_MSG_SESSION_TOKEN
 } mxd_message_type_t;
 
 // Message header
@@ -65,6 +66,7 @@ typedef struct {
   mxd_message_type_t type; // Message type
   uint32_t length;         // Payload length
   uint8_t checksum[64];    // SHA-512 checksum of payload
+  uint8_t session_token[16]; // Session token for message binding (protocol v3)
 } mxd_message_header_t;
 
 // Initialize P2P networking

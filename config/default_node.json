@@ -1,0 +1,67 @@
+{
+  "version": "1.0",
+  "network": {
+    "type": "testnet",
+    "p2p_port": 8000,
+    "protocol_version": 3,
+    "magic": "0x4D584431"
+  },
+  "node": {
+    "id": "",
+    "name": "mxd-node",
+    "algo": "ed25519",
+    "hybrid_enabled": true
+  },
+  "bootstrap": {
+    "endpoint": "https://mxd.network/bootstrap/test",
+    "verify_tls": true,
+    "pinned_keys": [],
+    "fallback_nodes": [
+      "bootstrap1.mxd.network:8000",
+      "bootstrap2.mxd.network:8000",
+      "bootstrap3.mxd.network:8000"
+    ],
+    "min_subnet_diversity": 2
+  },
+  "http": {
+    "bind_address": "127.0.0.1",
+    "port": 8080,
+    "require_auth": true,
+    "api_token": "",
+    "wallet_enabled": false,
+    "rate_limit_per_minute": 60,
+    "timeout_seconds": 30
+  },
+  "mempool": {
+    "max_size": 50000,
+    "max_tx_per_peer": 100,
+    "max_bytes_per_peer": 10485760,
+    "min_fee_per_byte": 1,
+    "max_tx_per_sec_per_peer": 10
+  },
+  "contracts": {
+    "gas_limit_default": 1000000,
+    "timeout_seconds": 5,
+    "metering_enabled": true,
+    "max_memory_pages": 256
+  },
+  "consensus": {
+    "blacklist_duration_blocks": 1000,
+    "min_unique_validators": 3,
+    "signature_cache_size": 10000
+  },
+  "p2p_security": {
+    "challenge_cache_size": 10000,
+    "challenge_ttl_seconds": 300,
+    "session_timeout_seconds": 3600,
+    "timestamp_tolerance_seconds": 60
+  },
+  "metrics": {
+    "enabled": true,
+    "endpoint": "/metrics"
+  },
+  "logging": {
+    "level": "info",
+    "file": "mxd.log"
+  }
+}

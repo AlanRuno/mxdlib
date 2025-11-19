@@ -55,6 +55,9 @@ if(MXD_WITH_WASI)
 endif()
 pkg_check_modules(WASM3 REQUIRED wasm3)
 
+# Enable WASM3 gas metering for Phase 3 security implementation
+add_definitions(-DM3_COMPILE_WITH_METERING=1)
+
 # Find RocksDB using find_library instead of pkg-config
 find_path(ROCKSDB_INCLUDE_DIR rocksdb/c.h PATHS /usr/include /usr/local/include)
 find_library(ROCKSDB_LIBRARY rocksdb PATHS /usr/lib /usr/local/lib)
@@ -210,7 +213,10 @@ target_sources(mxd PRIVATE
     src/mxd_blockchain_sync.c
     src/mxd_blockchain_db.c
     src/node/metrics_display.c
-    src/utils/mxd_http.c)
+    src/utils/mxd_http.c
+    src/utils/mxd_cert_pinning.c
+    src/utils/mxd_replay.c
+    src/metrics/mxd_prometheus.c)
 
 # Add main node executable
 add_executable(mxd_node src/node/main.c)

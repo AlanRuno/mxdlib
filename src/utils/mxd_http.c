@@ -1,7 +1,33 @@
 #include "mxd_http.h"
+#include "../../include/mxd_config.h"
+#include "../../include/mxd_logging.h"
+#include "../metrics/mxd_prometheus.h"
 #include <curl/curl.h>
 #include <stdlib.h>
 #include <string.h>
+
+static void configure_tls_security(CURL* curl) {
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    
+#ifdef __linux__
+    curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/certs/ca-certificates.crt");
+    curl_easy_setopt(curl, CURLOPT_CAPATH, "/etc/ssl/certs");
+#elif defined(__APPLE__)
+    curl_easy_setopt(curl, CURLOPT_CAINFO, "/etc/ssl/cert.pem");
+#elif defined(_WIN32)
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
+#endif
+    
+    mxd_config_t* config = mxd_get_config();
+    if (config && !config->bootstrap.verify_tls) {
+        MXD_LOG_WARN("http", "TLS verification disabled by configuration - INSECURE");
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    }
+}
 
 static size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t realsize = size * nmemb;
@@ -33,9 +59,16 @@ mxd_http_response_t* mxd_http_get(const char* url) {
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         
+        configure_tls_security(curl);
+        
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
             response->status_code = -1;
+            if (res == CURLE_SSL_CACERT || res == CURLE_SSL_CERTPROBLEM || 
+                res == CURLE_SSL_CONNECT_ERROR || res == CURLE_PEER_FAILED_VERIFICATION) {
+                MXD_LOG_ERROR("http", "TLS verification failed: %s", curl_easy_strerror(res));
+                mxd_metrics_increment("mxd_tls_verification_failures_total");
+            }
         } else {
             long http_code = 0;
             curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
@@ -75,9 +108,16 @@ mxd_http_response_t* mxd_http_post(const char* url, const char* post_data, const
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         
+        configure_tls_security(curl);
+        
         CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
             response->status_code = -1;
+            if (res == CURLE_SSL_CACERT || res == CURLE_SSL_CERTPROBLEM || 
+                res == CURLE_SSL_CONNECT_ERROR || res == CURLE_PEER_FAILED_VERIFICATION) {
+                MXD_LOG_ERROR("http", "TLS verification failed: %s", curl_easy_strerror(res));
+                mxd_metrics_increment("mxd_tls_verification_failures_total");
+            }
         } else {
             long http_code = 0;
             curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
