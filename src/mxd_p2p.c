@@ -1460,6 +1460,8 @@ static void* keepalive_thread_func(void* arg) {
         
         if (!keepalive_running) break;
         
+        mxd_replay_cleanup_expired();
+        
         time_t now = time(NULL);
         size_t action_count = 0;
         
