@@ -98,9 +98,6 @@ static void test_mining_validation(void) {
   memcpy(prev_tx_hash, genesis_hash, 64);
   uint32_t prev_output_index = 0;
   double remaining_amount = 1000.0;
-  
-  uint64_t tx_start_time = get_current_time_ms();
-  uint32_t tx_count = 0;
 
   printf("Starting transaction rate measurement\n");
 
