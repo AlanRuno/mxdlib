@@ -104,9 +104,10 @@ static void test_transaction_validation(void) {
   // Create valid transaction
   assert(mxd_create_transaction(&tx) == 0);
   assert(test_add_tx_input_ed25519(&tx, prev_hash, 0, pub_key) == 0);
+  tx.inputs[0].amount = 2.0;
   assert(test_add_tx_output_to_pubkey_ed25519(&tx, pub_key, 1.0) == 0);
   assert(mxd_set_voluntary_tip(&tx, 0.1) == 0);
-  tx.timestamp = 1708198204; // Set a valid timestamp
+  tx.timestamp = 1708198204;
   assert(test_sign_tx_input_ed25519(&tx, 0, priv_key) == 0);
 
   // Validate transaction
