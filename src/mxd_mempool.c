@@ -6,10 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
-#define MXD_MAX_PEER_TX_COUNT 100
-#define MXD_MAX_PEER_TX_SIZE (10 * 1024 * 1024)
-#define MXD_MAX_PEER_TX_RATE 10
+#include <pthread.h>
 
 typedef struct {
   char peer_id[64];
@@ -25,8 +22,9 @@ static size_t mempool_size = 0;
 static mxd_peer_quota_t *peer_quotas = NULL;
 static size_t peer_quota_count = 0;
 static size_t peer_quota_capacity = 0;
+static pthread_mutex_t peer_quota_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static mxd_peer_quota_t* get_or_create_peer_quota(const char* peer_id) {
+static mxd_peer_quota_t* get_or_create_peer_quota_locked(const char* peer_id) {
   if (!peer_id) {
     return NULL;
   }
@@ -55,8 +53,11 @@ static mxd_peer_quota_t* get_or_create_peer_quota(const char* peer_id) {
 }
 
 static int check_peer_quota(const char* peer_id, size_t tx_size) {
-  mxd_peer_quota_t* quota = get_or_create_peer_quota(peer_id);
+  pthread_mutex_lock(&peer_quota_mutex);
+  
+  mxd_peer_quota_t* quota = get_or_create_peer_quota_locked(peer_id);
   if (!quota) {
+    pthread_mutex_unlock(&peer_quota_mutex);
     return -1;
   }
   
@@ -67,27 +68,39 @@ static int check_peer_quota(const char* peer_id, size_t tx_size) {
     quota->rate_window_start = now;
   }
   
-  if (quota->tx_in_last_second >= MXD_MAX_PEER_TX_RATE) {
+  mxd_config_t* config = mxd_get_config();
+  uint32_t max_rate = config ? config->mempool.max_tx_per_sec_per_peer : 10;
+  uint32_t max_count = config ? config->mempool.max_tx_per_peer : 100;
+  uint64_t max_size = config ? config->mempool.max_bytes_per_peer : (10 * 1024 * 1024);
+  
+  if (quota->tx_in_last_second >= max_rate) {
     mxd_metrics_increment("mempool_peer_rate_limited_total");
+    pthread_mutex_unlock(&peer_quota_mutex);
     return -1;
   }
   
-  if (quota->tx_count >= MXD_MAX_PEER_TX_COUNT) {
+  if (quota->tx_count >= max_count) {
     mxd_metrics_increment("mempool_peer_quota_exceeded_total");
+    pthread_mutex_unlock(&peer_quota_mutex);
     return -1;
   }
   
-  if (quota->total_size + tx_size > MXD_MAX_PEER_TX_SIZE) {
+  if (quota->total_size + tx_size > max_size) {
     mxd_metrics_increment("mempool_peer_size_exceeded_total");
+    pthread_mutex_unlock(&peer_quota_mutex);
     return -1;
   }
   
+  pthread_mutex_unlock(&peer_quota_mutex);
   return 0;
 }
 
 static void update_peer_quota(const char* peer_id, size_t tx_size) {
-  mxd_peer_quota_t* quota = get_or_create_peer_quota(peer_id);
+  pthread_mutex_lock(&peer_quota_mutex);
+  
+  mxd_peer_quota_t* quota = get_or_create_peer_quota_locked(peer_id);
   if (!quota) {
+    pthread_mutex_unlock(&peer_quota_mutex);
     return;
   }
   
@@ -95,6 +108,8 @@ static void update_peer_quota(const char* peer_id, size_t tx_size) {
   quota->total_size += tx_size;
   quota->last_tx_time = time(NULL);
   quota->tx_in_last_second++;
+  
+  pthread_mutex_unlock(&peer_quota_mutex);
 }
 
 int mxd_init_mempool(void) {
