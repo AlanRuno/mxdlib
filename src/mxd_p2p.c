@@ -1027,10 +1027,7 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
 static int handle_handshake_message(const char *address, uint16_t port, 
                                      const void *payload, size_t length,
                                      peer_connection_t *conn) {
-    mxd_replay_cleanup_expired();
-    
-    // Check minimum size (fixed fields before variable-length data)
-    size_t min_size = 256 + 4 + 2 + 1 + 2 + 32 + 8 + 2; // All fixed fields + length fields (added 8 for timestamp)
+    size_t min_size = 256 + 4 + 2 + 1 + 2 + 32 + 8 + 2;
     if (!payload || length < min_size) {
         MXD_LOG_WARN("p2p", "Invalid HANDSHAKE payload from %s:%d (length=%zu, minimum=%zu)", 
                      address, port, length, min_size);
@@ -1459,6 +1456,8 @@ static void* keepalive_thread_func(void* arg) {
         sleep(MXD_KEEPALIVE_INTERVAL);
         
         if (!keepalive_running) break;
+        
+        mxd_replay_cleanup_expired();
         
         time_t now = time(NULL);
         size_t action_count = 0;
