@@ -239,33 +239,10 @@ int mxd_add_to_mempool_with_peer(const mxd_transaction_t *tx,
 
   memset(&mempool[mempool_size], 0, sizeof(mxd_mempool_entry_t));
 
-  memcpy(&mempool[mempool_size].tx, tx, sizeof(mxd_transaction_t));
-  mempool[mempool_size].tx.inputs = NULL;
-  mempool[mempool_size].tx.outputs = NULL;
-
-  if (tx->inputs && tx->input_count > 0) {
-    mempool[mempool_size].tx.inputs =
-        malloc(tx->input_count * sizeof(mxd_tx_input_t));
-    if (!mempool[mempool_size].tx.inputs) {
-      pthread_mutex_unlock(&mempool_mutex);
-      if (peer_id) release_peer_quota(peer_id, tx_size);
-      return -1;
-    }
-    memcpy(mempool[mempool_size].tx.inputs, tx->inputs,
-           tx->input_count * sizeof(mxd_tx_input_t));
-  }
-
-  if (tx->outputs && tx->output_count > 0) {
-    mempool[mempool_size].tx.outputs =
-        malloc(tx->output_count * sizeof(mxd_tx_output_t));
-    if (!mempool[mempool_size].tx.outputs) {
-      free(mempool[mempool_size].tx.inputs);
-      pthread_mutex_unlock(&mempool_mutex);
-      if (peer_id) release_peer_quota(peer_id, tx_size);
-      return -1;
-    }
-    memcpy(mempool[mempool_size].tx.outputs, tx->outputs,
-           tx->output_count * sizeof(mxd_tx_output_t));
+  if (mxd_tx_deep_copy(&mempool[mempool_size].tx, tx) != 0) {
+    pthread_mutex_unlock(&mempool_mutex);
+    if (peer_id) release_peer_quota(peer_id, tx_size);
+    return -1;
   }
 
   mempool[mempool_size].priority = priority;
@@ -326,31 +303,10 @@ int mxd_get_from_mempool(const uint8_t tx_hash[64], mxd_transaction_t *tx) {
     uint8_t current_hash[64];
     if (mxd_calculate_tx_hash(&mempool[i].tx, current_hash) == 0 &&
         memcmp(current_hash, tx_hash, 64) == 0) {
-      memcpy(tx, &mempool[i].tx, sizeof(mxd_transaction_t));
-      tx->inputs = NULL;
-      tx->outputs = NULL;
-
-      if (mempool[i].tx.inputs && tx->input_count > 0) {
-        tx->inputs = malloc(tx->input_count * sizeof(mxd_tx_input_t));
-        if (!tx->inputs) {
-          pthread_mutex_unlock(&mempool_mutex);
-          return -1;
-        }
-        memcpy(tx->inputs, mempool[i].tx.inputs,
-               tx->input_count * sizeof(mxd_tx_input_t));
+      if (mxd_tx_deep_copy(tx, &mempool[i].tx) != 0) {
+        pthread_mutex_unlock(&mempool_mutex);
+        return -1;
       }
-
-      if (mempool[i].tx.outputs && tx->output_count > 0) {
-        tx->outputs = malloc(tx->output_count * sizeof(mxd_tx_output_t));
-        if (!tx->outputs) {
-          free(tx->inputs);
-          pthread_mutex_unlock(&mempool_mutex);
-          return -1;
-        }
-        memcpy(tx->outputs, mempool[i].tx.outputs,
-               tx->output_count * sizeof(mxd_tx_output_t));
-      }
-
       pthread_mutex_unlock(&mempool_mutex);
       return 0;
     }
@@ -372,44 +328,13 @@ int mxd_get_priority_transactions(mxd_transaction_t *txs, size_t *tx_count,
   size_t count = 0;
   for (size_t i = 0; i < mempool_size && count < *tx_count; i++) {
     if (mempool[i].priority >= min_priority) {
-      // Copy basic fields
-      memcpy(&txs[count], &mempool[i].tx, sizeof(mxd_transaction_t));
-      txs[count].inputs = NULL;
-      txs[count].outputs = NULL;
-
-      // Copy inputs if present
-      if (mempool[i].tx.inputs && txs[count].input_count > 0) {
-        txs[count].inputs =
-            malloc(txs[count].input_count * sizeof(mxd_tx_input_t));
-        if (!txs[count].inputs) {
-          // Clean up previous transactions
-          for (size_t j = 0; j < count; j++) {
-            free(txs[j].inputs);
-            free(txs[j].outputs);
-          }
-          return -1;
+      if (mxd_tx_deep_copy(&txs[count], &mempool[i].tx) != 0) {
+        for (size_t j = 0; j < count; j++) {
+          mxd_free_transaction(&txs[j]);
         }
-        memcpy(txs[count].inputs, mempool[i].tx.inputs,
-               txs[count].input_count * sizeof(mxd_tx_input_t));
+        pthread_mutex_unlock(&mempool_mutex);
+        return -1;
       }
-
-      // Copy outputs if present
-      if (mempool[i].tx.outputs && txs[count].output_count > 0) {
-        txs[count].outputs =
-            malloc(txs[count].output_count * sizeof(mxd_tx_output_t));
-        if (!txs[count].outputs) {
-          free(txs[count].inputs);
-          // Clean up previous transactions
-          for (size_t j = 0; j < count; j++) {
-            free(txs[j].inputs);
-            free(txs[j].outputs);
-          }
-          return -1;
-        }
-        memcpy(txs[count].outputs, mempool[i].tx.outputs,
-               txs[count].output_count * sizeof(mxd_tx_output_t));
-      }
-
       count++;
     }
   }

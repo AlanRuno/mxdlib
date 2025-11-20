@@ -3,6 +3,7 @@
 #include "../../include/mxd_rsc.h"
 #include "../../include/mxd_utxo.h"
 #include "../../include/mxd_transaction.h"
+#include "../../include/mxd_logging.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -278,6 +279,17 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
   // Verify signature using algorithm-aware verification with provided public key
   if (mxd_sig_verify(algo_id, signature, signature_length, digest, 64, public_key) != 0) {
     return -1; // Invalid signature
+  }
+  
+  // Verify node_address matches derived address from public key
+  uint8_t derived_addr[20];
+  if (mxd_derive_address(algo_id, public_key, public_key_length, derived_addr) != 0) {
+    return -1;
+  }
+  
+  if (memcmp(node_address, derived_addr, 20) != 0) {
+    MXD_LOG_ERROR("blockchain", "Membership node_address doesn't match derived address");
+    return -1;
   }
   
   // Verify stake requirement (1% of total supply, or genesis mode)

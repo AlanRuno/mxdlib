@@ -5,6 +5,7 @@
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_config.h"
+#include "../include/mxd_rocksdb_globals.h"
 #include "metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -325,13 +326,11 @@ int mxd_init_wallet(void) {
     MXD_LOG_INFO("wallet", "Starting wallet initialization...");
     memset(&wallet, 0, sizeof(wallet));
     
-    MXD_LOG_INFO("wallet", "Attempting to initialize UTXO database...");
-    if (mxd_init_utxo_db("wallet_utxo.db") != 0) {
-        MXD_LOG_ERROR("wallet", "Failed to initialize wallet UTXO database");
-        MXD_LOG_WARN("wallet", "Continuing without UTXO database for wallet functionality");
-    } else {
-        MXD_LOG_INFO("wallet", "UTXO database initialized successfully");
+    if (!mxd_get_rocksdb_db()) {
+        MXD_LOG_ERROR("wallet", "UTXO database not initialized - must be initialized before wallet");
+        return -1;
     }
+    MXD_LOG_INFO("wallet", "UTXO database already initialized");
     
     wallet_initialized = 1;
     MXD_LOG_INFO("wallet", "Wallet system initialized");

@@ -3,6 +3,7 @@
 #include "../include/mxd_monitoring.h"
 #include "../include/mxd_backup.h"
 #include "../include/mxd_load_testing.h"
+#include "../include/mxd_utxo.h"
 #include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
@@ -62,7 +63,9 @@ static void test_secrets_management(void) {
 static void test_monitoring_system(void) {
     TEST_START("Monitoring System");
     
-    TEST_ASSERT(mxd_init_monitoring(8080) == 0, "Monitoring initialization successful");
+    TEST_ASSERT(mxd_init_utxo_db("./enterprise_test_utxo.db") == 0, "UTXO database initialization");
+    
+    TEST_ASSERT(mxd_init_monitoring(18080) == 0, "Monitoring initialization successful");
     
     mxd_system_metrics_t metrics = {
         .total_transactions = 1000,
@@ -92,6 +95,7 @@ static void test_monitoring_system(void) {
     TEST_ASSERT(strstr(health_json, "\"status\":\"healthy\"") != NULL, "Health status correct");
     
     mxd_cleanup_monitoring();
+    mxd_close_utxo_db();
     
     TEST_END("Monitoring System");
 }

@@ -24,6 +24,9 @@ typedef struct {
 // Initialize UTXO database with persistent storage
 int mxd_init_utxo_db(const char *db_path);
 
+// Reset UTXO database (for tests only - destroys all data)
+int mxd_reset_utxo_db(const char *db_path);
+
 // Add UTXO to database
 int mxd_add_utxo(const mxd_utxo_t *utxo);
 

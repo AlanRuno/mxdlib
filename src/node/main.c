@@ -20,6 +20,7 @@
 #include "../include/mxd_address.h"
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_ntp.h"
+#include "../include/mxd_utxo.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
 
@@ -275,6 +276,16 @@ int main(int argc, char** argv) {
     }
     MXD_LOG_INFO("node", "Rapid table initialized successfully");
     log_memory_usage("after_rapid_table");
+    
+    // Initialize UTXO database (required before monitoring/wallet initialization)
+    MXD_LOG_INFO("node", "Initializing UTXO database...");
+    const char* utxo_db_path = "/opt/mxd/data/utxo.db";
+    if (mxd_init_utxo_db(utxo_db_path) != 0) {
+        MXD_LOG_ERROR("node", "Failed to initialize UTXO database at %s", utxo_db_path);
+        return 1;
+    }
+    MXD_LOG_INFO("node", "UTXO database initialized successfully");
+    log_memory_usage("after_utxo_db");
     
     // Initialize monitoring system
     MXD_LOG_INFO("node", "Initializing monitoring system on port %d...", current_config.metrics_port);
