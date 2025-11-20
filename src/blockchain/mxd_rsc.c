@@ -42,23 +42,20 @@ int mxd_init_node_metrics(mxd_node_metrics_t *metrics) {
     metrics->min_response_time = UINT64_MAX;
     metrics->max_response_time = 0;
     metrics->response_count = 0;
-    metrics->tip_share = 0.0;
+    metrics->tip_share = 0;
     metrics->last_update = 0;
 
     return 0;
 }
 
 // Validate if a node meets Rapid Stake requirements
-int mxd_validate_node_stake(const mxd_node_stake_t *node, double total_stake) {
-    if (!node || total_stake <= 0) {
+int mxd_validate_node_stake(const mxd_node_stake_t *node, mxd_amount_t total_stake) {
+    if (!node || total_stake == 0) {
         return -1;
     }
 
-    // Calculate stake percentage
-    double stake_percent = (node->stake_amount / total_stake) * 100.0;
-
-    // Check minimum stake requirement (1%)
-    return stake_percent >= 1.0 ? 0 : -1;
+    // Check minimum stake requirement (1% of total stake)
+    return (node->stake_amount >= total_stake / 100) ? 0 : -1;
 }
 
 // Update node response metrics with NTP-synchronized timestamp
@@ -97,8 +94,8 @@ static double calculate_reliability(const mxd_node_metrics_t *metrics) {
 }
 
 // Calculate node ranking based on stake, speed, and reliability
-int mxd_calculate_node_rank(const mxd_node_stake_t *node, double total_stake) {
-    if (!node || total_stake <= 0) {
+int mxd_calculate_node_rank(const mxd_node_stake_t *node, mxd_amount_t total_stake) {
+    if (!node || total_stake == 0) {
         return -1;
     }
 
@@ -113,7 +110,7 @@ int mxd_calculate_node_rank(const mxd_node_stake_t *node, double total_stake) {
     double speed_score = 1.0 - (metrics->avg_response_time / (double)MXD_MAX_RESPONSE_TIME);
     if (speed_score < 0.0) speed_score = 0.0;
 
-    double stake_score = (node->stake_amount / total_stake);
+    double stake_score = (double)node->stake_amount / (double)total_stake;
     double reliability_score = calculate_reliability(metrics);
 
     // Calculate weighted score
@@ -151,8 +148,8 @@ static int compare_node_ptrs(const void *a, const void *b) {
 }
 
 // Distribute voluntary tips based on node performance
-int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, double total_tip) {
-    if (!nodes || node_count == 0 || total_tip <= 0) {
+int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t total_tip) {
+    if (!nodes || node_count == 0 || total_tip == 0) {
         return -1;
     }
 
@@ -171,20 +168,24 @@ int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, double total
     // Sort nodes by rank (highest to lowest)
     qsort(nodes, node_count, sizeof(mxd_node_stake_t), compare_nodes);
 
-    // Distribute tips using 50% pattern from whitepaper
-    double remaining = total_tip;
+    // Distribute tips using 50% geometric decay pattern from whitepaper
+    mxd_amount_t remaining = total_tip;
+    mxd_amount_t distributed = 0;
     for (size_t i = 0; i < node_count; i++) {
         if (nodes[i].active && nodes[i].rank > 0) {
-            if (i == node_count - 1) {
+            if (i == node_count - 1 || remaining <= 1) {
                 // Last active node gets remaining amount
                 nodes[i].metrics.tip_share = remaining;
+                distributed += remaining;
+                remaining = 0;
             } else {
-                // Each node gets 50% of remaining
-                nodes[i].metrics.tip_share = remaining * 0.5;
+                // Each node gets 50% of remaining (integer division)
+                nodes[i].metrics.tip_share = remaining / 2;
+                distributed += nodes[i].metrics.tip_share;
                 remaining -= nodes[i].metrics.tip_share;
             }
         } else {
-            nodes[i].metrics.tip_share = 0.0;
+            nodes[i].metrics.tip_share = 0;
         }
     }
 
@@ -192,8 +193,8 @@ int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, double total
 }
 
 // Update rapid table entries and recalculate rankings
-int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, double total_stake) {
-    if (!nodes || node_count == 0 || total_stake <= 0) {
+int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t total_stake) {
+    if (!nodes || node_count == 0 || total_stake == 0) {
         return -1;
     }
 
@@ -766,10 +767,10 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     if (mxd_block_has_validation_quorum(block, table)) {
         context->status = MXD_VALIDATION_COMPLETE;
         
-        if (block->total_supply == 0.0) {
+        if (block->total_supply == 0) {
             size_t total_count = 0;
             size_t pruned_count = 0;
-            double total_value = 0.0;
+            mxd_amount_t total_value = 0;
             if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0) {
                 block->total_supply = total_value;
             }
@@ -787,9 +788,9 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
                 }
                 
                 // Calculate tip distribution using 50% pattern
-                double total_tip = mxd_calculate_total_tip_from_frozen_set(block);
+                mxd_amount_t total_tip = mxd_calculate_total_tip_from_frozen_set(block);
                 
-                if (total_tip > 0.0) {
+                if (total_tip > 0) {
                     mxd_distribute_tips(validators, block->validation_count, total_tip);
                     
                     mxd_transaction_t tip_tx;
@@ -797,7 +798,7 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
                         tip_tx.is_coinbase = 1;
                         
                         for (uint32_t i = 0; i < block->validation_count; i++) {
-                            if (validators[i].metrics.tip_share > 0.0) {
+                            if (validators[i].metrics.tip_share > 0) {
                                 if (mxd_add_tx_output(&tip_tx, validators[i].node_address, 
                                                      validators[i].metrics.tip_share) != 0) {
                                     break;
@@ -834,10 +835,10 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
         if (context->signature_count >= context->required_signatures) {
             context->status = MXD_VALIDATION_COMPLETE;
             
-            if (block->total_supply == 0.0) {
+            if (block->total_supply == 0) {
                 size_t total_count = 0;
                 size_t pruned_count = 0;
-                double total_value = 0.0;
+                mxd_amount_t total_value = 0;
                 if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0) {
                     block->total_supply = total_value;
                 }
@@ -944,17 +945,17 @@ int mxd_get_validator_algo_id(const uint8_t *validator_id, uint8_t *out_algo_id)
     return -1;
 }
 
-int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, double total_supply, int is_genesis) {
+int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, mxd_amount_t total_supply, int is_genesis) {
     if (!node) {
         return 0;
     }
     
-    if (is_genesis || total_supply == 0.0) {
+    if (is_genesis || total_supply == 0) {
         return 1;
     }
     
-    double stake_percentage = (node->stake_amount / total_supply) * 100.0;
-    if (stake_percentage < 1.0) {
+    // Check if stake is at least 1% of total supply
+    if (node->stake_amount < total_supply / 100) {
         return 0;
     }
     

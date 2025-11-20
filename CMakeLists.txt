@@ -107,6 +107,7 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
 # Add library target
 add_library(mxd SHARED
+    src/mxd_amount.c
     src/mxd_crypto.c
     src/mxd_address.c
     src/base58.c

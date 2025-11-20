@@ -7,7 +7,7 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
-#include <time.h>
+#include "mxd_types.h"
 
 // MXD_SIGNATURE_MAX must accommodate Dilithium5 signatures (4595 bytes)
 // for hybrid cryptography support (Ed25519 + Dilithium5)
@@ -36,7 +36,7 @@ typedef struct {
     uint32_t version;
     uint8_t prev_block_hash[64];
     uint8_t merkle_root[64];
-    time_t timestamp;
+    uint64_t timestamp;           // Unix timestamp in seconds (was time_t)
     uint32_t difficulty;
     uint64_t nonce;
     uint8_t block_hash[64];
@@ -48,7 +48,7 @@ typedef struct {
     mxd_rapid_membership_entry_t *rapid_membership_entries;
     uint32_t rapid_membership_count;
     uint32_t rapid_membership_capacity;
-    double total_supply;
+    mxd_amount_t total_supply;   // Total supply in base units (was double)
     uint8_t transaction_set_frozen;
 } mxd_block_t;
 
@@ -86,7 +86,7 @@ int mxd_block_is_finalized(const mxd_block_t *block);
 
 int mxd_freeze_transaction_set(mxd_block_t *block);
 
-double mxd_calculate_total_tip_from_frozen_set(const mxd_block_t *block);
+mxd_amount_t mxd_calculate_total_tip_from_frozen_set(const mxd_block_t *block);
 
 int mxd_block_has_quorum(const mxd_block_t *block);
 
@@ -94,7 +94,7 @@ int mxd_block_has_min_signatures(const mxd_block_t *block);
 
 int mxd_resolve_fork(const mxd_block_t *block1, const mxd_block_t *block2);
 
-double mxd_calculate_latency_score(const mxd_block_t *block);
+double mxd_calculate_latency_score(const mxd_block_t *block);  // Returns score, not amount
 
 void mxd_free_validation_chain(mxd_block_t *block);
 

@@ -7,6 +7,7 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
+#include "mxd_types.h"
 #include "mxd_crypto.h"
 #include "mxd_blockchain.h"
 #include "mxd_blockchain_db.h"
@@ -43,17 +44,17 @@ typedef struct {
     uint64_t expiry_time;
 } mxd_validation_context_t;
 
-int mxd_validate_node_stake(const mxd_node_stake_t *node, double total_stake);
+int mxd_validate_node_stake(const mxd_node_stake_t *node, mxd_amount_t total_stake);
 
 int mxd_init_node_metrics(mxd_node_metrics_t *metrics);
 
 int mxd_update_node_metrics(mxd_node_stake_t *node, uint64_t response_time, uint64_t timestamp);
 
-int mxd_calculate_node_rank(const mxd_node_stake_t *node, double total_stake);
+int mxd_calculate_node_rank(const mxd_node_stake_t *node, mxd_amount_t total_stake);
 
-int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, double total_tip);
+int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t total_tip);
 
-int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, double total_stake);
+int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t total_stake);
 
 int mxd_get_node_stats(const mxd_node_stake_t *node, mxd_node_metrics_t *stats);
 
@@ -105,7 +106,7 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
 
 int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time);
 
-int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, double total_supply, int is_genesis);
+int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, mxd_amount_t total_supply, int is_genesis);
 
 int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t from_height, 
                                             uint32_t to_height, const char *local_node_id);

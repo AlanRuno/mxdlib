@@ -920,7 +920,7 @@ const char* mxd_handle_wallet_list_addresses(void) {
 }
 
 int mxd_add_transaction_to_history(const char* txid, const char* from_addr, 
-                                    const char* to_addr, double amount, 
+                                    const char* to_addr, mxd_amount_t amount, 
                                     uint64_t timestamp, uint8_t algo_id) {
     if (!txid || !from_addr || !to_addr) {
         return -1;
@@ -1014,11 +1014,11 @@ const char* mxd_get_hybrid_crypto_metrics_json(void) {
         "\"dilithium5_addresses\":%u,"
         "\"ed25519_transactions\":%u,"
         "\"dilithium5_transactions\":%u,"
-        "\"ed25519_volume\":%.8f,"
-        "\"dilithium5_volume\":%.8f,"
+        "\"ed25519_volume\":%lu,"
+        "\"dilithium5_volume\":%lu,"
         "\"total_addresses\":%u,"
         "\"total_transactions\":%u,"
-        "\"total_volume\":%.8f"
+        "\"total_volume\":%lu"
         "}",
         hybrid_metrics.ed25519_addresses,
         hybrid_metrics.dilithium5_addresses,
