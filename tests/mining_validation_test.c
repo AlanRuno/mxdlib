@@ -304,8 +304,8 @@ static void test_mining_validation(void) {
     // Set required metrics
     nodes[i].active = 1;
     nodes[i].metrics.response_count = MXD_MIN_RESPONSE_COUNT;
-    nodes[i].metrics.avg_response_time = 100;             // Fast response time
-    nodes[i].stake_amount = total_stake * 0.01 * (i + 1); // 1-5% stake
+    nodes[i].metrics.avg_response_time = 100;                        // Fast response time
+    nodes[i].stake_amount = (total_stake / 100) * (i + 1);          // 1-5% stake (integer arithmetic)
     nodes[i].metrics.last_update = current_time;
 
     // Verify requirements
@@ -329,29 +329,30 @@ static void test_mining_validation(void) {
     }
   }
 
-  // Calculate expected tips based on 50% pattern from whitepaper
-  double expected_tips[TEST_NODE_COUNT];
-  double remaining = total_tip;
+  // Calculate expected tips based on 50% pattern from whitepaper using integer arithmetic
+  mxd_amount_t expected_tips[TEST_NODE_COUNT];
+  mxd_amount_t remaining = total_tip;
   for (size_t i = 0; i < TEST_NODE_COUNT; i++) {
-    if (i == TEST_NODE_COUNT - 1) {
-      // Last node gets remaining amount
+    if (i == TEST_NODE_COUNT - 1 || remaining <= 1) {
+      // Last node gets remaining amount (accumulates all rounding remainders)
       expected_tips[i] = remaining;
+      remaining = 0;
     } else {
-      // Each node gets 50% of remaining
-      expected_tips[i] = remaining * 0.5;
+      // Each node gets 50% of remaining (integer division)
+      expected_tips[i] = remaining / 2;
       remaining -= expected_tips[i];
     }
     // Initialize tip share to 0
-    nodes[i].metrics.tip_share = 0.0;
+    nodes[i].metrics.tip_share = 0;
   }
 
   // Distribute tips based on ranking
   TEST_ASSERT(mxd_distribute_tips(nodes, TEST_NODE_COUNT, total_tip) == 0,
               "Tip distribution");
 
-  // Verify tip distribution matches whitepaper pattern
+  // Verify tip distribution matches whitepaper pattern (exact integer equality)
   for (size_t i = 0; i < TEST_NODE_COUNT; i++) {
-    TEST_ASSERT(fabs(nodes[i].metrics.tip_share - expected_tips[i]) < 0.0001,
+    TEST_ASSERT(nodes[i].metrics.tip_share == expected_tips[i],
                 "Tip share matches whitepaper pattern");
   }
 
