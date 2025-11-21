@@ -48,6 +48,7 @@ typedef struct {
 
 // Smart contract security configuration
 typedef struct {
+    int enabled;                // Enable smart contracts (default: 0/disabled)
     uint64_t gas_limit_default; // Default gas limit
     uint32_t timeout_seconds;   // Execution timeout
     int metering_enabled;       // Enable gas metering

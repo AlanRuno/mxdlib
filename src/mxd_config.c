@@ -108,6 +108,7 @@ static void mxd_set_default_config(mxd_config_t* config) {
     config->mempool.min_fee_per_byte = 1;
     config->mempool.max_tx_per_sec_per_peer = 10;
     
+    config->contracts.enabled = 0;  // Disabled by default
     config->contracts.gas_limit_default = 1000000;
     config->contracts.timeout_seconds = 5;
     config->contracts.metering_enabled = 1;
@@ -328,6 +329,9 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
     // Parse smart contract security configuration
     cJSON* contracts = cJSON_GetObjectItem(root, "contracts");
     if (contracts && cJSON_IsObject(contracts)) {
+        if ((item = cJSON_GetObjectItem(contracts, "enabled")) && cJSON_IsBool(item)) {
+            config->contracts.enabled = cJSON_IsTrue(item);
+        }
         if ((item = cJSON_GetObjectItem(contracts, "gas_limit_default")) && cJSON_IsNumber(item)) {
             config->contracts.gas_limit_default = (uint64_t)item->valuedouble;
         }

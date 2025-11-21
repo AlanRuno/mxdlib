@@ -1,4 +1,5 @@
 #include "../include/mxd_smart_contracts.h"
+#include "../include/mxd_config.h"
 #include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
@@ -7,12 +8,20 @@
 // Test WebAssembly code (minimal module)
 #include "wasm_binary.h"
 
+static void enable_contracts_for_testing(void) {
+  mxd_config_t* config = mxd_get_config();
+  if (config) {
+    config->contracts.enabled = 1;
+  }
+}
+
 // Test input/output values
 #define TEST_INPUT_VALUE 5
 #define EXPECTED_OUTPUT_VALUE 47 // 5 + 42 (from WebAssembly code)
 
 static void test_contract_initialization(void) {
   TEST_START("Contract Initialization");
+  enable_contracts_for_testing();
   TEST_ASSERT(mxd_init_contracts() == 0, "Contract system initialization successful");
   TEST_END("Contract Initialization");
 }
@@ -22,6 +31,7 @@ static void test_contract_deployment(void) {
   memset(&state, 0, sizeof(state));
 
   TEST_START("Contract Deployment");
+  enable_contracts_for_testing();
   
   // Initialize contracts module
   TEST_ASSERT(mxd_init_contracts() == 0, "Contract system initialization successful");
@@ -51,6 +61,7 @@ static void test_contract_execution(void) {
   uint32_t input = TEST_INPUT_VALUE;
 
   TEST_START("Contract Execution");
+  enable_contracts_for_testing();
   TEST_VALUE("Input value", "%u", input);
   
   // Deploy and execute contract
@@ -76,6 +87,7 @@ static void test_contract_storage(void) {
   size_t value_size = sizeof(retrieved);
 
   TEST_START("Contract Storage");
+  enable_contracts_for_testing();
   
   // Deploy contract
   TEST_ASSERT(mxd_deploy_contract(test_wasm, sizeof(test_wasm), &state) == 0, "Contract deployment successful");
@@ -103,6 +115,7 @@ static void test_state_transition(void) {
   uint8_t value[4] = {5, 6, 7, 8};
 
   TEST_START("State Transition");
+  enable_contracts_for_testing();
   
   // Deploy contract
   TEST_ASSERT(mxd_deploy_contract(test_wasm, test_wasm_len, &old_state) == 0, "Initial contract deployment successful");
@@ -130,6 +143,7 @@ static void test_state_transition(void) {
 
 static void test_gas_calculation(void) {
   TEST_START("Gas Calculation");
+  enable_contracts_for_testing();
   
   uint64_t gas = mxd_calculate_gas(test_wasm, sizeof(test_wasm));
   TEST_VALUE("Contract size", "%zu", sizeof(test_wasm));
