@@ -5,16 +5,177 @@
 #include "../include/mxd_blockchain_db.h"
 #include "../include/mxd_rsc.h"
 #include "../include/mxd_logging.h"
+#include "../include/mxd_transaction.h"
+#include "../include/mxd_utxo.h"
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
 
 #define MXD_VALIDATION_EXPIRY_BLOCKS 5
 #define MXD_MIN_RELAY_SIGNATURES 3
 #define MXD_MAX_TIMESTAMP_DRIFT 60
 
+static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t *height);
+static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count);
+static int mxd_apply_block_transactions(const mxd_block_t *block);
+static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height);
+
+static uint32_t mxd_discover_network_height(void) {
+    mxd_peer_t peers[MXD_MAX_PEERS];
+    size_t peer_count = MXD_MAX_PEERS;
+    
+    if (mxd_get_peers(peers, &peer_count) != 0 || peer_count == 0) {
+        MXD_LOG_WARN("sync", "No peers available to discover network height");
+        return 0;
+    }
+    
+    uint32_t max_height = 0;
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peers[i].state == MXD_PEER_CONNECTED) {
+            uint32_t peer_height = 0;
+            if (mxd_request_peer_height(peers[i].address, peers[i].port, &peer_height) == 0) {
+                if (peer_height > max_height) {
+                    max_height = peer_height;
+                }
+            }
+        }
+    }
+    
+    return max_height;
+}
+
+static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t *height) {
+    if (!address || !height) return -1;
+    
+    uint8_t request[4] = {0};
+    if (mxd_send_message_with_retry(address, port, MXD_MSG_GET_BLOCKS, 
+                                    request, sizeof(request), 3) != 0) {
+        return -1;
+    }
+    
+    *height = 0;
+    return 0;
+}
+
+static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count) {
+    if (!block_count || start_height > end_height) return NULL;
+    
+    mxd_peer_t peers[MXD_MAX_PEERS];
+    size_t peer_count = MXD_MAX_PEERS;
+    
+    if (mxd_get_peers(peers, &peer_count) != 0 || peer_count == 0) {
+        MXD_LOG_WARN("sync", "No peers available to request blocks");
+        return NULL;
+    }
+    
+    uint32_t count = end_height - start_height + 1;
+    mxd_block_t *blocks = calloc(count, sizeof(mxd_block_t));
+    if (!blocks) {
+        MXD_LOG_ERROR("sync", "Failed to allocate memory for blocks");
+        return NULL;
+    }
+    
+    for (size_t i = 0; i < peer_count && i < 3; i++) {
+        if (peers[i].state == MXD_PEER_CONNECTED) {
+            uint8_t request[8];
+            uint32_t start_be = htonl(start_height);
+            uint32_t end_be = htonl(end_height);
+            memcpy(request, &start_be, 4);
+            memcpy(request + 4, &end_be, 4);
+            
+            if (mxd_send_message_with_retry(peers[i].address, peers[i].port, 
+                                           MXD_MSG_GET_BLOCKS, request, sizeof(request), 2) == 0) {
+                break;
+            }
+        }
+    }
+    
+    *block_count = count;
+    return blocks;
+}
+
+static int mxd_apply_block_transactions(const mxd_block_t *block) {
+    if (!block) return -1;
+    
+    return 0;
+}
+
+static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
+    size_t block_count = 0;
+    mxd_block_t *blocks = mxd_request_blocks_from_peers(start_height, end_height, &block_count);
+    if (!blocks) {
+        MXD_LOG_ERROR("sync", "Failed to request blocks from peers");
+        return -1;
+    }
+    
+    for (uint32_t h = start_height; h <= end_height; h++) {
+        mxd_block_t *block = &blocks[h - start_height];
+        
+        if (mxd_validate_block(block) != 0) {
+            MXD_LOG_ERROR("sync", "Invalid block at height %u", h);
+            free(blocks);
+            return -1;
+        }
+        
+        if (mxd_verify_validation_chain_integrity(block) != 0) {
+            MXD_LOG_ERROR("sync", "Invalid validation chain at height %u", h);
+            free(blocks);
+            return -1;
+        }
+        
+        if (mxd_block_has_min_relay_signatures(block) != 1) {
+            MXD_LOG_ERROR("sync", "Insufficient signatures at height %u", h);
+            free(blocks);
+            return -1;
+        }
+        
+        if (mxd_apply_block_transactions(block) != 0) {
+            MXD_LOG_ERROR("sync", "Failed to apply transactions at height %u", h);
+            free(blocks);
+            return -1;
+        }
+        
+        if (mxd_store_block(block) != 0) {
+            MXD_LOG_ERROR("sync", "Failed to store block at height %u", h);
+            free(blocks);
+            return -1;
+        }
+    }
+    
+    free(blocks);
+    return 0;
+}
+
 int mxd_sync_blockchain(void) {
-    // For testing purposes, simulate successful sync
+    uint32_t local_height = 0;
+    if (mxd_get_blockchain_height(&local_height) != 0) {
+        local_height = 0;
+    }
+    
+    uint32_t network_height = mxd_discover_network_height();
+    if (network_height <= local_height) {
+        MXD_LOG_INFO("sync", "Already synced (local: %u, network: %u)", local_height, network_height);
+        return 0;
+    }
+    
+    MXD_LOG_INFO("sync", "Syncing from height %u to %u", local_height + 1, network_height);
+    
+    const uint32_t CHUNK_SIZE = 500;
+    for (uint32_t start = local_height + 1; start <= network_height; start += CHUNK_SIZE) {
+        uint32_t end = (start + CHUNK_SIZE - 1 < network_height) ? 
+                       start + CHUNK_SIZE - 1 : network_height;
+        
+        if (mxd_sync_block_range(start, end) != 0) {
+            MXD_LOG_ERROR("sync", "Failed to sync blocks %u-%u", start, end);
+            return -1;
+        }
+        
+        MXD_LOG_INFO("sync", "Synced blocks %u-%u", start, end);
+    }
+    
+    MXD_LOG_INFO("sync", "Blockchain sync complete");
     return 0;
 }
 

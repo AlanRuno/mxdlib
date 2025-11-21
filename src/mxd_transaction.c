@@ -3,6 +3,7 @@
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_rocksdb_globals.h"
+#include "../include/mxd_serialize.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -116,60 +117,55 @@ int mxd_calculate_tx_hash(const mxd_transaction_t *tx, uint8_t hash[64]) {
     return -1;
   }
 
-  // Calculate buffer size based on actual input lengths
+  // Calculate buffer size with canonical serialization
   size_t buffer_size =
-      sizeof(uint32_t) * 3 +                            // version + counts
-      sizeof(double) +                                   // voluntary tip
-      sizeof(uint64_t);                                 // timestamp
+      4 +                                               // version (u32)
+      4 +                                               // input_count (u32)
+      4 +                                               // output_count (u32)
+      8 +                                               // voluntary_tip (u64)
+      8;                                                // timestamp (u64)
   
   // Add input sizes (using actual public key lengths)
   for (uint32_t i = 0; i < tx->input_count; i++) {
-    buffer_size += 64 + sizeof(uint32_t) + tx->inputs[i].public_key_length;
+    buffer_size += 64 + 4 + 1 + 2 + tx->inputs[i].public_key_length;
   }
   
   // Add output sizes
-  buffer_size += tx->output_count * (20 + sizeof(double));
+  buffer_size += tx->output_count * (20 + 8);
 
   uint8_t *buffer = malloc(buffer_size);
   if (!buffer) {
     return -1;
   }
 
-  // Serialize transaction data
-  size_t offset = 0;
-  memcpy(buffer + offset, &tx->version, sizeof(uint32_t));
-  offset += sizeof(uint32_t);
-  memcpy(buffer + offset, &tx->input_count, sizeof(uint32_t));
-  offset += sizeof(uint32_t);
-  memcpy(buffer + offset, &tx->output_count, sizeof(uint32_t));
-  offset += sizeof(uint32_t);
-  memcpy(buffer + offset, &tx->voluntary_tip, sizeof(double));
-  offset += sizeof(double);
-  memcpy(buffer + offset, &tx->timestamp, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
+  // Serialize transaction data using canonical big-endian format
+  uint8_t *ptr = buffer;
+  
+  mxd_write_u32_be(&ptr, tx->version);
+  mxd_write_u32_be(&ptr, tx->input_count);
+  mxd_write_u32_be(&ptr, tx->output_count);
+  mxd_write_u64_be(&ptr, tx->voluntary_tip);
+  mxd_write_u64_be(&ptr, tx->timestamp);
 
   // Serialize inputs (excluding signatures)
   for (uint32_t i = 0; i < tx->input_count; i++) {
-    memcpy(buffer + offset, tx->inputs[i].prev_tx_hash, 64);
-    offset += 64;
-    memcpy(buffer + offset, &tx->inputs[i].output_index, sizeof(uint32_t));
-    offset += sizeof(uint32_t);
-    memcpy(buffer + offset, tx->inputs[i].public_key, tx->inputs[i].public_key_length);
-    offset += tx->inputs[i].public_key_length;
+    mxd_write_bytes(&ptr, tx->inputs[i].prev_tx_hash, 64);
+    mxd_write_u32_be(&ptr, tx->inputs[i].output_index);
+    mxd_write_u8(&ptr, tx->inputs[i].algo_id);
+    mxd_write_u16_be(&ptr, tx->inputs[i].public_key_length);
+    mxd_write_bytes(&ptr, tx->inputs[i].public_key, tx->inputs[i].public_key_length);
   }
 
   // Serialize outputs
   for (uint32_t i = 0; i < tx->output_count; i++) {
-    memcpy(buffer + offset, tx->outputs[i].recipient_addr, 20);
-    offset += 20;
-    memcpy(buffer + offset, &tx->outputs[i].amount, sizeof(double));
-    offset += sizeof(double);
+    mxd_write_bytes(&ptr, tx->outputs[i].recipient_addr, 20);
+    mxd_write_u64_be(&ptr, tx->outputs[i].amount);
   }
 
   // Calculate double SHA-512 hash
   uint8_t temp_hash[64];
   int result = -1;
-  if (mxd_sha512(buffer, offset, temp_hash) == 0 &&
+  if (mxd_sha512(buffer, buffer_size, temp_hash) == 0 &&
       mxd_sha512(temp_hash, 64, hash) == 0) {
     result = 0;
   }
