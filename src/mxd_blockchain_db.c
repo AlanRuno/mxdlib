@@ -4,6 +4,7 @@
 #include "../include/mxd_rocksdb_globals.h"
 #include "../include/blockchain/mxd_rsc.h"
 #include "../include/mxd_endian.h"
+#include "../include/mxd_serialize.h"
 #include <rocksdb/c.h>
 #include <stdlib.h>
 #include <string.h>
@@ -155,9 +156,7 @@ static int deserialize_block(const uint8_t *data, size_t data_len, mxd_block_t *
 }
 
 static void create_block_height_key(uint32_t height, uint8_t *key, size_t *key_len) {
-    memcpy(key, "block:height:", 13);
-    memcpy(key + 13, &height, sizeof(uint32_t));
-    *key_len = 13 + sizeof(uint32_t);
+    mxd_create_key_with_u32(key, key_len, "block:height:", height);
 }
 
 static void create_block_hash_key(const uint8_t hash[64], uint8_t *key, size_t *key_len) {
@@ -168,7 +167,8 @@ static void create_block_hash_key(const uint8_t hash[64], uint8_t *key, size_t *
 
 static void create_signature_key(uint32_t height, const uint8_t validator_id[20], uint8_t *key, size_t *key_len) {
     memcpy(key, "sig:", 4);
-    memcpy(key + 4, &height, sizeof(uint32_t));
+    uint32_t height_be = htonl(height);
+    memcpy(key + 4, &height_be, sizeof(uint32_t));
     memcpy(key + 4 + sizeof(uint32_t), validator_id, 20);
     *key_len = 4 + sizeof(uint32_t) + 20;
 }
