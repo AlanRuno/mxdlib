@@ -17,7 +17,7 @@ static char *db_path_global = NULL;
 
 static size_t utxo_count = 0;
 static size_t pruned_count = 0;
-static double total_value = 0.0;
+static mxd_amount_t total_value = 0;
 
 static pthread_mutex_t db_init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int utxo_db_initialized = 0;
@@ -285,7 +285,7 @@ int mxd_init_utxo_db(const char *db_path) {
     // Initialize statistics
     utxo_count = 0;
     pruned_count = 0;
-    total_value = 0.0;
+    total_value = 0;
     
     utxo_db_initialized = 1;
     pthread_mutex_unlock(&db_init_mutex);
@@ -480,18 +480,18 @@ int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
     return result;
 }
 
-double mxd_get_balance(const uint8_t address[20]) {
+mxd_amount_t mxd_get_balance(const uint8_t address[20]) {
     if (!address || !mxd_get_rocksdb_db()) {
-        return -1;
+        return 0;
     }
     
     mxd_utxo_t *utxos = NULL;
     size_t utxo_count_local = 0;
     if (mxd_get_utxos_by_pubkey_hash(address, &utxos, &utxo_count_local) != 0) {
-        return 0.0;
+        return 0;
     }
     
-    double balance = 0.0;
+    mxd_amount_t balance = 0;
     for (size_t i = 0; i < utxo_count_local; i++) {
         if (!utxos[i].is_spent) {
             balance += utxos[i].amount;
@@ -628,7 +628,7 @@ int mxd_close_utxo_db(void) {
     return 0;
 }
 
-int mxd_verify_utxo_funds(const uint8_t tx_hash[64], uint32_t output_index, double amount) {
+int mxd_verify_utxo_funds(const uint8_t tx_hash[64], uint32_t output_index, mxd_amount_t amount) {
     if (!tx_hash || !mxd_get_rocksdb_db()) {
         return -1;
     }
@@ -782,7 +782,7 @@ int mxd_get_utxo_count(size_t *count) {
 }
 
 // Get UTXO database statistics
-int mxd_get_utxo_stats(size_t *total_count, size_t *pruned_count_out, double *total_value_out) {
+int mxd_get_utxo_stats(size_t *total_count, size_t *pruned_count_out, mxd_amount_t *total_value_out) {
     if (!total_count || !pruned_count_out || !total_value_out || !mxd_get_rocksdb_db()) {
         return -1;
     }
@@ -790,7 +790,7 @@ int mxd_get_utxo_stats(size_t *total_count, size_t *pruned_count_out, double *to
     // Reset statistics
     size_t count = 0;
     size_t pruned = 0;
-    double value = 0.0;
+    mxd_amount_t value = 0;
     
     // Create iterator
     rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions());

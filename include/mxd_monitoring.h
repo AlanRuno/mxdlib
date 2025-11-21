@@ -8,6 +8,7 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 #include <pthread.h>
+#include "mxd_types.h"
 #include "mxd_metrics.h"
 #include "mxd_address.h"
 #include "mxd_transaction.h"
@@ -79,14 +80,14 @@ typedef struct {
     char txid[129];
     char from_address[64];
     char to_address[64];
-    double amount;
+    mxd_amount_t amount;  // Amount in base units
     uint64_t timestamp;
     uint8_t algo_id;
     char status[32];
 } mxd_transaction_history_entry_t;
 
 int mxd_add_transaction_to_history(const char* txid, const char* from_addr, 
-                                    const char* to_addr, double amount, 
+                                    const char* to_addr, mxd_amount_t amount, 
                                     uint64_t timestamp, uint8_t algo_id);
 const char* mxd_handle_wallet_transaction_history(const char* address);
 
@@ -96,8 +97,8 @@ typedef struct {
     uint32_t dilithium5_addresses;
     uint32_t ed25519_transactions;
     uint32_t dilithium5_transactions;
-    double ed25519_volume;
-    double dilithium5_volume;
+    mxd_amount_t ed25519_volume;    // Volume in base units
+    mxd_amount_t dilithium5_volume; // Volume in base units
 } mxd_hybrid_crypto_metrics_t;
 
 int mxd_update_hybrid_crypto_metrics(const mxd_hybrid_crypto_metrics_t* metrics);

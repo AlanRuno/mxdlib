@@ -2,6 +2,7 @@
 #define MXD_CONFIG_H
 
 #include <stdint.h>
+#include "mxd_types.h"
 
 // Bootstrap node metadata for hybrid cryptography support
 typedef struct {
@@ -75,7 +76,7 @@ typedef struct {
     char data_dir[256];
     char network_type[32];     // mainnet, testnet
     char node_name[64];        // Node display name
-    double initial_stake;      // Initial stake amount
+    mxd_amount_t initial_stake; // Initial stake amount in base units
     uint32_t metrics_interval; // Display refresh interval (ms)
     char bootstrap_nodes[10][256];  // Legacy format: "address:port" strings
     mxd_bootstrap_node_t bootstrap_nodes_v2[10];  // Enhanced format with crypto metadata

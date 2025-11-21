@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 // Internal transaction storage
 typedef struct {
@@ -33,7 +34,7 @@ int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]) {
   block->rapid_membership_entries = NULL;
   block->rapid_membership_count = 0;
   block->rapid_membership_capacity = 0;
-  block->total_supply = 0.0;
+  block->total_supply = 0;
   block->transaction_set_frozen = 0;
 
   // Reset transaction storage
@@ -165,19 +166,19 @@ int mxd_freeze_transaction_set(mxd_block_t *block) {
 }
 
 // Calculate total tip from frozen transaction set
-double mxd_calculate_total_tip_from_frozen_set(const mxd_block_t *block) {
+mxd_amount_t mxd_calculate_total_tip_from_frozen_set(const mxd_block_t *block) {
   if (!block) {
-    return 0.0;
+    return 0;
   }
   
   if (!block->transaction_set_frozen) {
-    return 0.0;
+    return 0;
   }
   
-  double total_tip = 0.0;
+  mxd_amount_t total_tip = 0;
   
   for (size_t i = 0; i < transaction_count; i++) {
-    double tip = 0.0;
+    mxd_amount_t tip = 0;
     if (mxd_peek_voluntary_tip_from_bytes(transactions[i].data, transactions[i].length, &tip) == 0) {
       total_tip += tip;
     }
@@ -293,14 +294,14 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
   }
   
   // Verify stake requirement (1% of total supply, or genesis mode)
-  if (block->total_supply > 0.0) {
+  if (block->total_supply > 0) {
     uint8_t addr20[20];
     if (mxd_derive_address(algo_id, public_key, public_key_length, addr20) != 0) {
       return -1; // Failed to derive address
     }
-    double balance = mxd_get_balance(addr20);
-    double stake_percentage = (balance / block->total_supply) * 100.0;
-    if (stake_percentage < 1.0) {
+    mxd_amount_t balance = mxd_get_balance(addr20);
+    // Check if balance >= 1% of total supply (balance * 100 >= total_supply)
+    if (balance < block->total_supply / 100) {
       return -1; // Insufficient stake
     }
   }

@@ -89,8 +89,8 @@ int mxd_add_tx_input(mxd_transaction_t *tx, const uint8_t prev_tx_hash[64],
 
 // Add output to transaction (v2 - uses address20)
 int mxd_add_tx_output(mxd_transaction_t *tx, const uint8_t recipient_addr[20],
-                      double amount) {
-  if (!tx || !recipient_addr || amount <= 0 ||
+                      mxd_amount_t amount) {
+  if (!tx || !recipient_addr || amount == 0 ||
       tx->output_count >= MXD_MAX_TX_OUTPUTS) {
     return -1;
   }
@@ -288,8 +288,8 @@ int mxd_validate_transaction(const mxd_transaction_t *tx) {
 }
 
 // Set voluntary tip for transaction
-int mxd_set_voluntary_tip(mxd_transaction_t *tx, double tip_amount) {
-  if (!tx || tip_amount < 0) {
+int mxd_set_voluntary_tip(mxd_transaction_t *tx, mxd_amount_t tip_amount) {
+  if (!tx) {
     return -1;
   }
   tx->voluntary_tip = tip_amount;
@@ -297,21 +297,19 @@ int mxd_set_voluntary_tip(mxd_transaction_t *tx, double tip_amount) {
 }
 
 // Get voluntary tip amount
-double mxd_get_voluntary_tip(const mxd_transaction_t *tx) {
+mxd_amount_t mxd_get_voluntary_tip(const mxd_transaction_t *tx) {
   if (!tx) {
-    return -1;
+    return 0;
   }
   return tx->voluntary_tip;
 }
 
-int mxd_peek_voluntary_tip_from_bytes(const uint8_t *data, size_t length, double *tip_out) {
+int mxd_peek_voluntary_tip_from_bytes(const uint8_t *data, size_t length, mxd_amount_t *tip_out) {
   if (!data || !tip_out) {
     return -1;
   }
   
-  _Static_assert(sizeof(double) == 8, "double must be 8 bytes");
-  
-  const size_t header_min = sizeof(uint32_t) * 3 + sizeof(double) + sizeof(uint64_t);
+  const size_t header_min = sizeof(uint32_t) * 3 + sizeof(uint64_t) + sizeof(uint64_t);
   
   if (length < header_min) {
     return -1;
@@ -326,14 +324,10 @@ int mxd_peek_voluntary_tip_from_bytes(const uint8_t *data, size_t length, double
   
   const size_t tip_offset = sizeof(uint32_t) * 3;
   
-  double tip_value;
-  memcpy(&tip_value, data + tip_offset, sizeof(double));
+  uint64_t tip_value;
+  memcpy(&tip_value, data + tip_offset, sizeof(uint64_t));
   
-  if (tip_value < 0.0 || !isfinite(tip_value)) {
-    *tip_out = 0.0;
-  } else {
-    *tip_out = tip_value;
-  }
+  *tip_out = tip_value;
   
   return 0;
 }
@@ -346,7 +340,7 @@ int mxd_validate_transaction_inputs(const mxd_transaction_t *tx) {
   
   // Verify each input UTXO exists and has sufficient funds
   for (uint32_t i = 0; i < tx->input_count; i++) {
-    double amount = 0.0;
+    mxd_amount_t amount = 0;
     if (mxd_verify_tx_input_utxo(&tx->inputs[i], &amount) != 0) {
       MXD_LOG_ERROR("transaction", "UTXO verification failed for input %u", i);
       return -1;
@@ -354,7 +348,7 @@ int mxd_validate_transaction_inputs(const mxd_transaction_t *tx) {
     
     // Verify amount matches cached amount
     if (amount != tx->inputs[i].amount) {
-      MXD_LOG_ERROR("transaction", "UTXO amount mismatch for input %u: cached=%f, actual=%f", 
+      MXD_LOG_ERROR("transaction", "UTXO amount mismatch for input %u: cached=%lu, actual=%lu", 
              i, tx->inputs[i].amount, amount);
       return -1;
     }
@@ -364,7 +358,7 @@ int mxd_validate_transaction_inputs(const mxd_transaction_t *tx) {
 }
 
 // Verify transaction input UTXO exists and has sufficient funds
-int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, double *amount) {
+int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, mxd_amount_t *amount) {
   if (!input || !amount) {
     return -1;
   }
@@ -470,8 +464,8 @@ int mxd_mark_tx_inputs_spent(const mxd_transaction_t *tx) {
 }
 
 int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipient_addr[20],
-                                   double reward_amount) {
-  if (!tx || !recipient_addr || reward_amount <= 0) {
+                                   mxd_amount_t reward_amount) {
+  if (!tx || !recipient_addr || reward_amount == 0) {
     return -1;
   }
   

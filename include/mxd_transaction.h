@@ -7,7 +7,7 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdint.h>
-#include "mxd_utxo.h"
+#include "mxd_types.h"
 
 // Initialize transaction validation system
 int mxd_init_transaction_validation(void);
@@ -28,13 +28,13 @@ typedef struct {
   uint8_t *public_key;          // Signer's public key (variable length)
   uint16_t signature_length;    // Length of signature
   uint8_t *signature;           // Signature (variable length)
-  double amount;                // Amount from the UTXO (cached for validation)
+  mxd_amount_t amount;          // Amount from the UTXO (cached for validation, in base units)
 } mxd_tx_input_t;
 
 // Transaction output structure (v2 - uses address20)
 typedef struct {
   uint8_t recipient_addr[20];   // Recipient's address (HASH160(algo_id || pubkey))
-  double amount;                // Amount to transfer
+  mxd_amount_t amount;          // Amount to transfer (in base units)
 } mxd_tx_output_t;
 
 // Transaction structure (v2)
@@ -42,8 +42,8 @@ typedef struct {
   uint32_t version;         // Transaction version (v2 for hybrid crypto)
   uint32_t input_count;     // Number of inputs
   uint32_t output_count;    // Number of outputs
-  double voluntary_tip;     // Optional tip for node operators
-  uint64_t timestamp;       // Transaction timestamp (NTP synchronized)
+  mxd_amount_t voluntary_tip; // Optional tip for node operators (in base units)
+  uint64_t timestamp;       // Transaction timestamp (NTP synchronized, Unix seconds)
   mxd_tx_input_t *inputs;   // Array of inputs (variable-length keys/sigs)
   mxd_tx_output_t *outputs; // Array of outputs (address20 format)
   uint8_t tx_hash[64];      // Transaction hash (SHA-512)
@@ -60,7 +60,7 @@ int mxd_add_tx_input(mxd_transaction_t *tx, const uint8_t prev_tx_hash[64],
 
 // Add output to transaction (v2 - uses address20)
 int mxd_add_tx_output(mxd_transaction_t *tx, const uint8_t recipient_addr[20],
-                      double amount);
+                      mxd_amount_t amount);
 
 // Sign transaction input (v2 - algo-aware)
 int mxd_sign_tx_input(mxd_transaction_t *tx, uint32_t input_index,
@@ -79,7 +79,7 @@ int mxd_validate_transaction(const mxd_transaction_t *tx);
 int mxd_validate_transaction_inputs(const mxd_transaction_t *tx);
 
 // Verify transaction input UTXO exists and has sufficient funds
-int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, double *amount);
+int mxd_verify_tx_input_utxo(const mxd_tx_input_t *input, mxd_amount_t *amount);
 
 // Apply transaction to UTXO database (create outputs, mark inputs as spent)
 int mxd_apply_transaction_to_utxo(const mxd_transaction_t *tx);
@@ -91,17 +91,17 @@ int mxd_create_utxos_from_tx(const mxd_transaction_t *tx, const uint8_t tx_hash[
 int mxd_mark_tx_inputs_spent(const mxd_transaction_t *tx);
 
 // Set voluntary tip for transaction
-int mxd_set_voluntary_tip(mxd_transaction_t *tx, double tip_amount);
+int mxd_set_voluntary_tip(mxd_transaction_t *tx, mxd_amount_t tip_amount);
 
 // Get voluntary tip amount
-double mxd_get_voluntary_tip(const mxd_transaction_t *tx);
+mxd_amount_t mxd_get_voluntary_tip(const mxd_transaction_t *tx);
 
 // Peek voluntary tip from serialized transaction bytes (lightweight extraction)
-int mxd_peek_voluntary_tip_from_bytes(const uint8_t *data, size_t length, double *tip_out);
+int mxd_peek_voluntary_tip_from_bytes(const uint8_t *data, size_t length, mxd_amount_t *tip_out);
 
 // Create a coinbase transaction (for block rewards, v2 - uses address20)
 int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipient_addr[20],
-                                   double reward_amount);
+                                   mxd_amount_t reward_amount);
 
 // Deep copy transaction (including pointer fields)
 int mxd_tx_deep_copy(mxd_transaction_t *dst, const mxd_transaction_t *src);

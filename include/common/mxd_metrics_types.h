@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include "mxd_types.h"
 
 // Node performance metrics
 typedef struct {
@@ -18,14 +19,14 @@ typedef struct {
     double reliability_score;      // 0.0 to 1.0 reliability rating
     double performance_score;      // Combined performance metric
     uint64_t last_update;         // NTP synchronized timestamp
-    double tip_share;             // Node's share of voluntary tips
+    mxd_amount_t tip_share;       // Node's share of voluntary tips (in base units)
     size_t peer_count;           // Number of connected peers
 } mxd_node_metrics_t;
 
 // Node stake information
 typedef struct {
     char node_id[64];
-    double stake_amount;
+    mxd_amount_t stake_amount;    // Stake amount in base units
     uint8_t node_address[20];
     mxd_node_metrics_t metrics;
     uint32_t rank;

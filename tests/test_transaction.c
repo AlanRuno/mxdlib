@@ -1,5 +1,6 @@
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_transaction.h"
+#include "../include/mxd_utxo.h"
 #include "test_utils.h"
 #include <assert.h>
 #include <stdio.h>
@@ -45,15 +46,15 @@ static void test_input_output_management(void) {
 
   // Add output
   TEST_ARRAY("Recipient key", recv_key, 32);
-  TEST_VALUE("Output amount", "%.1f", 1.0);
-  TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&tx, recv_key, 1.0) == 0,
+  TEST_VALUE("Output amount", "%lu", 100000000ULL);
+  TEST_ASSERT(test_add_tx_output_to_pubkey_ed25519(&tx, recv_key, 100000000ULL) == 0,
               "Add transaction output");
   TEST_ASSERT(tx.output_count == 1, "Output count is 1");
   uint8_t expected_addr[20];
   mxd_derive_address(MXD_SIGALG_ED25519, recv_key, 32, expected_addr);
   TEST_ASSERT(memcmp(tx.outputs[0].recipient_addr, expected_addr, 20) == 0,
               "Recipient address matches");
-  TEST_ASSERT(tx.outputs[0].amount == 1.0, "Amount matches");
+  TEST_ASSERT(tx.outputs[0].amount == 100000000ULL, "Amount matches");
 
   mxd_free_transaction(&tx);
   TEST_END("Input/Output Management");
@@ -71,7 +72,7 @@ static void test_transaction_signing(void) {
   // Create and sign transaction
   assert(mxd_create_transaction(&tx) == 0);
   assert(test_add_tx_input_ed25519(&tx, prev_hash, 0, pub_key) == 0);
-  assert(test_add_tx_output_to_pubkey_ed25519(&tx, pub_key, 1.0) == 0);
+  assert(test_add_tx_output_to_pubkey_ed25519(&tx, pub_key, 100000000ULL) == 0);
 
   // Sign input
   assert(test_sign_tx_input_ed25519(&tx, 0, priv_key) == 0);
@@ -97,16 +98,16 @@ static void test_transaction_validation(void) {
   memcpy(test_utxo.tx_hash, prev_hash, 64);
   test_utxo.output_index = 0;
   assert(mxd_derive_address(MXD_SIGALG_ED25519, pub_key, 32, test_utxo.owner_key) == 0);
-  test_utxo.amount = 2.0; // More than enough for our test transaction
+  test_utxo.amount = 200000000ULL; // More than enough for our test transaction
   
   assert(mxd_add_utxo(&test_utxo) == 0);
 
   // Create valid transaction
   assert(mxd_create_transaction(&tx) == 0);
   assert(test_add_tx_input_ed25519(&tx, prev_hash, 0, pub_key) == 0);
-  tx.inputs[0].amount = 2.0;
-  assert(test_add_tx_output_to_pubkey_ed25519(&tx, pub_key, 1.0) == 0);
-  assert(mxd_set_voluntary_tip(&tx, 0.1) == 0);
+  tx.inputs[0].amount = 200000000ULL;
+  assert(test_add_tx_output_to_pubkey_ed25519(&tx, pub_key, 100000000ULL) == 0);
+  assert(mxd_set_voluntary_tip(&tx, 10000000ULL) == 0);
   tx.timestamp = 1708198204;
   assert(test_sign_tx_input_ed25519(&tx, 0, priv_key) == 0);
 
@@ -130,7 +131,7 @@ static void test_transaction_hashing(void) {
 
   assert(mxd_create_transaction(&tx) == 0);
   assert(test_add_tx_input_ed25519(&tx, prev_hash, 0, pub_key) == 0);
-  assert(test_add_tx_output_to_pubkey_ed25519(&tx, pub_key, 1.0) == 0);
+  assert(test_add_tx_output_to_pubkey_ed25519(&tx, pub_key, 100000000ULL) == 0);
 
   // Calculate hash
   assert(mxd_calculate_tx_hash(&tx, hash) == 0);

@@ -105,7 +105,7 @@ static inline int test_add_tx_input_ed25519(mxd_transaction_t *tx, const uint8_t
 }
 
 // Test helper for adding transaction output using pubkey (derives address20)
-static inline int test_add_tx_output_to_pubkey_ed25519(mxd_transaction_t *tx, const uint8_t *public_key, double amount) {
+static inline int test_add_tx_output_to_pubkey_ed25519(mxd_transaction_t *tx, const uint8_t *public_key, mxd_amount_t amount) {
     uint8_t addr20[20];
     if (mxd_derive_address(MXD_SIGALG_ED25519, public_key, mxd_sig_pubkey_len(MXD_SIGALG_ED25519), addr20) != 0) {
         return -1;
