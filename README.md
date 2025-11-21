@@ -60,11 +60,28 @@ MXD (Mexican Denarius) represents a groundbreaking advancement in digital financ
 
 
 ### 📜 Smart Contracts & Extensions
-- WebAssembly (WASM) runtime using wasm3
-- Contract deployment and execution
-- Gas metering and limits
-- State management and validation
-- Secure storage with Merkle trees
+**Status**: Smart contracts are currently **disabled by default** due to incomplete implementation.
+
+The basic WASM3 runtime integration exists, but critical features are missing:
+- ⚠️ No instruction-level gas metering (vulnerability to resource exhaustion)
+- ⚠️ Incomplete storage implementation (no Merkle tree verification)
+- ⚠️ No state root in block headers (prevents state verification)
+- ⚠️ Limited security testing
+
+**For Development/Testing Only**: Smart contracts can be enabled via configuration:
+```json
+{
+  "contracts": {
+    "enabled": true,
+    "gas_limit_default": 1000000,
+    "timeout_seconds": 5,
+    "metering_enabled": true,
+    "max_memory_pages": 256
+  }
+}
+```
+
+**WARNING**: Do not enable smart contracts on production networks. See [Smart Contracts Roadmap](docs/SMART_CONTRACTS_ROADMAP.md) for the complete implementation plan and timeline.
 
 ## 📚 Documentation
 
@@ -440,12 +457,21 @@ mxd_sign_tx_input(&tx, 0, algo_id, private_key);
 mxd_free_transaction(&tx);
 ```
 
-### Deploy Smart Contract
+### Deploy Smart Contract (Development Only)
+**Note**: Smart contracts are disabled by default. Enable via configuration for development/testing only.
+
 ```c
 #include <mxd_smart_contracts.h>
 
+// Smart contracts must be enabled in configuration first
+// See docs/SMART_CONTRACTS_ROADMAP.md for details
+
 mxd_contract_state_t state;
-mxd_deploy_contract(wasm_code, wasm_size, &state);
+int result = mxd_deploy_contract(wasm_code, wasm_size, &state);
+if (result != 0) {
+    // Returns error if contracts are disabled or deployment fails
+    printf("Contract deployment failed (contracts may be disabled)\n");
+}
 ```
 
 ## 🤝 Contributing
