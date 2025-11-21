@@ -113,4 +113,6 @@ mxd_config_t* mxd_get_config(void);
 // Set the global configuration instance
 void mxd_set_global_config(mxd_config_t* config);
 
+void mxd_set_default_config(mxd_config_t* config);
+
 #endif // MXD_CONFIG_H

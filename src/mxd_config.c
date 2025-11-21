@@ -59,7 +59,7 @@ static int mxd_validate_config(mxd_config_t* config) {
     return 0;
 }
 
-static void mxd_set_default_config(mxd_config_t* config) {
+void mxd_set_default_config(mxd_config_t* config) {
     memset(config, 0, sizeof(mxd_config_t));
     
     // Node identification

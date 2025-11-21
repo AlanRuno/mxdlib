@@ -8,10 +8,15 @@
 // Test WebAssembly code (minimal module)
 #include "wasm_binary.h"
 
+static mxd_config_t test_config = {0};
+static int config_initialized = 0;
+
 static void enable_contracts_for_testing(void) {
-  mxd_config_t* config = mxd_get_config();
-  if (config) {
-    config->contracts.enabled = 1;
+  if (!config_initialized) {
+    mxd_set_default_config(&test_config);
+    test_config.contracts.enabled = 1;
+    mxd_set_global_config(&test_config);
+    config_initialized = 1;
   }
 }
 
