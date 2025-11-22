@@ -15,8 +15,18 @@ static struct {
   IM3Runtime runtime;
 } wasm_state = {0};
 
+static inline int contracts_disabled(void) {
+  const mxd_config_t* config = mxd_get_config();
+  return (!config || !config->contracts.enabled);
+}
+
 // Initialize smart contracts module
 int mxd_init_contracts(void) {
+  if (contracts_disabled()) {
+    MXD_LOG_WARN("contracts", "Smart contracts are disabled");
+    return -1;
+  }
+  
   // Free existing environment if any
   if (wasm_state.env) {
     if (wasm_state.runtime) {
@@ -58,6 +68,11 @@ int mxd_init_contracts(void) {
 // Deploy contract
 int mxd_deploy_contract(const uint8_t *code, size_t code_size,
                         mxd_contract_state_t *state) {
+  if (contracts_disabled()) {
+    MXD_LOG_WARN("contracts", "Smart contracts are disabled");
+    return -1;
+  }
+  
   if (!code || !state || code_size > MXD_MAX_CONTRACT_SIZE) {
     return -1;
   }
@@ -108,6 +123,11 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
 int mxd_execute_contract(const mxd_contract_state_t *state,
                          const uint8_t *input, size_t input_size,
                          mxd_execution_result_t *result) {
+  if (contracts_disabled()) {
+    MXD_LOG_WARN("contracts", "Smart contracts are disabled");
+    return -1;
+  }
+  
   if (!state || !input || !result || input_size > MXD_MAX_CONTRACT_SIZE) {
     return -1;
   }
@@ -173,6 +193,11 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
 // Validate contract state transition
 int mxd_validate_state_transition(const mxd_contract_state_t *old_state,
                                   const mxd_contract_state_t *new_state) {
+  if (contracts_disabled()) {
+    MXD_LOG_WARN("contracts", "Smart contracts are disabled");
+    return -1;
+  }
+  
   if (!old_state || !new_state) {
     return -1;
   }
@@ -204,6 +229,11 @@ int mxd_validate_state_transition(const mxd_contract_state_t *old_state,
 
 // Calculate contract gas cost
 uint64_t mxd_calculate_gas(const uint8_t *code, size_t code_size) {
+  if (contracts_disabled()) {
+    MXD_LOG_WARN("contracts", "Smart contracts are disabled");
+    return 0;
+  }
+  
   if (!code) {
     return 0;
   }
@@ -217,6 +247,11 @@ uint64_t mxd_calculate_gas(const uint8_t *code, size_t code_size) {
 int mxd_get_contract_storage(const mxd_contract_state_t *state,
                              const uint8_t *key, size_t key_size,
                              uint8_t *value, size_t *value_size) {
+  if (contracts_disabled()) {
+    MXD_LOG_WARN("contracts", "Smart contracts are disabled");
+    return -1;
+  }
+  
   if (!state || !key || !value || !value_size || !state->storage) {
     return -1;
   }
@@ -258,6 +293,11 @@ int mxd_get_contract_storage(const mxd_contract_state_t *state,
 int mxd_set_contract_storage(mxd_contract_state_t *state, const uint8_t *key,
                              size_t key_size, const uint8_t *value,
                              size_t value_size) {
+  if (contracts_disabled()) {
+    MXD_LOG_WARN("contracts", "Smart contracts are disabled");
+    return -1;
+  }
+  
   if (!state || !key || !value) {
     return -1;
   }

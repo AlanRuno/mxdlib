@@ -40,6 +40,7 @@
     "max_tx_per_sec_per_peer": 10
   },
   "contracts": {
+    "enabled": false,
     "gas_limit_default": 1000000,
     "timeout_seconds": 5,
     "metering_enabled": true,

@@ -48,6 +48,7 @@ typedef struct {
 
 // Smart contract security configuration
 typedef struct {
+    int enabled;                // Enable smart contracts (default: 0/disabled)
     uint64_t gas_limit_default; // Default gas limit
     uint32_t timeout_seconds;   // Execution timeout
     int metering_enabled;       // Enable gas metering
@@ -111,5 +112,7 @@ mxd_config_t* mxd_get_config(void);
 
 // Set the global configuration instance
 void mxd_set_global_config(mxd_config_t* config);
+
+void mxd_set_default_config(mxd_config_t* config);
 
 #endif // MXD_CONFIG_H
