@@ -226,9 +226,11 @@ int main(int argc, char** argv) {
             size_t dir_length = last_slash - argv[0] + 1;
             strncpy(default_config_path, argv[0], dir_length);
             default_config_path[dir_length] = '\0';
-            strcat(default_config_path, "default_config.json");
+            strncat(default_config_path, "default_config.json", 
+                    PATH_MAX - strlen(default_config_path) - 1);
         } else {
-            strcpy(default_config_path, "./default_config.json");
+            strncpy(default_config_path, "./default_config.json", PATH_MAX - 1);
+            default_config_path[PATH_MAX - 1] = '\0';
         }
         config_path = default_config_path;
         MXD_LOG_INFO("node", "No config file specified, using default configuration: %s", config_path);
