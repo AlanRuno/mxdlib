@@ -107,6 +107,8 @@ double mxd_calculate_latency_score(const mxd_block_t *block);  // Returns score,
 
 void mxd_free_validation_chain(mxd_block_t *block);
 
+void mxd_free_block(mxd_block_t *block);
+
 #ifdef __cplusplus
 }
 #endif

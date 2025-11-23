@@ -45,6 +45,8 @@ static void test_transaction_handling(void) {
   }
   TEST_ASSERT(!is_zero, "Merkle root was updated");
   
+  mxd_free_block(&block);
+  
   TEST_END("Transaction Handling");
 }
 
@@ -64,6 +66,8 @@ static void test_block_validation(void) {
   TEST_VALUE("Setting invalid version", "%d", 0);
   block.version = 0;
   TEST_ASSERT(mxd_validate_block(&block) == -1, "Invalid block correctly rejected");
+  
+  mxd_free_block(&block);
   
   TEST_END("Block Validation");
 }
