@@ -3,6 +3,7 @@
 #include "../../include/mxd_blockchain.h"
 #include "../../include/mxd_crypto.h"
 #include "../../include/mxd_p2p.h"
+#include "../../include/mxd_ntp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,8 +90,8 @@ int mxd_verify_validation_chain(const mxd_block_t *block) {
             return -1;
         }
 
-        time_t now = time(NULL);
-        if (sig_i->timestamp > (uint64_t)(now + 60) || sig_i->timestamp + 60 < (uint64_t)now) {
+        uint64_t now = mxd_now_ms() / 1000; // NTP-synchronized time in seconds
+        if (sig_i->timestamp > now + 60 || sig_i->timestamp + 60 < now) {
             return -1;
         }
 

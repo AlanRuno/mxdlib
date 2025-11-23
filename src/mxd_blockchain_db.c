@@ -24,7 +24,7 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
     size += sizeof(uint32_t);  // version
     size += 64;                // prev_block_hash
     size += 64;                // merkle_root
-    size += sizeof(time_t);    // timestamp
+    size += sizeof(uint64_t);  // timestamp (fixed-size uint64_t)
     size += sizeof(uint32_t);  // difficulty
     size += sizeof(uint64_t);  // nonce
     size += 64;                // block_hash
@@ -32,7 +32,7 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
     size += sizeof(uint32_t);  // height
     size += sizeof(uint32_t);  // validation_count
     size += sizeof(uint32_t);  // rapid_membership_count
-    size += sizeof(double);    // total_supply
+    size += sizeof(uint64_t);  // total_supply (fixed to uint64_t)
     size += sizeof(uint8_t);   // transaction_set_frozen
     
     if (block->validation_count > 0 && block->validation_chain) {
@@ -50,18 +50,37 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
 
     uint8_t *ptr = *data;
     
-    memcpy(ptr, &block->version, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    // Serialize with big-endian byte order for cross-platform compatibility
+    uint32_t version_be = htonl(block->version);
+    memcpy(ptr, &version_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    
     memcpy(ptr, block->prev_block_hash, 64); ptr += 64;
     memcpy(ptr, block->merkle_root, 64); ptr += 64;
-    memcpy(ptr, &block->timestamp, sizeof(time_t)); ptr += sizeof(time_t);
-    memcpy(ptr, &block->difficulty, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(ptr, &block->nonce, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    
+    uint64_t timestamp_be = mxd_htonll(block->timestamp);
+    memcpy(ptr, &timestamp_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    
+    uint32_t difficulty_be = htonl(block->difficulty);
+    memcpy(ptr, &difficulty_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    
+    uint64_t nonce_be = mxd_htonll(block->nonce);
+    memcpy(ptr, &nonce_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    
     memcpy(ptr, block->block_hash, 64); ptr += 64;
     memcpy(ptr, block->proposer_id, 20); ptr += 20;
-    memcpy(ptr, &block->height, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(ptr, &block->validation_count, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(ptr, &block->rapid_membership_count, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(ptr, &block->total_supply, sizeof(double)); ptr += sizeof(double);
+    
+    uint32_t height_be = htonl(block->height);
+    memcpy(ptr, &height_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    
+    uint32_t validation_count_be = htonl(block->validation_count);
+    memcpy(ptr, &validation_count_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    
+    uint32_t membership_count_be = htonl(block->rapid_membership_count);
+    memcpy(ptr, &membership_count_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    
+    uint64_t total_supply_be = mxd_htonll(block->total_supply);
+    memcpy(ptr, &total_supply_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    
     memcpy(ptr, &block->transaction_set_frozen, sizeof(uint8_t)); ptr += sizeof(uint8_t);
     
     if (block->validation_count > 0 && block->validation_chain) {
@@ -85,9 +104,9 @@ static int deserialize_block(const uint8_t *data, size_t data_len, mxd_block_t *
         return -1;
     }
 
-    size_t min_size = sizeof(uint32_t) + 64 + 64 + sizeof(time_t) + sizeof(uint32_t) + 
+    size_t min_size = sizeof(uint32_t) + 64 + 64 + sizeof(uint64_t) + sizeof(uint32_t) + 
                       sizeof(uint64_t) + 64 + 20 + sizeof(uint32_t) + sizeof(uint32_t) + 
-                      sizeof(uint32_t) + sizeof(double) + sizeof(uint8_t);
+                      sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint8_t);
     
     if (data_len < min_size) {
         return -1;
@@ -95,18 +114,45 @@ static int deserialize_block(const uint8_t *data, size_t data_len, mxd_block_t *
 
     const uint8_t *ptr = data;
     
-    memcpy(&block->version, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    // Deserialize with big-endian byte order conversion
+    uint32_t version_be;
+    memcpy(&version_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    block->version = ntohl(version_be);
+    
     memcpy(block->prev_block_hash, ptr, 64); ptr += 64;
     memcpy(block->merkle_root, ptr, 64); ptr += 64;
-    memcpy(&block->timestamp, ptr, sizeof(time_t)); ptr += sizeof(time_t);
-    memcpy(&block->difficulty, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&block->nonce, ptr, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    
+    uint64_t timestamp_be;
+    memcpy(&timestamp_be, ptr, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    block->timestamp = mxd_ntohll(timestamp_be);
+    
+    uint32_t difficulty_be;
+    memcpy(&difficulty_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    block->difficulty = ntohl(difficulty_be);
+    
+    uint64_t nonce_be;
+    memcpy(&nonce_be, ptr, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    block->nonce = mxd_ntohll(nonce_be);
+    
     memcpy(block->block_hash, ptr, 64); ptr += 64;
     memcpy(block->proposer_id, ptr, 20); ptr += 20;
-    memcpy(&block->height, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&block->validation_count, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&block->rapid_membership_count, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
-    memcpy(&block->total_supply, ptr, sizeof(double)); ptr += sizeof(double);
+    
+    uint32_t height_be;
+    memcpy(&height_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    block->height = ntohl(height_be);
+    
+    uint32_t validation_count_be;
+    memcpy(&validation_count_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    block->validation_count = ntohl(validation_count_be);
+    
+    uint32_t membership_count_be;
+    memcpy(&membership_count_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    block->rapid_membership_count = ntohl(membership_count_be);
+    
+    uint64_t total_supply_be;
+    memcpy(&total_supply_be, ptr, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    block->total_supply = mxd_ntohll(total_supply_be);
+    
     memcpy(&block->transaction_set_frozen, ptr, sizeof(uint8_t)); ptr += sizeof(uint8_t);
     
     block->validation_chain = NULL;

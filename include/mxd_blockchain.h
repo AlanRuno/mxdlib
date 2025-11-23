@@ -32,6 +32,12 @@ typedef struct {
     uint8_t signature[MXD_SIGNATURE_MAX];
 } mxd_rapid_membership_entry_t;
 
+// Transaction storage within block
+typedef struct {
+    uint8_t *data;
+    size_t length;
+} mxd_block_transaction_t;
+
 typedef struct {
     uint32_t version;
     uint8_t prev_block_hash[64];
@@ -50,6 +56,9 @@ typedef struct {
     uint32_t rapid_membership_capacity;
     mxd_amount_t total_supply;   // Total supply in base units (was double)
     uint8_t transaction_set_frozen;
+    mxd_block_transaction_t *transactions;
+    uint32_t transaction_count;
+    uint32_t transaction_capacity;
 } mxd_block_t;
 
 int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]);
