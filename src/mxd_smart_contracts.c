@@ -3,6 +3,8 @@
 #include "../include/mxd_smart_contracts.h"
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_config.h"
+#include "../include/mxd_gas_metering.h"
+#include "../include/mxd_merkle_trie.h"
 #include "metrics/mxd_prometheus.h"
 #include <stdlib.h>
 #include <string.h>
@@ -238,11 +240,13 @@ uint64_t mxd_calculate_gas(const uint8_t *code, size_t code_size) {
     return 0;
   }
 
-  // Simple gas calculation based on code size
-  // TODO: Implement proper gas metering with WASM3 instruction counting
-  // WARNING: Current implementation (code_size * 10) is NOT production-ready
-  // Without proper gas metering, malicious contracts can cause DoS attacks
-  return code_size * 10;
+  // Use proper gas metering with WASM bytecode analysis
+  uint64_t gas_cost = mxd_calculate_gas_from_bytecode(code, code_size);
+  
+  MXD_LOG_DEBUG("contracts", "Calculated gas cost: %lu for contract size: %zu bytes", 
+                gas_cost, code_size);
+  
+  return gas_cost;
 }
 
 // Get contract storage
