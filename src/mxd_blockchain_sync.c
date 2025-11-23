@@ -287,13 +287,10 @@ int mxd_verify_and_add_validation_signature(mxd_block_t *block,
         return -1;
     }
     
-    if (mxd_add_validator_signature(block, validator_id, timestamp, algo_id, signature, signature_length) != 0) {
+    // Use the validated signature addition path with timestamp drift checking
+    uint32_t chain_position = block->validation_count;
+    if (mxd_add_validator_signature_to_block(block, validator_id, timestamp, algo_id, signature, signature_length, chain_position) != 0) {
         MXD_LOG_ERROR("sync", "Failed to add validator signature to block");
-        return -1;
-    }
-    
-    if (mxd_store_signature(block->height, validator_id, signature, signature_length) != 0) {
-        MXD_LOG_ERROR("sync", "Failed to store signature for replay protection");
         return -1;
     }
     

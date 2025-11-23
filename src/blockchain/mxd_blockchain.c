@@ -4,19 +4,12 @@
 #include "../../include/mxd_utxo.h"
 #include "../../include/mxd_transaction.h"
 #include "../../include/mxd_logging.h"
+#include "../../include/mxd_ntp.h"
+#include "../../include/mxd_serialize.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
-// Internal transaction storage
-typedef struct {
-  uint8_t *data;
-  size_t length;
-} transaction_t;
-
-static transaction_t *transactions = NULL;
-static size_t transaction_count = 0;
 
 // Initialize a new block
 int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]) {
@@ -28,7 +21,7 @@ int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]) {
   memset(block, 0, sizeof(mxd_block_t));
   block->version = 1; // Current version
   memcpy(block->prev_block_hash, prev_hash, 64);
-  block->timestamp = time(NULL);
+  block->timestamp = mxd_now_ms() / 1000; // NTP-synchronized time in seconds
   block->difficulty = 1; // Initial difficulty
   block->nonce = 0;
   block->rapid_membership_entries = NULL;
@@ -36,16 +29,9 @@ int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]) {
   block->rapid_membership_capacity = 0;
   block->total_supply = 0;
   block->transaction_set_frozen = 0;
-
-  // Reset transaction storage
-  if (transactions) {
-    for (size_t i = 0; i < transaction_count; i++) {
-      free(transactions[i].data);
-    }
-    free(transactions);
-    transactions = NULL;
-  }
-  transaction_count = 0;
+  block->transactions = NULL;
+  block->transaction_count = 0;
+  block->transaction_capacity = 0;
 
   return 0;
 }
@@ -57,33 +43,35 @@ int mxd_add_transaction(mxd_block_t *block, const uint8_t *transaction_data,
     return -1;
   }
 
-  // Allocate or reallocate transaction array
-  transaction_t *new_transactions =
-      realloc(transactions, (transaction_count + 1) * sizeof(transaction_t));
-  if (!new_transactions) {
-    return -1;
+  if (block->transaction_set_frozen) {
+    return -1; // Cannot add transactions to frozen block
   }
-  transactions = new_transactions;
+
+  // Allocate or reallocate transaction array
+  if (block->transaction_count >= block->transaction_capacity) {
+    uint32_t new_capacity = block->transaction_capacity == 0 ? 10 : block->transaction_capacity * 2;
+    mxd_block_transaction_t *new_transactions =
+        realloc(block->transactions, new_capacity * sizeof(mxd_block_transaction_t));
+    if (!new_transactions) {
+      return -1;
+    }
+    block->transactions = new_transactions;
+    block->transaction_capacity = new_capacity;
+  }
 
   // Allocate memory for transaction data
-  transactions[transaction_count].data = malloc(transaction_length);
-  if (!transactions[transaction_count].data) {
+  block->transactions[block->transaction_count].data = malloc(transaction_length);
+  if (!block->transactions[block->transaction_count].data) {
     return -1;
   }
 
   // Copy transaction data
-  memcpy(transactions[transaction_count].data, transaction_data,
+  memcpy(block->transactions[block->transaction_count].data, transaction_data,
          transaction_length);
-  transactions[transaction_count].length = transaction_length;
-  transaction_count++;
+  block->transactions[block->transaction_count].length = transaction_length;
+  block->transaction_count++;
 
-  // Update merkle root
-  uint8_t hash_buffer[64];
-  if (mxd_sha512(transaction_data, transaction_length, hash_buffer) != 0) {
-    return -1;
-  }
-  memcpy(block->merkle_root, hash_buffer, 64);
-
+  // Merkle root will be calculated when transaction set is frozen
   return 0;
 }
 
@@ -93,23 +81,32 @@ int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]) {
     return -1;
   }
 
-  // Create buffer for block header
-  uint8_t header[sizeof(uint32_t) + 64 + 64 + sizeof(time_t) +
+  // Create buffer for block header with fixed-size fields
+  uint8_t header[sizeof(uint32_t) + 64 + 64 + sizeof(uint64_t) +
                  sizeof(uint32_t) + sizeof(uint64_t)];
   size_t offset = 0;
 
-  // Serialize block header
-  memcpy(header + offset, &block->version, sizeof(uint32_t));
+  // Serialize block header with big-endian byte order for deterministic hashing
+  uint32_t version_be = htonl(block->version);
+  memcpy(header + offset, &version_be, sizeof(uint32_t));
   offset += sizeof(uint32_t);
+  
   memcpy(header + offset, block->prev_block_hash, 64);
   offset += 64;
+  
   memcpy(header + offset, block->merkle_root, 64);
   offset += 64;
-  memcpy(header + offset, &block->timestamp, sizeof(time_t));
-  offset += sizeof(time_t);
-  memcpy(header + offset, &block->difficulty, sizeof(uint32_t));
+  
+  uint64_t timestamp_be = mxd_htonll(block->timestamp);
+  memcpy(header + offset, &timestamp_be, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
+  
+  uint32_t difficulty_be = htonl(block->difficulty);
+  memcpy(header + offset, &difficulty_be, sizeof(uint32_t));
   offset += sizeof(uint32_t);
-  memcpy(header + offset, &block->nonce, sizeof(uint64_t));
+  
+  uint64_t nonce_be = mxd_htonll(block->nonce);
+  memcpy(header + offset, &nonce_be, sizeof(uint64_t));
 
   // Calculate double SHA-512 hash
   uint8_t temp_hash[64];
@@ -130,8 +127,8 @@ int mxd_validate_block(const mxd_block_t *block) {
     return -1;
   }
 
-  // Verify timestamp
-  time_t current_time = time(NULL);
+  // Verify timestamp using NTP-synchronized time
+  uint64_t current_time = mxd_now_ms() / 1000;
   if (block->timestamp > current_time + 7200 ||  // Max 2 hours in future
       block->timestamp < current_time - 86400) { // Max 24 hours in past
     return -1;
@@ -160,6 +157,43 @@ int mxd_freeze_transaction_set(mxd_block_t *block) {
     return 0; // Already frozen
   }
   
+  // Calculate merkle root over all transactions
+  if (block->transaction_count == 0) {
+    // No transactions - use zero hash
+    memset(block->merkle_root, 0, 64);
+  } else if (block->transaction_count == 1) {
+    // Single transaction - hash it directly
+    if (mxd_sha512(block->transactions[0].data, block->transactions[0].length, block->merkle_root) != 0) {
+      return -1;
+    }
+  } else {
+    // Multiple transactions - build merkle tree
+    // For simplicity, concatenate all transaction hashes and hash the result
+    // This is a simplified merkle root (not a full merkle tree)
+    size_t total_hash_size = block->transaction_count * 64;
+    uint8_t *hash_buffer = malloc(total_hash_size);
+    if (!hash_buffer) {
+      return -1;
+    }
+    
+    // Hash each transaction
+    for (uint32_t i = 0; i < block->transaction_count; i++) {
+      if (mxd_sha512(block->transactions[i].data, block->transactions[i].length, 
+                     hash_buffer + (i * 64)) != 0) {
+        free(hash_buffer);
+        return -1;
+      }
+    }
+    
+    // Hash all transaction hashes together to get merkle root
+    if (mxd_sha512(hash_buffer, total_hash_size, block->merkle_root) != 0) {
+      free(hash_buffer);
+      return -1;
+    }
+    
+    free(hash_buffer);
+  }
+  
   // Mark as frozen - merkle_root is now immutable
   block->transaction_set_frozen = 1;
   return 0;
@@ -177,9 +211,9 @@ mxd_amount_t mxd_calculate_total_tip_from_frozen_set(const mxd_block_t *block) {
   
   mxd_amount_t total_tip = 0;
   
-  for (size_t i = 0; i < transaction_count; i++) {
+  for (uint32_t i = 0; i < block->transaction_count; i++) {
     mxd_amount_t tip = 0;
-    if (mxd_peek_voluntary_tip_from_bytes(transactions[i].data, transactions[i].length, &tip) == 0) {
+    if (mxd_peek_voluntary_tip_from_bytes(block->transactions[i].data, block->transactions[i].length, &tip) == 0) {
       total_tip += tip;
     }
   }

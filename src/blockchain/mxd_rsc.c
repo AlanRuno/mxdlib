@@ -1568,7 +1568,7 @@ int mxd_try_coordinate_genesis_block(void) {
         }
         
         genesis_block.height = 0;
-        genesis_block.total_supply = 0.0;
+        genesis_block.total_supply = 0; // Genesis has no supply yet
         memcpy(genesis_block.proposer_id, local_genesis_address, 20);
         
         if (mxd_freeze_transaction_set(&genesis_block) != 0) {
@@ -1640,7 +1640,7 @@ int mxd_try_coordinate_genesis_block(void) {
     }
     
     genesis_block.height = 0;
-    genesis_block.total_supply = 0.0;
+    genesis_block.total_supply = 0; // Genesis has no supply yet
     memcpy(genesis_block.proposer_id, local_genesis_address, 20);
     
     if (mxd_freeze_transaction_set(&genesis_block) != 0) {
@@ -1651,7 +1651,7 @@ int mxd_try_coordinate_genesis_block(void) {
     
     uint64_t current_time;
     if (mxd_get_network_time(&current_time) != 0) {
-        current_time = time(NULL);
+        current_time = mxd_now_ms(); // Use NTP-synchronized time in milliseconds
     }
     
     for (size_t i = 0; i < collected_signature_count && i < 3; i++) {
