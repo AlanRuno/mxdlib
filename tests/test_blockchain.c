@@ -32,8 +32,9 @@ static void test_transaction_handling(void) {
   TEST_ASSERT(mxd_init_block(&block, prev_hash) == 0, "Block initialization successful");
   TEST_ASSERT(mxd_add_transaction(&block, transaction_data,
                              sizeof(transaction_data)) == 0, "Transaction added successfully");
+  TEST_ASSERT(mxd_freeze_transaction_set(&block) == 0, "Transaction set frozen");
 
-  // Verify merkle root was updated
+  // Verify merkle root was updated after freezing
   TEST_ARRAY("Updated merkle root", block.merkle_root, 64);
   int is_zero = 1;
   for (int i = 0; i < 64; i++) {
