@@ -134,7 +134,7 @@ static uint64_t parse_leb128_u(const uint8_t **ptr, const uint8_t *end) {
 static int64_t parse_leb128_s(const uint8_t **ptr, const uint8_t *end) {
     int64_t result = 0;
     int shift = 0;
-    uint8_t byte;
+    uint8_t byte = 0;  // Initialize to avoid uninitialized variable warning
     
     while (*ptr < end) {
         byte = **ptr;
