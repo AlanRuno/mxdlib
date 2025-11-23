@@ -239,7 +239,9 @@ uint64_t mxd_calculate_gas(const uint8_t *code, size_t code_size) {
   }
 
   // Simple gas calculation based on code size
-  // TODO: Implement proper gas metering
+  // TODO: Implement proper gas metering with WASM3 instruction counting
+  // WARNING: Current implementation (code_size * 10) is NOT production-ready
+  // Without proper gas metering, malicious contracts can cause DoS attacks
   return code_size * 10;
 }
 
@@ -257,7 +259,9 @@ int mxd_get_contract_storage(const mxd_contract_state_t *state,
   }
 
   // Simple key-value storage implementation (use memcpy to avoid misaligned access)
-  // TODO: Implement proper storage with merkle trees
+  // TODO: Implement proper storage with merkle patricia trie for verifiable state
+  // WARNING: Current implementation uses linear search without merkle verification
+  // This is NOT production-ready - no integrity verification and poor performance
   size_t offset = 0;
   while (offset < state->storage_size) {
     size_t stored_key_size;

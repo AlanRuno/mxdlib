@@ -170,7 +170,8 @@ int mxd_init_monitoring(uint16_t http_port) {
     current_health.database_connected = 1;
     current_health.p2p_active = 1;
     current_health.consensus_active = 1;
-    strcpy(current_health.status_message, "System operational");
+    strncpy(current_health.status_message, "System operational", sizeof(current_health.status_message) - 1);
+    current_health.status_message[sizeof(current_health.status_message) - 1] = '\0';
     current_health.last_check_timestamp = time(NULL);
     
     global_config = mxd_get_config();

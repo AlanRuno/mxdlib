@@ -117,7 +117,8 @@ int mxd_create_blockchain_backup(const char *db_path, mxd_backup_info_t *backup_
     
     if (calculate_file_checksum(backup_info->backup_path, backup_info->checksum) != 0) {
         MXD_LOG_WARN("backup", "Failed to calculate backup checksum");
-        strcpy(backup_info->checksum, "unknown");
+        strncpy(backup_info->checksum, "unknown", sizeof(backup_info->checksum) - 1);
+        backup_info->checksum[sizeof(backup_info->checksum) - 1] = '\0';
     }
     
     backup_info->is_valid = 1;
