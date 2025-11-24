@@ -1,6 +1,7 @@
 #include "mxd_replay.h"
 #include "../../include/mxd_logging.h"
 #include "../../include/mxd_config.h"
+#include "../../include/mxd_ntp.h"
 #include "../metrics/mxd_prometheus.h"
 #include <string.h>
 #include <time.h>
@@ -54,7 +55,12 @@ int mxd_replay_check(const uint8_t challenge[32], uint64_t timestamp) {
         return -1;
     }
     
-    uint64_t current_time = (uint64_t)time(NULL);
+    // Use NTP-synchronized time for replay detection
+    uint64_t current_time_ms = 0;
+    if (mxd_get_network_time(&current_time_ms) != 0) {
+        current_time_ms = (uint64_t)time(NULL) * 1000;
+    }
+    uint64_t current_time = current_time_ms / 1000;
     mxd_config_t* config = mxd_get_config();
     uint32_t tolerance = 60;
     if (config && config->p2p_security.timestamp_tolerance_seconds > 0) {
@@ -117,7 +123,12 @@ int mxd_replay_record(const uint8_t challenge[32], uint64_t timestamp) {
     if (slot >= 0) {
         memcpy(replay_cache[slot].challenge, challenge, 32);
         replay_cache[slot].timestamp = timestamp;
-        replay_cache[slot].seen_at = (uint64_t)time(NULL);
+        // Use NTP-synchronized time for seen_at timestamp
+        uint64_t seen_at_ms = 0;
+        if (mxd_get_network_time(&seen_at_ms) != 0) {
+            seen_at_ms = (uint64_t)time(NULL) * 1000;
+        }
+        replay_cache[slot].seen_at = seen_at_ms / 1000;
         replay_cache[slot].active = 1;
         
         if (slot >= (int)replay_cache_count) {
@@ -137,7 +148,12 @@ void mxd_replay_cleanup_expired(void) {
         return;
     }
     
-    uint64_t current_time = (uint64_t)time(NULL);
+    // Use NTP-synchronized time for cleanup
+    uint64_t current_time_ms = 0;
+    if (mxd_get_network_time(&current_time_ms) != 0) {
+        current_time_ms = (uint64_t)time(NULL) * 1000;
+    }
+    uint64_t current_time = current_time_ms / 1000;
     size_t cleaned = 0;
     
     for (size_t i = 0; i < replay_cache_count; i++) {
