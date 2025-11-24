@@ -193,6 +193,10 @@ int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t
 }
 
 // Update rapid table entries and recalculate rankings
+// CRITICAL FIX: Rapid table updates should be tied to block signing events
+// This function should only be called when a block reaches quorum (not arbitrarily)
+// The blockchain-based state requirement means rapid table modifications must occur
+// at block signing events, not at arbitrary times.
 int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t total_stake) {
     if (!nodes || node_count == 0 || total_stake == 0) {
         return -1;
@@ -433,6 +437,33 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
         if (memcmp(block->validation_chain[i].validator_id, validator_id, 20) == 0) {
             return -1;
         }
+    }
+    
+    // BLOCKER FIX: Verify signature content before adding to block
+    // Signature must be over "block_hash + previous_validator_id + timestamp"
+    uint8_t msg[64 + 20 + 8];
+    memcpy(msg, block->block_hash, 64);
+    if (block->validation_count == 0) {
+        memset(msg + 64, 0, 20);
+    } else {
+        memcpy(msg + 64, block->validation_chain[block->validation_count - 1].validator_id, 20);
+    }
+    // CRITICAL FIX: Use big-endian encoding for timestamp (consistent with rest of codebase)
+    uint64_t ts_be = mxd_htonll(timestamp);
+    memcpy(msg + 64 + 20, &ts_be, 8);
+    
+    // Get validator's public key
+    uint8_t pubbuf[4096];
+    size_t publen = 0;
+    if (mxd_get_validator_public_key(validator_id, pubbuf, sizeof(pubbuf), &publen) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to get validator public key for signature verification");
+        return -1;
+    }
+    
+    // Verify signature
+    if (mxd_sig_verify(algo_id, signature, signature_length, msg, sizeof(msg), pubbuf) != 0) {
+        MXD_LOG_ERROR("rsc", "Signature verification failed for validator");
+        return -1;
     }
     
     if (!block->validation_chain) {
@@ -974,6 +1005,7 @@ int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, mxd_amount_t tot
     return 1;
 }
 
+// MINOR FIX: Document time unit consistency - MXD_NODE_EXPIRY_TIME is in seconds (1 week = 604800 seconds)
 #define MXD_NODE_EXPIRY_TIME 604800
 
 int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *block, 

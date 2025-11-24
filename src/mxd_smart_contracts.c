@@ -5,6 +5,7 @@
 #include "../include/mxd_config.h"
 #include "../include/mxd_gas_metering.h"
 #include "../include/mxd_merkle_trie.h"
+#include "../include/mxd_endian.h"
 #include "metrics/mxd_prometheus.h"
 #include <stdlib.h>
 #include <string.h>
@@ -152,8 +153,16 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     return -1;
   }
 
+  // RISKY FIX: Enforce gas limits during contract execution
   // Simple gas calculation based on input size
   uint64_t gas_used = 100 + input_size;
+  
+  // Check if gas limit would be exceeded before execution
+  if (gas_used > state->gas_limit) {
+    MXD_LOG_ERROR("contracts", "Gas limit exceeded before execution: %lu > %lu", gas_used, state->gas_limit);
+    mxd_metrics_increment("contract_execution_errors_total");
+    return -1;
+  }
 
   uint32_t input_val = *(const uint32_t *)input;
   res = m3_CallV(func, input_val);
@@ -262,22 +271,30 @@ int mxd_get_contract_storage(const mxd_contract_state_t *state,
     return -1;
   }
 
+  // MINOR FIX: Document contract storage linear search limitation
   // Simple key-value storage implementation (use memcpy to avoid misaligned access)
   // TODO: Implement proper storage with merkle patricia trie for verifiable state
   // WARNING: Current implementation uses linear search without merkle verification
-  // This is NOT production-ready - no integrity verification and poor performance
+  // This is NOT production-ready for the following reasons:
+  // 1. Linear search has O(n) complexity - performance degrades with storage size
+  // 2. No merkle verification means state transitions cannot be cryptographically proven
+  // 3. No indexing or caching - every lookup scans from the beginning
+  // For production use, implement a merkle patricia trie or similar authenticated data structure
   size_t offset = 0;
   while (offset < state->storage_size) {
-    size_t stored_key_size;
-    memcpy(&stored_key_size, state->storage + offset, sizeof(size_t));
-    offset += sizeof(size_t);
+    // CRITICAL FIX: Use endian conversion for size_t values for cross-platform compatibility
+    uint64_t stored_key_size_be;
+    memcpy(&stored_key_size_be, state->storage + offset, sizeof(uint64_t));
+    size_t stored_key_size = (size_t)mxd_ntohll(stored_key_size_be);
+    offset += sizeof(uint64_t);
 
     if (stored_key_size == key_size &&
         memcmp(state->storage + offset, key, key_size) == 0) {
       offset += stored_key_size;
-      size_t stored_value_size;
-      memcpy(&stored_value_size, state->storage + offset, sizeof(size_t));
-      offset += sizeof(size_t);
+      uint64_t stored_value_size_be;
+      memcpy(&stored_value_size_be, state->storage + offset, sizeof(uint64_t));
+      size_t stored_value_size = (size_t)mxd_ntohll(stored_value_size_be);
+      offset += sizeof(uint64_t);
 
       if (stored_value_size > *value_size) {
         return -1;
@@ -289,9 +306,10 @@ int mxd_get_contract_storage(const mxd_contract_state_t *state,
     }
 
     offset += stored_key_size;
-    size_t stored_value_size;
-    memcpy(&stored_value_size, state->storage + offset, sizeof(size_t));
-    offset += sizeof(size_t) + stored_value_size;
+    uint64_t stored_value_size_be;
+    memcpy(&stored_value_size_be, state->storage + offset, sizeof(uint64_t));
+    size_t stored_value_size = (size_t)mxd_ntohll(stored_value_size_be);
+    offset += sizeof(uint64_t) + stored_value_size;
   }
 
   return -1;
@@ -310,8 +328,8 @@ int mxd_set_contract_storage(mxd_contract_state_t *state, const uint8_t *key,
     return -1;
   }
 
-  // Calculate new storage size
-  size_t entry_size = sizeof(size_t) + key_size + sizeof(size_t) + value_size;
+  // CRITICAL FIX: Calculate new storage size using fixed-size uint64_t instead of platform-dependent size_t
+  size_t entry_size = sizeof(uint64_t) + key_size + sizeof(uint64_t) + value_size;
   size_t new_size = state->storage_size + entry_size;
 
   // Reallocate storage
@@ -320,14 +338,16 @@ int mxd_set_contract_storage(mxd_contract_state_t *state, const uint8_t *key,
     return -1;
   }
 
-  // Add new entry (use memcpy to avoid misaligned access)
+  // CRITICAL FIX: Add new entry with endian conversion for cross-platform compatibility
   size_t offset = state->storage_size;
-  memcpy(new_storage + offset, &key_size, sizeof(size_t));
-  offset += sizeof(size_t);
+  uint64_t key_size_be = mxd_htonll((uint64_t)key_size);
+  memcpy(new_storage + offset, &key_size_be, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
   memcpy(new_storage + offset, key, key_size);
   offset += key_size;
-  memcpy(new_storage + offset, &value_size, sizeof(size_t));
-  offset += sizeof(size_t);
+  uint64_t value_size_be = mxd_htonll((uint64_t)value_size);
+  memcpy(new_storage + offset, &value_size_be, sizeof(uint64_t));
+  offset += sizeof(uint64_t);
   memcpy(new_storage + offset, value, value_size);
 
   // Update state
