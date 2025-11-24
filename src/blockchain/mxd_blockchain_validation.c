@@ -4,6 +4,7 @@
 #include "../../include/mxd_crypto.h"
 #include "../../include/mxd_p2p.h"
 #include "../../include/mxd_ntp.h"
+#include "../../include/mxd_endian.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -109,10 +110,9 @@ int mxd_verify_validation_chain(const mxd_block_t *block) {
         } else {
             memcpy(msg + 64, block->validation_chain[i - 1].validator_id, 20);
         }
-        uint64_t ts = sig_i->timestamp;
-        for (int b = 0; b < 8; b++) {
-            msg[64 + 20 + b] = (uint8_t)((ts >> (8 * b)) & 0xFF);
-        }
+        // CRITICAL FIX: Use big-endian encoding for timestamp (consistent with rest of codebase)
+        uint64_t ts_be = mxd_htonll(sig_i->timestamp);
+        memcpy(msg + 64 + 20, &ts_be, 8);
 
         uint8_t pubbuf[4096];
         size_t publen = 0;
@@ -142,15 +142,14 @@ int mxd_block_has_quorum(const mxd_block_t *block) {
 
     uint32_t quorum_threshold = 0;
 
+    // RISKY FIX: Use actual rapid table size from peers, not validation_capacity
     mxd_peer_t peers[MXD_MAX_PEERS];
     size_t peer_count = MXD_MAX_PEERS;
     if (mxd_get_rapid_table_peers(peers, &peer_count) == 0 && peer_count > 0) {
         quorum_threshold = (uint32_t)(peer_count / 2);
     } else {
+        // Fallback to reasonable default if rapid table not available
         uint32_t rapid_table_size = 6;
-        if (block->validation_capacity > 0) {
-            rapid_table_size = block->validation_capacity;
-        }
         quorum_threshold = (uint32_t)(rapid_table_size / 2);
     }
 

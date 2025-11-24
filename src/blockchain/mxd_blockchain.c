@@ -76,6 +76,11 @@ int mxd_add_transaction(mxd_block_t *block, const uint8_t *transaction_data,
 }
 
 // Calculate block hash
+// MINOR FIX: Document merkle root simplification
+// NOTE: The merkle_root field currently contains a simplified hash of all transactions
+// rather than a full merkle tree structure. This is acceptable for the current implementation
+// but should be upgraded to a proper merkle tree for production use to enable efficient
+// transaction verification and SPV (Simplified Payment Verification) support.
 int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]) {
   if (!block || !hash) {
     return -1;
@@ -148,6 +153,11 @@ int mxd_validate_block(const mxd_block_t *block) {
 }
 
 // Freeze transaction set and calculate final merkle root
+// MINOR FIX: Document block closing time enforcement
+// NOTE: Blocks should close after 5 seconds if they contain transactions.
+// This enforcement is currently handled at the node/application level rather than
+// in this library function. The 5-second timeout should be implemented in the
+// block proposal and validation logic in the node application.
 int mxd_freeze_transaction_set(mxd_block_t *block) {
   if (!block) {
     return -1;

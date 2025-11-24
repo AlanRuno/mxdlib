@@ -2,6 +2,7 @@
 
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_crypto.h"
+#include "../include/mxd_endian.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,12 +29,14 @@ static size_t lru_cache_count = 0;
 static uint64_t *lru_access_counter = NULL;
 static uint64_t current_access_count = 0;
 
+// BLOCKER FIX: Serialize UTXO with proper endian conversion
 static int serialize_utxo(const mxd_utxo_t *utxo, uint8_t **data, size_t *data_len) {
     if (!utxo || !data || !data_len) {
         return -1;
     }
 
-    size_t size = sizeof(mxd_utxo_t);
+    // Calculate size with field-by-field serialization
+    size_t size = 64 + 4 + 20 + 8 + 4 + 4 + 1; // tx_hash + output_index + owner_key + amount + required_signatures + cosigner_count + is_spent
     if (utxo->cosigner_count > 0 && utxo->cosigner_keys) {
         size += utxo->cosigner_count * 20;
     }
@@ -43,31 +46,80 @@ static int serialize_utxo(const mxd_utxo_t *utxo, uint8_t **data, size_t *data_l
         return -1;
     }
 
-    memcpy(*data, utxo, sizeof(mxd_utxo_t));
+    uint8_t *ptr = *data;
+    
+    // Serialize with big-endian byte order for cross-platform compatibility
+    memcpy(ptr, utxo->tx_hash, 64); ptr += 64;
+    
+    uint32_t output_index_be = htonl(utxo->output_index);
+    memcpy(ptr, &output_index_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    
+    memcpy(ptr, utxo->owner_key, 20); ptr += 20;
+    
+    uint64_t amount_be = mxd_htonll(utxo->amount);
+    memcpy(ptr, &amount_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    
+    uint32_t required_sigs_be = htonl(utxo->required_signatures);
+    memcpy(ptr, &required_sigs_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    
+    uint32_t cosigner_count_be = htonl(utxo->cosigner_count);
+    memcpy(ptr, &cosigner_count_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    
+    memcpy(ptr, &utxo->is_spent, 1); ptr += 1;
     
     if (utxo->cosigner_count > 0 && utxo->cosigner_keys) {
-        memcpy(*data + sizeof(mxd_utxo_t), utxo->cosigner_keys, utxo->cosigner_count * 20);
+        memcpy(ptr, utxo->cosigner_keys, utxo->cosigner_count * 20);
+        ptr += utxo->cosigner_count * 20;
     }
 
     *data_len = size;
     return 0;
 }
 
+// BLOCKER FIX: Deserialize UTXO with proper endian conversion
 static int deserialize_utxo(const uint8_t *data, size_t data_len, mxd_utxo_t *utxo) {
-    if (!data || !utxo || data_len < sizeof(mxd_utxo_t)) {
+    size_t min_size = 64 + 4 + 20 + 8 + 4 + 4 + 1;
+    if (!data || !utxo || data_len < min_size) {
         return -1;
     }
 
-    memcpy(utxo, data, sizeof(mxd_utxo_t));
+    const uint8_t *ptr = data;
+    
+    // Deserialize with big-endian byte order conversion
+    memcpy(utxo->tx_hash, ptr, 64); ptr += 64;
+    
+    uint32_t output_index_be;
+    memcpy(&output_index_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    utxo->output_index = ntohl(output_index_be);
+    
+    memcpy(utxo->owner_key, ptr, 20); ptr += 20;
+    
+    uint64_t amount_be;
+    memcpy(&amount_be, ptr, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    utxo->amount = mxd_ntohll(amount_be);
+    
+    uint32_t required_sigs_be;
+    memcpy(&required_sigs_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    utxo->required_signatures = ntohl(required_sigs_be);
+    
+    uint32_t cosigner_count_be;
+    memcpy(&cosigner_count_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    utxo->cosigner_count = ntohl(cosigner_count_be);
+    
+    memcpy(&utxo->is_spent, ptr, 1); ptr += 1;
     
     utxo->cosigner_keys = NULL;
     
-    if (utxo->cosigner_count > 0 && data_len > sizeof(mxd_utxo_t)) {
-        utxo->cosigner_keys = malloc(utxo->cosigner_count * 20);
+    if (utxo->cosigner_count > 0) {
+        size_t cosigner_size = utxo->cosigner_count * 20;
+        if (data_len < min_size + cosigner_size) {
+            return -1;
+        }
+        utxo->cosigner_keys = malloc(cosigner_size);
         if (!utxo->cosigner_keys) {
             return -1;
         }
-        memcpy(utxo->cosigner_keys, data + sizeof(mxd_utxo_t), utxo->cosigner_count * 20);
+        memcpy(utxo->cosigner_keys, ptr, cosigner_size);
     }
 
     return 0;
@@ -286,6 +338,24 @@ int mxd_init_utxo_db(const char *db_path) {
     utxo_count = 0;
     pruned_count = 0;
     total_value = 0;
+    
+    // RISKY FIX: Load persisted UTXO statistics on startup
+    uint8_t stats_key[] = "utxo_stats";
+    char *value = NULL;
+    size_t value_len = 0;
+    err = NULL;
+    value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), 
+                       (char *)stats_key, sizeof(stats_key) - 1, &value_len, &err);
+    if (value && value_len == sizeof(size_t) * 2 + sizeof(mxd_amount_t)) {
+        memcpy(&utxo_count, value, sizeof(size_t));
+        memcpy(&pruned_count, value + sizeof(size_t), sizeof(size_t));
+        memcpy(&total_value, value + sizeof(size_t) * 2, sizeof(mxd_amount_t));
+        free(value);
+    } else if (err) {
+        free(err);
+    } else if (value) {
+        free(value);
+    }
     
     utxo_db_initialized = 1;
     pthread_mutex_unlock(&db_init_mutex);
@@ -832,6 +902,22 @@ int mxd_get_utxo_stats(size_t *total_count, size_t *pruned_count_out, mxd_amount
     utxo_count = count;
     pruned_count = pruned;
     total_value = value;
+    
+    // RISKY FIX: Persist UTXO statistics to database for restart recovery
+    uint8_t stats_key[] = "utxo_stats";
+    uint8_t stats_data[sizeof(size_t) * 2 + sizeof(mxd_amount_t)];
+    memcpy(stats_data, &utxo_count, sizeof(size_t));
+    memcpy(stats_data + sizeof(size_t), &pruned_count, sizeof(size_t));
+    memcpy(stats_data + sizeof(size_t) * 2, &total_value, sizeof(mxd_amount_t));
+    
+    char *err = NULL;
+    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(),
+               (char *)stats_key, sizeof(stats_key) - 1,
+               (char *)stats_data, sizeof(stats_data), &err);
+    if (err) {
+        MXD_LOG_ERROR("utxo", "Failed to persist UTXO statistics: %s", err);
+        free(err);
+    }
     
     return 0;
 }
