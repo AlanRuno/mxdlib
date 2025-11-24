@@ -419,3 +419,30 @@ int mxd_block_is_finalized(const mxd_block_t *block) {
   // The exact quorum check is done by mxd_block_has_validation_quorum in mxd_rsc.c
   return block->validation_count > 0;
 }
+
+// Free all dynamically allocated memory in a block
+void mxd_free_block(mxd_block_t *block) {
+  if (!block) {
+    return;
+  }
+
+  // Free transaction data buffers
+  for (uint32_t i = 0; i < block->transaction_count; i++) {
+    if (block->transactions[i].data) {
+      free(block->transactions[i].data);
+      block->transactions[i].data = NULL;
+    }
+    block->transactions[i].length = 0;
+  }
+
+  // Free transactions array
+  if (block->transactions) {
+    free(block->transactions);
+    block->transactions = NULL;
+  }
+  block->transaction_count = 0;
+  block->transaction_capacity = 0;
+
+  // Reuse existing cleanup for validation chain + membership entries
+  mxd_free_validation_chain(block);
+}

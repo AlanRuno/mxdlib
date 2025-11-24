@@ -155,7 +155,7 @@ static int64_t parse_leb128_s(const uint8_t **ptr, const uint8_t *end) {
     
     // Sign extend if needed
     if (shift < 64 && (byte & 0x40)) {
-        result |= -(1LL << shift);
+        result |= -(1ULL << shift);
     }
     
     return result;

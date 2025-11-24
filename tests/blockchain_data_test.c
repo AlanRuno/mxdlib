@@ -89,6 +89,13 @@ static void test_blockchain_data_retrieval(void) {
             error_count++;
             TEST_ERROR_COUNT(error_count, 10);
         }
+        
+        mxd_free_block(&retrieved_block);
+    }
+    
+    // Free test blocks
+    for (int i = 0; i < 5; i++) {
+        mxd_free_block(&blocks[i]);
     }
     
     // Cleanup
