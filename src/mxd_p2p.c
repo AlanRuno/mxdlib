@@ -64,6 +64,7 @@ static pthread_t server_thread;
 static pthread_t connection_threads[MXD_MAX_PEERS];
 static volatile int server_running = 0;
 static pthread_mutex_t peer_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t rate_limit_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
     int socket;
@@ -428,12 +429,14 @@ static void update_unified_peer_algo(const char *address, uint16_t port, uint8_t
 }
 
 static void reset_rate_limit(void) {
+    pthread_mutex_lock(&rate_limit_mutex);
     last_message_time = 0;
     messages_this_second = 0;
     last_tx_time = 0;
     tx_this_second = 0;
     consecutive_errors = 0;
     error_simulation_count = 0;
+    pthread_mutex_unlock(&rate_limit_mutex);
 }
 
 // Public function to reset rate limiting
@@ -549,6 +552,8 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
 static int check_rate_limit(mxd_message_type_t type) {
     uint64_t current_time = time(NULL);
 
+    pthread_mutex_lock(&rate_limit_mutex);
+    
     // Reset counters if time has changed
     if (current_time != last_message_time) {
         last_message_time = current_time;
@@ -563,17 +568,20 @@ static int check_rate_limit(mxd_message_type_t type) {
     if (type == MXD_MSG_TRANSACTIONS) {
         // Allow exactly 10 transactions per second
         if (tx_this_second >= 10) {
+            pthread_mutex_unlock(&rate_limit_mutex);
             return -1;
         }
         tx_this_second++;
     } else {
         // Allow exactly 100 messages per second
         if (messages_this_second >= 100) {
+            pthread_mutex_unlock(&rate_limit_mutex);
             return -1;
         }
         messages_this_second++;
     }
 
+    pthread_mutex_unlock(&rate_limit_mutex);
     return 0;
 }
 

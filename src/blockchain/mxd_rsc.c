@@ -1005,7 +1005,8 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
         // Check if node already exists in table
         int found = 0;
         for (size_t j = 0; j < table->count; j++) {
-            if (table->nodes[j] && memcmp(table->nodes[j]->node_id, entry->node_address, 20) == 0) {
+            // Compare node_address fields directly (both are 20-byte binary)
+            if (table->nodes[j] && memcmp(table->nodes[j]->node_address, entry->node_address, 20) == 0) {
                 // Update last activity timestamp
                 table->nodes[j]->metrics.last_update = entry->timestamp;
                 found = 1;
@@ -1121,6 +1122,7 @@ static size_t collected_signature_count = 0;
 static uint8_t pending_genesis_digest[64] = {0};
 static int genesis_sign_request_sent = 0;
 static int genesis_locked = 0;
+static pthread_mutex_t genesis_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey, uint8_t algo_id) {
     if (!local_address || !local_pubkey || !local_privkey) {
@@ -1291,9 +1293,13 @@ int mxd_handle_genesis_announce(uint8_t algo_id, const uint8_t *node_address, co
     }
     MXD_LOG_INFO("rsc", "Signature verification passed for %s", addr_hex);
     
+    // Protect genesis globals with mutex
+    pthread_mutex_lock(&genesis_mutex);
+    
     for (size_t i = 0; i < pending_genesis_count; i++) {
         if (memcmp(pending_genesis_members[i].node_address, node_address, 20) == 0) {
             MXD_LOG_DEBUG("rsc", "Genesis member already registered");
+            pthread_mutex_unlock(&genesis_mutex);
             return 0;
         }
     }
@@ -1302,6 +1308,7 @@ int mxd_handle_genesis_announce(uint8_t algo_id, const uint8_t *node_address, co
         size_t new_capacity = pending_genesis_capacity * 2;
         mxd_genesis_member_t *new_members = realloc(pending_genesis_members, new_capacity * sizeof(mxd_genesis_member_t));
         if (!new_members) {
+            pthread_mutex_unlock(&genesis_mutex);
             return -1;
         }
         pending_genesis_members = new_members;
@@ -1317,24 +1324,35 @@ int mxd_handle_genesis_announce(uint8_t algo_id, const uint8_t *node_address, co
     member->signature_length = signature_length;
     pending_genesis_count++;
     
+    size_t count = pending_genesis_count;
+    pthread_mutex_unlock(&genesis_mutex);
+    
     if (mxd_test_register_validator_pubkey(node_address, public_key, pubkey_len) != 0) {
         MXD_LOG_WARN("rsc", "Failed to register validator pubkey for genesis member");
     }
     
-    MXD_LOG_INFO("rsc", "Registered genesis member (%zu/%d)", pending_genesis_count, 3);
+    MXD_LOG_INFO("rsc", "Registered genesis member (%zu/%d)", count, 3);
     return 0;
 }
 
 int mxd_get_pending_genesis_count(void) {
-    return (int)pending_genesis_count;
+    pthread_mutex_lock(&genesis_mutex);
+    int count = (int)pending_genesis_count;
+    pthread_mutex_unlock(&genesis_mutex);
+    return count;
 }
 
 int mxd_is_genesis_locked(void) {
-    return genesis_locked;
+    pthread_mutex_lock(&genesis_mutex);
+    int locked = genesis_locked;
+    pthread_mutex_unlock(&genesis_mutex);
+    return locked;
 }
 
 void mxd_set_genesis_locked(int locked) {
+    pthread_mutex_lock(&genesis_mutex);
     genesis_locked = locked;
+    pthread_mutex_unlock(&genesis_mutex);
 }
 
 int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char *local_node_id) {

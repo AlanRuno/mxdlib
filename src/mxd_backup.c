@@ -22,6 +22,33 @@ static int create_directory(const char *path) {
     return 0;
 }
 
+static int copy_file(const char *src, const char *dst) {
+    FILE *src_file = fopen(src, "rb");
+    if (!src_file) {
+        return -1;
+    }
+    
+    FILE *dst_file = fopen(dst, "wb");
+    if (!dst_file) {
+        fclose(src_file);
+        return -1;
+    }
+    
+    char buffer[8192];
+    size_t bytes;
+    while ((bytes = fread(buffer, 1, sizeof(buffer), src_file)) > 0) {
+        if (fwrite(buffer, 1, bytes, dst_file) != bytes) {
+            fclose(src_file);
+            fclose(dst_file);
+            return -1;
+        }
+    }
+    
+    fclose(src_file);
+    fclose(dst_file);
+    return 0;
+}
+
 static int calculate_file_checksum(const char *filepath, char *checksum) {
     FILE *file = fopen(filepath, "rb");
     if (!file) {
@@ -99,10 +126,8 @@ int mxd_create_blockchain_backup(const char *db_path, mxd_backup_info_t *backup_
     snprintf(backup_info->backup_path, sizeof(backup_info->backup_path),
              "%s/blockchain_backup_%s.db", backup_config.backup_dir, timestamp_str);
     
-    char copy_command[1024];
-    snprintf(copy_command, sizeof(copy_command), "cp -r \"%s\" \"%s\"", db_path, backup_info->backup_path);
-    
-    if (system(copy_command) != 0) {
+    // Use native file copy instead of system()
+    if (copy_file(db_path, backup_info->backup_path) != 0) {
         MXD_LOG_ERROR("backup", "Failed to create backup: %s", backup_info->backup_path);
         return -1;
     }
@@ -139,10 +164,8 @@ int mxd_restore_blockchain_backup(const char *backup_path, const char *restore_p
         return -1;
     }
     
-    char copy_command[1024];
-    snprintf(copy_command, sizeof(copy_command), "cp -r \"%s\" \"%s\"", backup_path, restore_path);
-    
-    if (system(copy_command) != 0) {
+    // Use native file copy instead of system()
+    if (copy_file(backup_path, restore_path) != 0) {
         MXD_LOG_ERROR("backup", "Failed to restore backup: %s -> %s", backup_path, restore_path);
         return -1;
     }
@@ -223,10 +246,8 @@ int mxd_create_config_backup(const char *config_path) {
     snprintf(backup_path, sizeof(backup_path), "%s/config_backup_%s.json", 
              backup_config.backup_dir, timestamp_str);
     
-    char copy_command[1024];
-    snprintf(copy_command, sizeof(copy_command), "cp \"%s\" \"%s\"", config_path, backup_path);
-    
-    if (system(copy_command) != 0) {
+    // Use native file copy instead of system()
+    if (copy_file(config_path, backup_path) != 0) {
         MXD_LOG_ERROR("backup", "Failed to create config backup: %s", backup_path);
         return -1;
     }
@@ -240,10 +261,8 @@ int mxd_restore_config_backup(const char *backup_path, const char *restore_path)
         return -1;
     }
     
-    char copy_command[1024];
-    snprintf(copy_command, sizeof(copy_command), "cp \"%s\" \"%s\"", backup_path, restore_path);
-    
-    if (system(copy_command) != 0) {
+    // Use native file copy instead of system()
+    if (copy_file(backup_path, restore_path) != 0) {
         MXD_LOG_ERROR("backup", "Failed to restore config backup: %s -> %s", backup_path, restore_path);
         return -1;
     }

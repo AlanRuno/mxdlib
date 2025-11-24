@@ -7,6 +7,7 @@
 #include "../include/mxd_logging.h"
 #include "../include/mxd_transaction.h"
 #include "../include/mxd_utxo.h"
+#include "../include/mxd_ntp.h"
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
@@ -267,7 +268,12 @@ int mxd_verify_and_add_validation_signature(mxd_block_t *block,
         return -1;
     }
     
-    uint64_t current_time = time(NULL);
+    // Use NTP-synchronized time for timestamp validation
+    uint64_t current_time_ms = 0;
+    if (mxd_get_network_time(&current_time_ms) != 0) {
+        current_time_ms = (uint64_t)time(NULL) * 1000;
+    }
+    uint64_t current_time = current_time_ms / 1000;
     uint64_t drift = (timestamp > current_time) ? 
                      (timestamp - current_time) : 
                      (current_time - timestamp);
