@@ -27,7 +27,7 @@
 // Validation chain thresholds
 #define MXD_MIN_RELAY_SIGNATURES 3     // Minimum signatures required for relay (X=3)
 #define MXD_VALIDATION_EXPIRY 5        // Validation signatures expire after 5 blocks
-#define MXD_BLACKLIST_DURATION 100     // Default blacklist duration (in blocks) - Per spec: ban for 100 blocks
+#define MXD_BLACKLIST_DURATION 1000    // Default blacklist duration (in blocks) - Per Phase 4 spec: ban for 1000 blocks
 #define MXD_MAX_TIMESTAMP_DRIFT_MS 60000ULL  // Maximum timestamp drift allowed (in milliseconds)
 
 #include "../../include/mxd_rocksdb_globals.h"
