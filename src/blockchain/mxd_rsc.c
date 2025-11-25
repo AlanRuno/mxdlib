@@ -7,6 +7,7 @@
 #include "../../include/mxd_p2p.h"
 #include "../../include/mxd_endian.h"
 #include "../../include/mxd_rocksdb_globals.h"
+#include "../../include/mxd_config.h"
 #include "../metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,8 +28,17 @@
 // Validation chain thresholds
 #define MXD_MIN_RELAY_SIGNATURES 3     // Minimum signatures required for relay (X=3)
 #define MXD_VALIDATION_EXPIRY 5        // Validation signatures expire after 5 blocks
-#define MXD_BLACKLIST_DURATION 1000    // Default blacklist duration (in blocks) - Per Phase 4 spec: ban for 1000 blocks
+#define MXD_BLACKLIST_DURATION_DEFAULT 1000    // Default blacklist duration (in blocks) - Per Phase 4 spec: ban for 1000 blocks
 #define MXD_MAX_TIMESTAMP_DRIFT_MS 60000ULL  // Maximum timestamp drift allowed (in milliseconds)
+
+// Helper function to get blacklist duration from config or use default
+static uint32_t get_blacklist_duration(void) {
+    mxd_config_t *config = mxd_get_config();
+    if (config && config->consensus.blacklist_duration_blocks > 0) {
+        return config->consensus.blacklist_duration_blocks;
+    }
+    return MXD_BLACKLIST_DURATION_DEFAULT;
+}
 
 #include "../../include/mxd_rocksdb_globals.h"
 
@@ -217,6 +227,47 @@ int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, mxd_amoun
     qsort(nodes, node_count, sizeof(mxd_node_stake_t), compare_nodes);
 
     return 0;
+}
+
+int mxd_update_rapid_table_rankings(mxd_rapid_table_t *table) {
+    if (!table || !table->nodes || table->count == 0) {
+        return -1;
+    }
+    
+    size_t total_count = 0;
+    size_t pruned_count = 0;
+    mxd_amount_t total_stake = 0;
+    if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_stake) != 0 || total_stake == 0) {
+        MXD_LOG_WARN("rsc", "Could not get UTXO stats for rapid table update");
+        return -1;
+    }
+    
+    mxd_node_stake_t *flat_nodes = malloc(table->count * sizeof(mxd_node_stake_t));
+    if (!flat_nodes) {
+        return -1;
+    }
+    
+    for (size_t i = 0; i < table->count; i++) {
+        if (table->nodes[i]) {
+            memcpy(&flat_nodes[i], table->nodes[i], sizeof(mxd_node_stake_t));
+        } else {
+            memset(&flat_nodes[i], 0, sizeof(mxd_node_stake_t));
+        }
+    }
+    
+    int result = mxd_update_rapid_table(flat_nodes, table->count, total_stake);
+    
+    if (result == 0) {
+        for (size_t i = 0; i < table->count; i++) {
+            if (table->nodes[i]) {
+                memcpy(table->nodes[i], &flat_nodes[i], sizeof(mxd_node_stake_t));
+            }
+        }
+        MXD_LOG_DEBUG("rsc", "Updated rapid table rankings for %zu nodes", table->count);
+    }
+    
+    free(flat_nodes);
+    return result;
 }
 
 // Get node performance statistics
@@ -624,8 +675,9 @@ int mxd_validator_signed_conflicting_blocks(const uint8_t validator_id[20], uint
                     MXD_LOG_WARN("rsc", "Double-signing detected: validator signed conflicting blocks at height %u", height);
                     mxd_metrics_increment("validator_double_sign_detected_total");
                     
-                    if (mxd_blacklist_validator(validator_id, MXD_BLACKLIST_DURATION) == 0) {
-                        MXD_LOG_INFO("rsc", "Validator automatically blacklisted for %d blocks due to double-signing", MXD_BLACKLIST_DURATION);
+                    uint32_t blacklist_duration = get_blacklist_duration();
+                    if (mxd_blacklist_validator(validator_id, blacklist_duration) == 0) {
+                        MXD_LOG_INFO("rsc", "Validator automatically blacklisted for %u blocks due to double-signing", blacklist_duration);
                     }
                 }
                 
@@ -656,7 +708,7 @@ int mxd_blacklist_validator(const uint8_t validator_id[20], uint32_t duration) {
         return -1;
     }
     
-    uint32_t expiry_height = current_height + (duration > 0 ? duration : MXD_BLACKLIST_DURATION);
+    uint32_t expiry_height = current_height + (duration > 0 ? duration : get_blacklist_duration());
     
     uint8_t key[10 + 20];
     memcpy(key, "blacklist:", 10);
@@ -1127,6 +1179,9 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
     if (mxd_get_network_time(&current_time) == 0) {
         mxd_remove_expired_nodes(table, current_time);
     }
+    
+    // Update rapid table rankings after rebuilding from blockchain
+    mxd_update_rapid_table_rankings(table);
     
     return 0;
 }

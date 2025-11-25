@@ -49,7 +49,7 @@ Implements the Rapid Stake Consensus mechanism with Validation Chain Protocol:
 - Rapid table management for validator selection
 - Cumulative latency weight calculation for fork resolution (Σ(1/latency_i))
 - Timestamp drift verification (±60 seconds)
-- Validator blacklisting for double-signing (100-block ban period)
+- Validator blacklisting for double-signing (1000-block ban period)
 - Performance-based incentive system with voluntary tips
 - RocksDB persistence for validation chain storage
 

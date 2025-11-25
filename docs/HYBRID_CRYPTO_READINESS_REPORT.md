@@ -499,7 +499,7 @@ int mxd_init_genesis_coordination(const uint8_t *local_address,
 **Alignment with Validation Chain Protocol Requirements:**
 - ✅ Block relay threshold: X=3 signatures (MXD_MIN_RELAY_SIGNATURES)
 - ✅ Timestamp drift: ±60 seconds (MXD_MAX_TIMESTAMP_DRIFT_MS)
-- ✅ Validator blacklisting: 100 blocks (MXD_BLACKLIST_DURATION)
+- ✅ Validator blacklisting: 1000 blocks (MXD_BLACKLIST_DURATION)
 - ⚠️ Cumulative latency weight calculation: Not yet implemented (see note below)
 
 **Note on Cumulative Latency Weight:**
@@ -776,7 +776,7 @@ None - No blocking issues found
 
 8. **Comprehensive Bounds Checking** - Deserialization code validates lengths against maximums and buffer sizes.
 
-9. **Validation Chain Protocol Alignment** - Implementation includes block relay threshold (X=3), timestamp drift validation (±60s), and validator blacklisting (100 blocks).
+9. **Validation Chain Protocol Alignment** - Implementation includes block relay threshold (X=3), timestamp drift validation (±60s), and validator blacklisting (1000 blocks).
 
 ---
 

@@ -16,7 +16,7 @@ Consensus and Validation
 
 Security and Blacklisting
 - Double-sign detection and blacklisting
-  - Documentation: If a validator signs two different blocks at same height with ≥3 confirmations, ban for 100 blocks and exclude from Rapid Table.
+  - Documentation: If a validator signs two different blocks at same height with ≥3 confirmations, ban for 1000 blocks and exclude from Rapid Table.
   - Implementation: Conflict checks and structures in src/blockchain/mxd_rsc.c; blacklist handling integrated with validation logic; persistence/logging integration to be expanded.
 
 Cryptography
