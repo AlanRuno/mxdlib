@@ -1,9 +1,80 @@
 #include "../include/mxd_block_proposer.h"
 #include "../include/mxd_blockchain.h"
 #include "../include/mxd_logging.h"
+#include "../include/mxd_serialize.h"
+#include "../include/mxd_transaction.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+
+// Helper function to serialize a transaction for block storage
+// Returns allocated buffer that must be freed by caller, or NULL on error
+static uint8_t* serialize_transaction_for_block(const mxd_transaction_t* tx, size_t* out_len) {
+    if (!tx || !out_len) return NULL;
+    
+    // Calculate total size needed
+    size_t size = 0;
+    size += 4;  // version (u32)
+    size += 4;  // input_count (u32)
+    size += 4;  // output_count (u32)
+    size += 8;  // voluntary_tip (u64)
+    size += 8;  // timestamp (u64)
+    size += 1;  // is_coinbase (u8)
+    size += 64; // tx_hash
+    
+    // Calculate input sizes
+    for (uint32_t i = 0; i < tx->input_count; i++) {
+        size += 64;  // prev_tx_hash
+        size += 4;   // output_index (u32)
+        size += 1;   // algo_id (u8)
+        size += 2;   // public_key_length (u16)
+        size += tx->inputs[i].public_key_length;
+        size += 2;   // signature_length (u16)
+        size += tx->inputs[i].signature_length;
+    }
+    
+    // Calculate output sizes
+    for (uint32_t i = 0; i < tx->output_count; i++) {
+        size += 20;  // recipient_addr
+        size += 8;   // amount (u64)
+    }
+    
+    uint8_t* buffer = malloc(size);
+    if (!buffer) return NULL;
+    
+    uint8_t* ptr = buffer;
+    
+    // Serialize header fields
+    mxd_write_u32_be(&ptr, tx->version);
+    mxd_write_u32_be(&ptr, tx->input_count);
+    mxd_write_u32_be(&ptr, tx->output_count);
+    mxd_write_u64_be(&ptr, tx->voluntary_tip);
+    mxd_write_u64_be(&ptr, tx->timestamp);
+    mxd_write_u8(&ptr, tx->is_coinbase);
+    mxd_write_bytes(&ptr, tx->tx_hash, 64);
+    
+    // Serialize inputs (including signatures for block storage)
+    for (uint32_t i = 0; i < tx->input_count; i++) {
+        mxd_write_bytes(&ptr, tx->inputs[i].prev_tx_hash, 64);
+        mxd_write_u32_be(&ptr, tx->inputs[i].output_index);
+        mxd_write_u8(&ptr, tx->inputs[i].algo_id);
+        mxd_write_u16_be(&ptr, tx->inputs[i].public_key_length);
+        mxd_write_bytes(&ptr, tx->inputs[i].public_key, tx->inputs[i].public_key_length);
+        mxd_write_u16_be(&ptr, tx->inputs[i].signature_length);
+        if (tx->inputs[i].signature_length > 0 && tx->inputs[i].signature) {
+            mxd_write_bytes(&ptr, tx->inputs[i].signature, tx->inputs[i].signature_length);
+        }
+    }
+    
+    // Serialize outputs
+    for (uint32_t i = 0; i < tx->output_count; i++) {
+        mxd_write_bytes(&ptr, tx->outputs[i].recipient_addr, 20);
+        mxd_write_u64_be(&ptr, tx->outputs[i].amount);
+    }
+    
+    *out_len = size;
+    return buffer;
+}
 
 static mxd_block_proposer_t proposer_state = {0};
 
@@ -66,6 +137,23 @@ int mxd_add_transaction_to_block(const mxd_transaction_t* tx) {
     
     if (proposer_state.current_block->transaction_set_frozen) {
         MXD_LOG_WARN("proposer", "Cannot add transaction to frozen block");
+        return -1;
+    }
+    
+    // Serialize the transaction for block storage
+    size_t tx_data_len = 0;
+    uint8_t* tx_data = serialize_transaction_for_block(tx, &tx_data_len);
+    if (!tx_data) {
+        MXD_LOG_ERROR("proposer", "Failed to serialize transaction for block");
+        return -1;
+    }
+    
+    // Add the serialized transaction to the block
+    int result = mxd_add_transaction(proposer_state.current_block, tx_data, tx_data_len);
+    free(tx_data);
+    
+    if (result != 0) {
+        MXD_LOG_ERROR("proposer", "Failed to add transaction to block");
         return -1;
     }
     

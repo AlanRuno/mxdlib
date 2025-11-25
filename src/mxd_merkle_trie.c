@@ -391,13 +391,128 @@ int mxd_trie_get(const mxd_merkle_trie_t *trie, const uint8_t *key, size_t key_l
     return -1;  // Key not found
 }
 
+// Forward declaration for recursive delete
+static mxd_trie_node_t *delete_recursive(mxd_trie_node_t *node, const uint8_t *key,
+                                         size_t key_len, size_t nibble_offset, int *deleted);
+
 // Delete a key from the trie
 int mxd_trie_delete(mxd_merkle_trie_t *trie, const uint8_t *key, size_t key_len) {
-    // Simplified implementation - full implementation would handle node cleanup
     if (!trie || !key) return -1;
     
-    trie->root_hash_valid = 0;
-    return -1;  // Not implemented in this simplified version
+    if (!trie->root) {
+        return -1;  // Key not found in empty trie
+    }
+    
+    int deleted = 0;
+    trie->root = delete_recursive(trie->root, key, key_len, 0, &deleted);
+    
+    if (deleted) {
+        trie->root_hash_valid = 0;
+        if (trie->node_count > 0) {
+            trie->node_count--;
+        }
+        return 0;
+    }
+    
+    return -1;  // Key not found
+}
+
+// Recursive delete helper
+static mxd_trie_node_t *delete_recursive(mxd_trie_node_t *node, const uint8_t *key,
+                                         size_t key_len, size_t nibble_offset, int *deleted) {
+    if (!node) {
+        *deleted = 0;
+        return NULL;
+    }
+    
+    if (node->type == MXD_TRIE_NODE_LEAF) {
+        // Check if this is the key we're looking for
+        if (node->data.leaf.key_len == key_len &&
+            memcmp(node->data.leaf.key, key, key_len) == 0) {
+            // Found the key - delete this node
+            free(node->data.leaf.key);
+            free(node->data.leaf.value);
+            free(node);
+            *deleted = 1;
+            return NULL;
+        }
+        // Key not found
+        *deleted = 0;
+        return node;
+    }
+    
+    if (node->type == MXD_TRIE_NODE_BRANCH) {
+        uint8_t nibble = get_nibble(key, key_len, nibble_offset);
+        
+        if (nibble >= 16) {
+            // End of key - check if branch has value to delete
+            if (node->data.branch.value) {
+                free(node->data.branch.value);
+                node->data.branch.value = NULL;
+                node->data.branch.value_len = 0;
+                node->hash_valid = 0;
+                *deleted = 1;
+                
+                // Check if branch can be collapsed
+                int child_count = 0;
+                int last_child_index = -1;
+                for (int i = 0; i < 16; i++) {
+                    if (node->data.branch.children[i]) {
+                        child_count++;
+                        last_child_index = i;
+                    }
+                }
+                
+                // If only one child remains and no value, collapse
+                if (child_count == 1 && !node->data.branch.value) {
+                    mxd_trie_node_t *child = node->data.branch.children[last_child_index];
+                    free(node);
+                    return child;
+                }
+                
+                return node;
+            }
+            *deleted = 0;
+            return node;
+        }
+        
+        // Recurse into child
+        node->data.branch.children[nibble] = delete_recursive(
+            node->data.branch.children[nibble], key, key_len, nibble_offset + 1, deleted);
+        
+        if (*deleted) {
+            node->hash_valid = 0;
+            
+            // Check if branch can be collapsed after deletion
+            int child_count = 0;
+            int last_child_index = -1;
+            for (int i = 0; i < 16; i++) {
+                if (node->data.branch.children[i]) {
+                    child_count++;
+                    last_child_index = i;
+                }
+            }
+            
+            // If no children and no value, delete this branch
+            if (child_count == 0 && !node->data.branch.value) {
+                free(node);
+                return NULL;
+            }
+            
+            // If only one child and no value, collapse
+            if (child_count == 1 && !node->data.branch.value) {
+                mxd_trie_node_t *child = node->data.branch.children[last_child_index];
+                free(node);
+                return child;
+            }
+        }
+        
+        return node;
+    }
+    
+    // Extension node - not fully implemented in this version
+    *deleted = 0;
+    return node;
 }
 
 // Calculate and return the merkle root hash of the trie
@@ -433,13 +548,314 @@ int mxd_trie_verify(mxd_merkle_trie_t *trie) {
     return calculate_node_hash(trie->root);
 }
 
-// Serialize/deserialize functions (simplified stubs)
-int mxd_trie_serialize(const mxd_merkle_trie_t *trie, uint8_t *buffer, size_t *buffer_size) {
-    // Stub - full implementation would serialize the entire tree
-    return -1;
+// Forward declaration for recursive serialization
+static int serialize_node(const mxd_trie_node_t *node, uint8_t *buffer, size_t *offset, size_t max_size);
+static mxd_trie_node_t *deserialize_node(const uint8_t *buffer, size_t *offset, size_t buffer_size);
+
+// Calculate size needed to serialize a node
+static size_t calculate_node_size(const mxd_trie_node_t *node) {
+    if (!node) return 1;  // Just type byte for NULL
+    
+    size_t size = 1;  // type byte
+    
+    switch (node->type) {
+        case MXD_TRIE_NODE_LEAF:
+            size += 4 + node->data.leaf.key_len;    // key_len + key
+            size += 4 + node->data.leaf.value_len;  // value_len + value
+            break;
+            
+        case MXD_TRIE_NODE_BRANCH:
+            for (int i = 0; i < 16; i++) {
+                size += calculate_node_size(node->data.branch.children[i]);
+            }
+            size += 4 + node->data.branch.value_len;  // value_len + value
+            break;
+            
+        case MXD_TRIE_NODE_EXTENSION:
+            size += 4 + node->data.extension.key_len;  // key_len + key
+            size += calculate_node_size(node->data.extension.child);
+            break;
+            
+        default:
+            break;
+    }
+    
+    return size;
 }
 
+// Serialize a single node recursively
+static int serialize_node(const mxd_trie_node_t *node, uint8_t *buffer, size_t *offset, size_t max_size) {
+    if (*offset >= max_size) return -1;
+    
+    if (!node) {
+        buffer[(*offset)++] = 0xFF;  // NULL marker
+        return 0;
+    }
+    
+    buffer[(*offset)++] = (uint8_t)node->type;
+    
+    switch (node->type) {
+        case MXD_TRIE_NODE_LEAF: {
+            if (*offset + 4 + node->data.leaf.key_len + 4 + node->data.leaf.value_len > max_size) return -1;
+            
+            // Write key length and key
+            uint32_t key_len = (uint32_t)node->data.leaf.key_len;
+            buffer[(*offset)++] = (key_len >> 24) & 0xFF;
+            buffer[(*offset)++] = (key_len >> 16) & 0xFF;
+            buffer[(*offset)++] = (key_len >> 8) & 0xFF;
+            buffer[(*offset)++] = key_len & 0xFF;
+            memcpy(buffer + *offset, node->data.leaf.key, node->data.leaf.key_len);
+            *offset += node->data.leaf.key_len;
+            
+            // Write value length and value
+            uint32_t value_len = (uint32_t)node->data.leaf.value_len;
+            buffer[(*offset)++] = (value_len >> 24) & 0xFF;
+            buffer[(*offset)++] = (value_len >> 16) & 0xFF;
+            buffer[(*offset)++] = (value_len >> 8) & 0xFF;
+            buffer[(*offset)++] = value_len & 0xFF;
+            memcpy(buffer + *offset, node->data.leaf.value, node->data.leaf.value_len);
+            *offset += node->data.leaf.value_len;
+            break;
+        }
+        
+        case MXD_TRIE_NODE_BRANCH: {
+            // Serialize all 16 children
+            for (int i = 0; i < 16; i++) {
+                if (serialize_node(node->data.branch.children[i], buffer, offset, max_size) != 0) {
+                    return -1;
+                }
+            }
+            
+            // Write value length and value
+            if (*offset + 4 + node->data.branch.value_len > max_size) return -1;
+            uint32_t value_len = (uint32_t)node->data.branch.value_len;
+            buffer[(*offset)++] = (value_len >> 24) & 0xFF;
+            buffer[(*offset)++] = (value_len >> 16) & 0xFF;
+            buffer[(*offset)++] = (value_len >> 8) & 0xFF;
+            buffer[(*offset)++] = value_len & 0xFF;
+            if (node->data.branch.value_len > 0) {
+                memcpy(buffer + *offset, node->data.branch.value, node->data.branch.value_len);
+                *offset += node->data.branch.value_len;
+            }
+            break;
+        }
+        
+        case MXD_TRIE_NODE_EXTENSION: {
+            if (*offset + 4 + node->data.extension.key_len > max_size) return -1;
+            
+            // Write key length and key
+            uint32_t key_len = (uint32_t)node->data.extension.key_len;
+            buffer[(*offset)++] = (key_len >> 24) & 0xFF;
+            buffer[(*offset)++] = (key_len >> 16) & 0xFF;
+            buffer[(*offset)++] = (key_len >> 8) & 0xFF;
+            buffer[(*offset)++] = key_len & 0xFF;
+            memcpy(buffer + *offset, node->data.extension.key, node->data.extension.key_len);
+            *offset += node->data.extension.key_len;
+            
+            // Serialize child
+            if (serialize_node(node->data.extension.child, buffer, offset, max_size) != 0) {
+                return -1;
+            }
+            break;
+        }
+        
+        default:
+            return -1;
+    }
+    
+    return 0;
+}
+
+// Deserialize a single node recursively
+static mxd_trie_node_t *deserialize_node(const uint8_t *buffer, size_t *offset, size_t buffer_size) {
+    if (*offset >= buffer_size) return NULL;
+    
+    uint8_t type = buffer[(*offset)++];
+    
+    if (type == 0xFF) {
+        return NULL;  // NULL marker
+    }
+    
+    mxd_trie_node_t *node = calloc(1, sizeof(mxd_trie_node_t));
+    if (!node) return NULL;
+    
+    node->type = (mxd_trie_node_type_t)type;
+    node->hash_valid = 0;
+    
+    switch (node->type) {
+        case MXD_TRIE_NODE_LEAF: {
+            if (*offset + 4 > buffer_size) { free(node); return NULL; }
+            
+            // Read key length and key
+            uint32_t key_len = ((uint32_t)buffer[*offset] << 24) |
+                              ((uint32_t)buffer[*offset + 1] << 16) |
+                              ((uint32_t)buffer[*offset + 2] << 8) |
+                              (uint32_t)buffer[*offset + 3];
+            *offset += 4;
+            
+            if (*offset + key_len + 4 > buffer_size) { free(node); return NULL; }
+            
+            node->data.leaf.key = malloc(key_len);
+            if (!node->data.leaf.key) { free(node); return NULL; }
+            memcpy(node->data.leaf.key, buffer + *offset, key_len);
+            node->data.leaf.key_len = key_len;
+            *offset += key_len;
+            
+            // Read value length and value
+            uint32_t value_len = ((uint32_t)buffer[*offset] << 24) |
+                                ((uint32_t)buffer[*offset + 1] << 16) |
+                                ((uint32_t)buffer[*offset + 2] << 8) |
+                                (uint32_t)buffer[*offset + 3];
+            *offset += 4;
+            
+            if (*offset + value_len > buffer_size) {
+                free(node->data.leaf.key);
+                free(node);
+                return NULL;
+            }
+            
+            node->data.leaf.value = malloc(value_len);
+            if (!node->data.leaf.value) {
+                free(node->data.leaf.key);
+                free(node);
+                return NULL;
+            }
+            memcpy(node->data.leaf.value, buffer + *offset, value_len);
+            node->data.leaf.value_len = value_len;
+            *offset += value_len;
+            break;
+        }
+        
+        case MXD_TRIE_NODE_BRANCH: {
+            // Deserialize all 16 children
+            for (int i = 0; i < 16; i++) {
+                node->data.branch.children[i] = deserialize_node(buffer, offset, buffer_size);
+            }
+            
+            if (*offset + 4 > buffer_size) {
+                free_node(node);
+                return NULL;
+            }
+            
+            // Read value length and value
+            uint32_t value_len = ((uint32_t)buffer[*offset] << 24) |
+                                ((uint32_t)buffer[*offset + 1] << 16) |
+                                ((uint32_t)buffer[*offset + 2] << 8) |
+                                (uint32_t)buffer[*offset + 3];
+            *offset += 4;
+            
+            if (value_len > 0) {
+                if (*offset + value_len > buffer_size) {
+                    free_node(node);
+                    return NULL;
+                }
+                node->data.branch.value = malloc(value_len);
+                if (!node->data.branch.value) {
+                    free_node(node);
+                    return NULL;
+                }
+                memcpy(node->data.branch.value, buffer + *offset, value_len);
+                node->data.branch.value_len = value_len;
+                *offset += value_len;
+            }
+            break;
+        }
+        
+        case MXD_TRIE_NODE_EXTENSION: {
+            if (*offset + 4 > buffer_size) { free(node); return NULL; }
+            
+            // Read key length and key
+            uint32_t key_len = ((uint32_t)buffer[*offset] << 24) |
+                              ((uint32_t)buffer[*offset + 1] << 16) |
+                              ((uint32_t)buffer[*offset + 2] << 8) |
+                              (uint32_t)buffer[*offset + 3];
+            *offset += 4;
+            
+            if (*offset + key_len > buffer_size) { free(node); return NULL; }
+            
+            node->data.extension.key = malloc(key_len);
+            if (!node->data.extension.key) { free(node); return NULL; }
+            memcpy(node->data.extension.key, buffer + *offset, key_len);
+            node->data.extension.key_len = key_len;
+            *offset += key_len;
+            
+            // Deserialize child
+            node->data.extension.child = deserialize_node(buffer, offset, buffer_size);
+            break;
+        }
+        
+        default:
+            free(node);
+            return NULL;
+    }
+    
+    return node;
+}
+
+// Serialize the entire trie to a buffer
+int mxd_trie_serialize(const mxd_merkle_trie_t *trie, uint8_t *buffer, size_t *buffer_size) {
+    if (!trie || !buffer_size) return -1;
+    
+    // Calculate required size
+    size_t required_size = 4 + 64;  // node_count + root_hash
+    required_size += calculate_node_size(trie->root);
+    
+    // If buffer is NULL, just return required size
+    if (!buffer) {
+        *buffer_size = required_size;
+        return 0;
+    }
+    
+    if (*buffer_size < required_size) {
+        *buffer_size = required_size;
+        return -1;  // Buffer too small
+    }
+    
+    size_t offset = 0;
+    
+    // Write node count
+    uint32_t node_count = (uint32_t)trie->node_count;
+    buffer[offset++] = (node_count >> 24) & 0xFF;
+    buffer[offset++] = (node_count >> 16) & 0xFF;
+    buffer[offset++] = (node_count >> 8) & 0xFF;
+    buffer[offset++] = node_count & 0xFF;
+    
+    // Write root hash
+    memcpy(buffer + offset, trie->root_hash, 64);
+    offset += 64;
+    
+    // Serialize root node
+    if (serialize_node(trie->root, buffer, &offset, *buffer_size) != 0) {
+        return -1;
+    }
+    
+    *buffer_size = offset;
+    return 0;
+}
+
+// Deserialize a trie from a buffer
 mxd_merkle_trie_t *mxd_trie_deserialize(const uint8_t *buffer, size_t buffer_size) {
-    // Stub - full implementation would deserialize the tree
-    return NULL;
+    if (!buffer || buffer_size < 4 + 64) return NULL;
+    
+    mxd_merkle_trie_t *trie = calloc(1, sizeof(mxd_merkle_trie_t));
+    if (!trie) return NULL;
+    
+    size_t offset = 0;
+    
+    // Read node count
+    trie->node_count = ((uint32_t)buffer[offset] << 24) |
+                       ((uint32_t)buffer[offset + 1] << 16) |
+                       ((uint32_t)buffer[offset + 2] << 8) |
+                       (uint32_t)buffer[offset + 3];
+    offset += 4;
+    
+    // Read root hash
+    memcpy(trie->root_hash, buffer + offset, 64);
+    offset += 64;
+    trie->root_hash_valid = 1;
+    
+    // Deserialize root node
+    trie->root = deserialize_node(buffer, &offset, buffer_size);
+    
+    return trie;
 }
