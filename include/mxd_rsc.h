@@ -56,6 +56,8 @@ int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t
 
 int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t total_stake);
 
+int mxd_update_rapid_table_rankings(mxd_rapid_table_t *table);
+
 int mxd_get_node_stats(const mxd_node_stake_t *node, mxd_node_metrics_t *stats);
 
 int mxd_validate_node_performance(const mxd_node_stake_t *node, uint64_t current_time);
