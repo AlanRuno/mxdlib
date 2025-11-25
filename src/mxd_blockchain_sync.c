@@ -8,6 +8,8 @@
 #include "../include/mxd_transaction.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_ntp.h"
+#include "../include/mxd_serialize.h"
+#include "../include/mxd_blockchain.h"
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
@@ -47,17 +49,119 @@ static uint32_t mxd_discover_network_height(void) {
     return max_height;
 }
 
+// Callback storage for peer height responses
+static volatile uint32_t pending_peer_height = 0;
+static volatile int peer_height_received = 0;
+
+// Called by P2P layer when height response is received
+void mxd_handle_peer_height_response(const uint8_t *data, size_t data_len) {
+    if (data && data_len >= 4) {
+        const uint8_t *ptr = data;
+        pending_peer_height = mxd_read_u32_be(&ptr);
+        peer_height_received = 1;
+    }
+}
+
 static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t *height) {
     if (!address || !height) return -1;
     
-    uint8_t request[4] = {0};
+    // Reset response state
+    peer_height_received = 0;
+    pending_peer_height = 0;
+    
+    // Send height request to peer using GET_BLOCKS with height=0 to request current height
+    uint8_t request[8];
+    uint8_t *ptr = request;
+    mxd_write_u32_be(&ptr, 0);  // start_height = 0 (request height info)
+    mxd_write_u32_be(&ptr, 0);  // end_height = 0 (request height info only)
+    
     if (mxd_send_message_with_retry(address, port, MXD_MSG_GET_BLOCKS, 
                                     request, sizeof(request), 3) != 0) {
+        MXD_LOG_DEBUG("sync", "Failed to send height request to peer %s:%u", address, port);
+        *height = 0;
         return -1;
     }
     
+    // Wait for response with timeout (up to 3 seconds)
+    int wait_ms = 0;
+    while (!peer_height_received && wait_ms < 3000) {
+        struct timespec ts = {0, 50000000}; // 50ms
+        nanosleep(&ts, NULL);
+        wait_ms += 50;
+    }
+    
+    if (peer_height_received) {
+        *height = pending_peer_height;
+        MXD_LOG_DEBUG("sync", "Peer %s:%u reported height: %u", address, port, *height);
+        return 0;
+    }
+    
+    MXD_LOG_DEBUG("sync", "Timeout waiting for height from peer %s:%u", address, port);
     *height = 0;
-    return 0;
+    return -1;
+}
+
+// Callback storage for block responses
+static mxd_block_t *pending_blocks = NULL;
+static volatile uint32_t pending_blocks_received = 0;
+static volatile uint32_t pending_blocks_expected = 0;
+
+// Called by P2P layer when block data is received
+void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t block_index) {
+    if (!data || data_len == 0 || !pending_blocks) return;
+    if (block_index >= pending_blocks_expected) return;
+    
+    // Deserialize block from received data
+    mxd_block_t *block = &pending_blocks[block_index];
+    
+    const uint8_t *ptr = data;
+    const uint8_t *end = data + data_len;
+    
+    // Read basic block header fields
+    if (ptr + 4 + 64 + 64 + 8 + 4 + 8 + 64 + 20 + 4 > end) {
+        MXD_LOG_ERROR("sync", "Block data too short for block %u", block_index);
+        return;
+    }
+    
+    block->version = mxd_read_u32_be(&ptr);
+    mxd_read_bytes(&ptr, block->prev_block_hash, 64);
+    mxd_read_bytes(&ptr, block->merkle_root, 64);
+    block->timestamp = mxd_read_u64_be(&ptr);
+    block->difficulty = mxd_read_u32_be(&ptr);
+    block->nonce = mxd_read_u64_be(&ptr);
+    mxd_read_bytes(&ptr, block->block_hash, 64);
+    mxd_read_bytes(&ptr, block->proposer_id, 20);
+    block->height = mxd_read_u32_be(&ptr);
+    
+    // Read transaction count and allocate
+    if (ptr + 4 > end) return;
+    block->transaction_count = mxd_read_u32_be(&ptr);
+    
+    if (block->transaction_count > 0) {
+        block->transactions = calloc(block->transaction_count, sizeof(mxd_block_transaction_t));
+        if (!block->transactions) {
+            block->transaction_count = 0;
+            return;
+        }
+        block->transaction_capacity = block->transaction_count;
+        
+        // Read each transaction
+        for (uint32_t i = 0; i < block->transaction_count; i++) {
+            if (ptr + 4 > end) break;
+            uint32_t tx_len = mxd_read_u32_be(&ptr);
+            
+            if (ptr + tx_len > end || tx_len == 0) break;
+            
+            block->transactions[i].data = malloc(tx_len);
+            if (!block->transactions[i].data) break;
+            
+            mxd_read_bytes(&ptr, block->transactions[i].data, tx_len);
+            block->transactions[i].length = tx_len;
+        }
+    }
+    
+    pending_blocks_received++;
+    MXD_LOG_DEBUG("sync", "Received block %u (height %u)", block_index, block->height);
 }
 
 static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count) {
@@ -78,19 +182,51 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
         return NULL;
     }
     
+    // Set up callback storage
+    pending_blocks = blocks;
+    pending_blocks_received = 0;
+    pending_blocks_expected = count;
+    
+    // Try to request blocks from connected peers
+    int request_sent = 0;
     for (size_t i = 0; i < peer_count && i < 3; i++) {
         if (peers[i].state == MXD_PEER_CONNECTED) {
             uint8_t request[8];
-            uint32_t start_be = htonl(start_height);
-            uint32_t end_be = htonl(end_height);
-            memcpy(request, &start_be, 4);
-            memcpy(request + 4, &end_be, 4);
+            uint8_t *ptr = request;
+            mxd_write_u32_be(&ptr, start_height);
+            mxd_write_u32_be(&ptr, end_height);
             
             if (mxd_send_message_with_retry(peers[i].address, peers[i].port, 
                                            MXD_MSG_GET_BLOCKS, request, sizeof(request), 2) == 0) {
+                MXD_LOG_DEBUG("sync", "Requested blocks %u-%u from peer %s:%u", 
+                             start_height, end_height, peers[i].address, peers[i].port);
+                request_sent = 1;
                 break;
             }
         }
+    }
+    
+    if (!request_sent) {
+        MXD_LOG_ERROR("sync", "Failed to send block request to any peer");
+        free(blocks);
+        pending_blocks = NULL;
+        return NULL;
+    }
+    
+    // Wait for blocks with timeout (up to 30 seconds for large ranges)
+    int wait_ms = 0;
+    int timeout_ms = 30000;
+    while (pending_blocks_received < count && wait_ms < timeout_ms) {
+        struct timespec ts = {0, 100000000}; // 100ms
+        nanosleep(&ts, NULL);
+        wait_ms += 100;
+    }
+    
+    pending_blocks = NULL;
+    
+    if (pending_blocks_received < count) {
+        MXD_LOG_WARN("sync", "Only received %u of %u blocks", pending_blocks_received, count);
+        // Still return what we got - caller will validate
     }
     
     *block_count = count;
@@ -99,6 +235,116 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
 
 static int mxd_apply_block_transactions(const mxd_block_t *block) {
     if (!block) return -1;
+    
+    // Apply each transaction in the block to the UTXO state
+    for (uint32_t i = 0; i < block->transaction_count; i++) {
+        if (!block->transactions[i].data || block->transactions[i].length == 0) {
+            MXD_LOG_WARN("sync", "Skipping empty transaction at index %u", i);
+            continue;
+        }
+        
+        // Deserialize the transaction from block storage format
+        mxd_transaction_t tx;
+        memset(&tx, 0, sizeof(mxd_transaction_t));
+        
+        const uint8_t *ptr = block->transactions[i].data;
+        const uint8_t *end = ptr + block->transactions[i].length;
+        
+        // Read header fields
+        if (ptr + 4 + 4 + 4 + 8 + 8 + 1 + 64 > end) {
+            MXD_LOG_ERROR("sync", "Transaction data too short at index %u", i);
+            continue;
+        }
+        
+        tx.version = mxd_read_u32_be(&ptr);
+        tx.input_count = mxd_read_u32_be(&ptr);
+        tx.output_count = mxd_read_u32_be(&ptr);
+        tx.voluntary_tip = mxd_read_u64_be(&ptr);
+        tx.timestamp = mxd_read_u64_be(&ptr);
+        tx.is_coinbase = mxd_read_u8(&ptr);
+        mxd_read_bytes(&ptr, tx.tx_hash, 64);
+        
+        // Allocate and read inputs
+        if (tx.input_count > 0) {
+            tx.inputs = calloc(tx.input_count, sizeof(mxd_tx_input_t));
+            if (!tx.inputs) {
+                MXD_LOG_ERROR("sync", "Failed to allocate inputs for transaction %u", i);
+                continue;
+            }
+            
+            for (uint32_t j = 0; j < tx.input_count; j++) {
+                if (ptr + 64 + 4 + 1 + 2 > end) {
+                    mxd_free_transaction(&tx);
+                    MXD_LOG_ERROR("sync", "Transaction input data truncated at index %u", i);
+                    goto next_tx;
+                }
+                
+                mxd_read_bytes(&ptr, tx.inputs[j].prev_tx_hash, 64);
+                tx.inputs[j].output_index = mxd_read_u32_be(&ptr);
+                tx.inputs[j].algo_id = mxd_read_u8(&ptr);
+                tx.inputs[j].public_key_length = mxd_read_u16_be(&ptr);
+                
+                if (ptr + tx.inputs[j].public_key_length + 2 > end) {
+                    mxd_free_transaction(&tx);
+                    goto next_tx;
+                }
+                
+                tx.inputs[j].public_key = malloc(tx.inputs[j].public_key_length);
+                if (!tx.inputs[j].public_key) {
+                    mxd_free_transaction(&tx);
+                    goto next_tx;
+                }
+                mxd_read_bytes(&ptr, tx.inputs[j].public_key, tx.inputs[j].public_key_length);
+                
+                tx.inputs[j].signature_length = mxd_read_u16_be(&ptr);
+                if (tx.inputs[j].signature_length > 0) {
+                    if (ptr + tx.inputs[j].signature_length > end) {
+                        mxd_free_transaction(&tx);
+                        goto next_tx;
+                    }
+                    tx.inputs[j].signature = malloc(tx.inputs[j].signature_length);
+                    if (!tx.inputs[j].signature) {
+                        mxd_free_transaction(&tx);
+                        goto next_tx;
+                    }
+                    mxd_read_bytes(&ptr, tx.inputs[j].signature, tx.inputs[j].signature_length);
+                }
+            }
+        }
+        
+        // Allocate and read outputs
+        if (tx.output_count > 0) {
+            tx.outputs = calloc(tx.output_count, sizeof(mxd_tx_output_t));
+            if (!tx.outputs) {
+                mxd_free_transaction(&tx);
+                MXD_LOG_ERROR("sync", "Failed to allocate outputs for transaction %u", i);
+                continue;
+            }
+            
+            for (uint32_t j = 0; j < tx.output_count; j++) {
+                if (ptr + 20 + 8 > end) {
+                    mxd_free_transaction(&tx);
+                    goto next_tx;
+                }
+                mxd_read_bytes(&ptr, tx.outputs[j].recipient_addr, 20);
+                tx.outputs[j].amount = mxd_read_u64_be(&ptr);
+            }
+        }
+        
+        // Apply the transaction to UTXO state
+        if (mxd_apply_transaction_to_utxo(&tx) != 0) {
+            MXD_LOG_ERROR("sync", "Failed to apply transaction %u to UTXO state", i);
+            mxd_free_transaction(&tx);
+            return -1;
+        }
+        
+        mxd_free_transaction(&tx);
+        continue;
+        
+    next_tx:
+        MXD_LOG_ERROR("sync", "Failed to deserialize transaction %u", i);
+        continue;
+    }
     
     return 0;
 }

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdarg.h>
+#include <pthread.h>
 
 static mxd_log_config_t current_config = {
     .level = MXD_LOG_INFO,
@@ -14,17 +15,21 @@ static mxd_log_config_t current_config = {
 
 static FILE *log_file = NULL;
 static int logging_initialized = 0;
+static pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static const char* level_strings[] = {
     "ERROR", "WARN", "INFO", "DEBUG"
 };
 
+// Thread-local storage for timestamp buffer to ensure thread safety
+static __thread char tls_timestamp[32];
+
 static const char* get_timestamp(void) {
-    static char timestamp[32];
     time_t now = time(NULL);
-    struct tm *tm_info = gmtime(&now);
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", tm_info);
-    return timestamp;
+    struct tm tm_info;
+    gmtime_r(&now, &tm_info);  // Thread-safe version of gmtime
+    strftime(tls_timestamp, sizeof(tls_timestamp), "%Y-%m-%dT%H:%M:%SZ", &tm_info);
+    return tls_timestamp;
 }
 
 int mxd_init_logging(const mxd_log_config_t *config) {
@@ -66,6 +71,9 @@ void mxd_log(mxd_log_level_t level, const char *component, const char *format, .
     
     const char *timestamp = get_timestamp();
     
+    // Lock mutex for thread-safe file and console output
+    pthread_mutex_lock(&log_mutex);
+    
     if (current_config.enable_json) {
         char json_log[2048];
         snprintf(json_log, sizeof(json_log),
@@ -95,6 +103,8 @@ void mxd_log(mxd_log_level_t level, const char *component, const char *format, .
             fflush(log_file);
         }
     }
+    
+    pthread_mutex_unlock(&log_mutex);
     
     va_end(args);
 }

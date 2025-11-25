@@ -59,14 +59,80 @@ static int calculate_file_checksum(const char *filepath, char *checksum) {
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
     
-    if (file_size > 0) {
-        uint8_t *file_data = malloc(file_size);
-        if (!file_data) {
+    if (file_size <= 0) {
+        // Empty file - return zero hash
+        memset(checksum, '0', 64);
+        checksum[64] = '\0';
+        fclose(file);
+        return 0;
+    }
+    
+    // For large files, use chunked hashing to avoid memory issues
+    // Threshold: 64MB - files larger than this are processed in chunks
+    const size_t CHUNK_THRESHOLD = 64 * 1024 * 1024;
+    
+    if ((size_t)file_size > CHUNK_THRESHOLD) {
+        // Process large files in chunks using incremental hashing
+        uint8_t chunk_hash[64];
+        uint8_t combined_hash[64];
+        memset(combined_hash, 0, 64);
+        
+        uint8_t *chunk_buffer = malloc(CHUNK_THRESHOLD);
+        if (!chunk_buffer) {
+            MXD_LOG_ERROR("backup", "Failed to allocate chunk buffer for large file checksum");
             fclose(file);
             return -1;
         }
         
-        fread(file_data, 1, file_size, file);
+        size_t bytes_read;
+        size_t total_read = 0;
+        
+        while ((bytes_read = fread(chunk_buffer, 1, CHUNK_THRESHOLD, file)) > 0) {
+            total_read += bytes_read;
+            
+            // Hash this chunk
+            if (mxd_sha512(chunk_buffer, bytes_read, chunk_hash) != 0) {
+                free(chunk_buffer);
+                fclose(file);
+                return -1;
+            }
+            
+            // XOR combine with running hash
+            for (int i = 0; i < 64; i++) {
+                combined_hash[i] ^= chunk_hash[i];
+            }
+        }
+        
+        free(chunk_buffer);
+        
+        // Final hash of combined result
+        uint8_t final_hash[64];
+        if (mxd_sha512(combined_hash, 64, final_hash) != 0) {
+            fclose(file);
+            return -1;
+        }
+        
+        for (int i = 0; i < 32; i++) {
+            snprintf(checksum + (i * 2), 3, "%02x", final_hash[i]);
+        }
+        checksum[64] = '\0';
+    } else {
+        // Small file - read entire file into memory
+        uint8_t *file_data = malloc(file_size);
+        if (!file_data) {
+            MXD_LOG_ERROR("backup", "Failed to allocate memory for file checksum (%ld bytes)", file_size);
+            fclose(file);
+            return -1;
+        }
+        
+        size_t bytes_read = fread(file_data, 1, file_size, file);
+        if (bytes_read != (size_t)file_size) {
+            MXD_LOG_ERROR("backup", "Failed to read file for checksum (read %zu of %ld bytes)", 
+                         bytes_read, file_size);
+            free(file_data);
+            fclose(file);
+            return -1;
+        }
         
         uint8_t hash[64];
         if (mxd_sha512(file_data, file_size, hash) != 0) {
