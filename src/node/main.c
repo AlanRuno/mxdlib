@@ -8,6 +8,8 @@
 #include <time.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include "../include/mxd_config.h"
 #include "../include/mxd_metrics.h"
 #include "../include/mxd_dht.h"
@@ -279,9 +281,21 @@ int main(int argc, char** argv) {
     MXD_LOG_INFO("node", "Rapid table initialized successfully");
     log_memory_usage("after_rapid_table");
     
+    // Ensure data directory exists before initializing databases
+    struct stat st = {0};
+    if (stat(current_config.data_dir, &st) == -1) {
+        MXD_LOG_INFO("node", "Creating data directory: %s", current_config.data_dir);
+        if (mkdir(current_config.data_dir, 0755) == -1) {
+            MXD_LOG_ERROR("node", "Failed to create data directory %s: %s", 
+                         current_config.data_dir, strerror(errno));
+            return 1;
+        }
+    }
+    
     // Initialize UTXO database (required before monitoring/wallet initialization)
     MXD_LOG_INFO("node", "Initializing UTXO database...");
-    const char* utxo_db_path = "/opt/mxd/data/utxo.db";
+    char utxo_db_path[PATH_MAX];
+    snprintf(utxo_db_path, sizeof(utxo_db_path), "%s/utxo.db", current_config.data_dir);
     if (mxd_init_utxo_db(utxo_db_path) != 0) {
         MXD_LOG_ERROR("node", "Failed to initialize UTXO database at %s", utxo_db_path);
         return 1;
