@@ -1,10 +1,16 @@
 #include "../include/mxd_logging.h"
 #include "../include/mxd_config.h"
 #include "../include/mxd_p2p.h"
+#include "../include/mxd_types.h"
 #include <time.h>
 #include <string.h>
 #include <stdio.h>
 #include "metrics_display.h"
+
+// Helper to convert base units (uint64_t) to MXD display value (double)
+static double amount_to_mxd(mxd_amount_t amount) {
+    return (double)amount / (double)MXD_AMOUNT_MULTIPLIER;
+}
 
 void clear_console(void) {
     MXD_LOG_DEBUG("metrics_display", "Clear console");
@@ -56,7 +62,7 @@ void display_node_metrics(const mxd_node_metrics_t* metrics, const mxd_node_stak
     
     MXD_LOG_INFO("metrics_display", "━━━ Node Information ━━━");
     MXD_LOG_INFO("metrics_display", "Node ID: %s", stake->node_id);
-    MXD_LOG_INFO("metrics_display", "Stake: %.2f MXD", stake->stake_amount);
+    MXD_LOG_INFO("metrics_display", "Stake: %.2f MXD", amount_to_mxd(stake->stake_amount));
     MXD_LOG_INFO("metrics_display", "Rank: %d", stake->rank);
     MXD_LOG_INFO("metrics_display", "Status: %s", is_active ? "✓ Active" : "✗ Inactive");
     MXD_LOG_INFO("metrics_display", "Connected Peers: %zu", metrics->peer_count);
@@ -131,7 +137,7 @@ void display_node_metrics(const mxd_node_metrics_t* metrics, const mxd_node_stak
     MXD_LOG_INFO("metrics_display", "Performance Score: %.2f", metrics->performance_score);
     MXD_LOG_INFO("metrics_display", "Messages: %u success / %u total", 
            metrics->message_success, metrics->message_total);
-    MXD_LOG_INFO("metrics_display", "Earnings (Tips): %.6f MXD", metrics->tip_share);
+    MXD_LOG_INFO("metrics_display", "Earnings (Tips): %.6f MXD", amount_to_mxd(metrics->tip_share));
     MXD_LOG_INFO("metrics_display", "");
     
     if (rapid_table && rapid_table->nodes && rapid_table->count > 0) {
@@ -148,7 +154,7 @@ void display_node_metrics(const mxd_node_metrics_t* metrics, const mxd_node_stak
                 snprintf(node_id_short, sizeof(node_id_short), "%.16s", node->node_id);
                 
                 MXD_LOG_INFO("metrics_display", "│%4d│%-18s│%10.2f│  %s   │ %6.2f │",
-                       node->rank, node_id_short, node->stake_amount,
+                       node->rank, node_id_short, amount_to_mxd(node->stake_amount),
                        node->active ? "✓" : "✗", node->metrics.performance_score);
             }
         }
