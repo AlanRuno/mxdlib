@@ -423,6 +423,58 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
 int mxd_fetch_bootstrap_nodes(mxd_config_t* config) {
     if (!config) return -1;
     
+    // Check for environment variable override for bootstrap nodes
+    // Format: MXD_BOOTSTRAP_NODES="ip1:port1,ip2:port2,ip3:port3"
+    const char* env_bootstrap = getenv("MXD_BOOTSTRAP_NODES");
+    if (env_bootstrap && strlen(env_bootstrap) > 0) {
+        MXD_LOG_INFO("config", "Using bootstrap nodes from MXD_BOOTSTRAP_NODES environment variable: %s", env_bootstrap);
+        
+        config->bootstrap_count = 0;
+        char* nodes_copy = strdup(env_bootstrap);
+        if (!nodes_copy) return -1;
+        
+        char* saveptr;
+        char* token = strtok_r(nodes_copy, ",", &saveptr);
+        while (token && config->bootstrap_count < 10) {
+            // Skip leading whitespace
+            while (*token == ' ') token++;
+            
+            char host[256];
+            int port;
+            if (sscanf(token, "%255[^:]:%d", host, &port) == 2) {
+                // Skip if this is our own address
+                const char* public_ip = getenv("MXD_PUBLIC_IP");
+                if (public_ip && strcmp(host, public_ip) == 0 && port == config->port) {
+                    MXD_LOG_DEBUG("config", "Skipping bootstrap node %s:%d (matches our public IP and port)", host, port);
+                    token = strtok_r(NULL, ",", &saveptr);
+                    continue;
+                }
+                
+                snprintf(config->bootstrap_nodes[config->bootstrap_count],
+                        sizeof(config->bootstrap_nodes[0]),
+                        "%s:%d", host, port);
+                
+                mxd_bootstrap_node_t* node_v2 = &config->bootstrap_nodes_v2[config->bootstrap_count];
+                memset(node_v2, 0, sizeof(mxd_bootstrap_node_t));
+                strncpy(node_v2->address, host, sizeof(node_v2->address) - 1);
+                node_v2->port = (uint16_t)port;
+                node_v2->has_crypto_info = 0;
+                
+                MXD_LOG_INFO("config", "Added bootstrap node from env: %s:%d", host, port);
+                config->bootstrap_count++;
+            }
+            token = strtok_r(NULL, ",", &saveptr);
+        }
+        
+        free(nodes_copy);
+        
+        if (config->bootstrap_count > 0) {
+            MXD_LOG_INFO("config", "Loaded %d bootstrap nodes from environment variable", config->bootstrap_count);
+            return 0;
+        }
+        MXD_LOG_WARN("config", "No valid bootstrap nodes in MXD_BOOTSTRAP_NODES, falling back to API");
+    }
+    
     const char* endpoint = strcmp(config->network_type, "testnet") == 0 
         ? "https://mxd.network/bootstrap/test"
         : "https://mxd.network/bootstrap/main";

@@ -99,8 +99,13 @@ int mxd_sync_time(mxd_ntp_info_t *info) {
         uint32_t delay = (uint32_t)(recv_time - send_time);
         
         // Convert NTP timestamp to milliseconds (NTP epoch starts at 1900)
-        uint32_t ntp_secs = ntohl((uint32_t)(packet.trans_ts >> 32));
-        uint32_t ntp_frac = ntohl((uint32_t)(packet.trans_ts & 0xFFFFFFFF));
+        // NTP timestamp is 64-bit: high 32 bits = seconds, low 32 bits = fraction
+        // Both parts are in network byte order (big-endian)
+        uint8_t *ts_bytes = (uint8_t *)&packet.trans_ts;
+        uint32_t ntp_secs = ((uint32_t)ts_bytes[0] << 24) | ((uint32_t)ts_bytes[1] << 16) |
+                           ((uint32_t)ts_bytes[2] << 8) | (uint32_t)ts_bytes[3];
+        uint32_t ntp_frac = ((uint32_t)ts_bytes[4] << 24) | ((uint32_t)ts_bytes[5] << 16) |
+                           ((uint32_t)ts_bytes[6] << 8) | (uint32_t)ts_bytes[7];
         
         // Convert to Unix epoch milliseconds
         uint64_t unix_secs = (uint64_t)ntp_secs - 2208988800ULL;
