@@ -100,7 +100,7 @@ void mxd_set_default_config(mxd_config_t* config) {
     strncpy(config->bootstrap.fallback_nodes[0], "bootstrap1.mxd.network:8000", sizeof(config->bootstrap.fallback_nodes[0]) - 1);
     strncpy(config->bootstrap.fallback_nodes[1], "bootstrap2.mxd.network:8000", sizeof(config->bootstrap.fallback_nodes[1]) - 1);
     strncpy(config->bootstrap.fallback_nodes[2], "bootstrap3.mxd.network:8000", sizeof(config->bootstrap.fallback_nodes[2]) - 1);
-    config->bootstrap.min_subnet_diversity = 2;
+    config->bootstrap.min_subnet_diversity = 1;  // Reduced for testnet single-node bootstrap
     
     config->mempool.max_size = 50000;
     config->mempool.max_tx_per_peer = 100;
