@@ -76,8 +76,10 @@ typedef struct {
     time_t last_keepalive_received;
     int active;
     int keepalive_failures;
-    uint8_t session_token[16];
-    int has_session_token;
+    uint8_t sent_session_token[16];     // Token we sent to peer (for validating incoming messages)
+    uint8_t received_session_token[16]; // Token peer sent to us (for sending outgoing messages)
+    int has_sent_token;
+    int has_received_token;
 } peer_connection_t;
 
 static peer_connection_t active_connections[MXD_MAX_PEERS];
@@ -264,8 +266,8 @@ static int send_on_connection(peer_connection_t *conn, mxd_message_type_t type, 
         .length = payload_length
     };
     
-    if (conn->has_session_token) {
-        memcpy(header.session_token, conn->session_token, 16);
+    if (conn->has_received_token) {
+        memcpy(header.session_token, conn->received_session_token, 16);
     } else {
         memset(header.session_token, 0, 16);
     }
@@ -454,7 +456,7 @@ static peer_connection_t* find_connection(const char *address, uint16_t port) {
     for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
         if (active_connections[i].active && 
             strcmp(active_connections[i].address, address) == 0 &&
-            active_connections[i].port == port) {
+            (active_connections[i].port == port || active_connections[i].peer_listen_port == port)) {
             pthread_mutex_unlock(&peer_mutex);
             return &active_connections[i];
         }
@@ -527,9 +529,10 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
 
     // Session token validation (protocol v3)
     // Allow empty token only for HANDSHAKE and SESSION_TOKEN messages
+    // Validate against the token WE SENT (sent_session_token), not the one we received
     if (header->type != MXD_MSG_HANDSHAKE && header->type != MXD_MSG_SESSION_TOKEN) {
-        if (conn && conn->has_session_token) {
-            if (memcmp(header->session_token, conn->session_token, 16) != 0) {
+        if (conn && conn->has_sent_token) {
+            if (memcmp(header->session_token, conn->sent_session_token, 16) != 0) {
                 MXD_LOG_WARN("p2p", "Session token mismatch for message type %d", header->type);
                 return -1;
             }
@@ -1133,11 +1136,12 @@ static int handle_handshake_message(const char *address, uint16_t port,
         conn->last_keepalive_received = time(NULL);
         conn->keepalive_failures = 0;
         
-        if (RAND_bytes(conn->session_token, 16) != 1) {
+        if (RAND_bytes(conn->sent_session_token, 16) != 1) {
             MXD_LOG_ERROR("p2p", "Failed to generate session token for %s:%d", address, port);
             return -1;
         }
-        conn->has_session_token = 1;
+        conn->has_sent_token = 1;
+        conn->has_received_token = 0;
         
         mxd_handshake_payload_t reply_handshake;
         if (create_signed_handshake(&reply_handshake, NULL, 0) == 0) {
@@ -1151,7 +1155,7 @@ static int handle_handshake_message(const char *address, uint16_t port,
             if (wire_len > 0 && send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, wire_buf, wire_len) == 0) {
                 MXD_LOG_INFO("p2p", "Sent HANDSHAKE reply to %s:%d", address, port);
                 
-                if (send_on_connection(conn, MXD_MSG_SESSION_TOKEN, conn->session_token, 16) == 0) {
+                if (send_on_connection(conn, MXD_MSG_SESSION_TOKEN, conn->sent_session_token, 16) == 0) {
                     MXD_LOG_INFO("p2p", "Sent SESSION_TOKEN to %s:%d", address, port);
                 } else {
                     MXD_LOG_ERROR("p2p", "Failed to send SESSION_TOKEN to %s:%d", address, port);
@@ -1206,8 +1210,8 @@ static int handle_incoming_message(const char *address, uint16_t port,
     switch (header->type) {
         case MXD_MSG_SESSION_TOKEN:
             if (conn && header->length == 16) {
-                memcpy(conn->session_token, payload, 16);
-                conn->has_session_token = 1;
+                memcpy(conn->received_session_token, payload, 16);
+                conn->has_received_token = 1;
                 MXD_LOG_INFO("p2p", "Received SESSION_TOKEN from %s:%d", address, port);
             } else {
                 MXD_LOG_WARN("p2p", "Invalid SESSION_TOKEN from %s:%d", address, port);
@@ -1369,8 +1373,10 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     active_connections[slot].connected_at = time(NULL);
     active_connections[slot].last_keepalive_received = time(NULL);
     active_connections[slot].keepalive_failures = 0;
-    memset(active_connections[slot].session_token, 0, 16);
-    active_connections[slot].has_session_token = 0;
+    memset(active_connections[slot].sent_session_token, 0, 16);
+    memset(active_connections[slot].received_session_token, 0, 16);
+    active_connections[slot].has_sent_token = 0;
+    active_connections[slot].has_received_token = 0;
     active_connection_count++;
     
     pthread_t thread;
@@ -1534,8 +1540,10 @@ static void* keepalive_thread_func(void* arg) {
                 MXD_LOG_WARN("p2p", "Incoming connection %s:%d timed out, closing socket",
                            active_connections[i].address, active_connections[i].port);
                 close(active_connections[i].socket);
-                memset(active_connections[i].session_token, 0, 16);
-                active_connections[i].has_session_token = 0;
+                memset(active_connections[i].sent_session_token, 0, 16);
+                memset(active_connections[i].received_session_token, 0, 16);
+                active_connections[i].has_sent_token = 0;
+                active_connections[i].has_received_token = 0;
                 active_connections[i].active = 0;
                 active_connection_count--;
             }
@@ -1772,8 +1780,10 @@ static void* server_thread_func(void* arg) {
         active_connections[slot].last_keepalive_sent = now;
         active_connections[slot].last_keepalive_received = now;
         active_connections[slot].keepalive_failures = 0;
-        memset(active_connections[slot].session_token, 0, 16);
-        active_connections[slot].has_session_token = 0;
+        memset(active_connections[slot].sent_session_token, 0, 16);
+        memset(active_connections[slot].received_session_token, 0, 16);
+        active_connections[slot].has_sent_token = 0;
+        active_connections[slot].has_received_token = 0;
         active_connections[slot].active = 1;
         
         pthread_attr_t conn_attr;
@@ -2012,8 +2022,10 @@ int mxd_stop_p2p(void) {
     for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
         if (active_connections[i].active) {
             close(active_connections[i].socket);
-            memset(active_connections[i].session_token, 0, 16);
-            active_connections[i].has_session_token = 0;
+            memset(active_connections[i].sent_session_token, 0, 16);
+            memset(active_connections[i].received_session_token, 0, 16);
+            active_connections[i].has_sent_token = 0;
+            active_connections[i].has_received_token = 0;
             active_connections[i].active = 0;
         }
     }
@@ -2182,7 +2194,7 @@ int mxd_send_message(const char* address, uint16_t port,
     int token_ready = 0;
     for (int i = 0; i < 75; i++) {
         pthread_mutex_lock(&peer_mutex);
-        if (conn->active && conn->has_session_token) {
+        if (conn->active && conn->has_received_token) {
             token_ready = 1;
             pthread_mutex_unlock(&peer_mutex);
             break;
