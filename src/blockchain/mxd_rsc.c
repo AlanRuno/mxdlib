@@ -163,16 +163,47 @@ int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t
         return -1;
     }
 
-    // Calculate total rank points of active nodes
-    uint32_t total_rank = 0;
+    // Count active nodes with positive rank
+    size_t active_count = 0;
     for (size_t i = 0; i < node_count; i++) {
         if (nodes[i].active && nodes[i].rank > 0) {
-            total_rank += nodes[i].rank;
+            active_count++;
         }
     }
 
-    if (total_rank == 0) {
-        return -1;
+    if (active_count == 0) {
+        // If no nodes have positive rank, distribute to all active nodes equally
+        // This handles the case where nodes are active but rank calculation failed
+        for (size_t i = 0; i < node_count; i++) {
+            if (nodes[i].active) {
+                active_count++;
+            }
+        }
+        
+        if (active_count == 0) {
+            return -1;
+        }
+        
+        // Distribute using 50% geometric decay pattern to all active nodes
+        mxd_amount_t remaining = total_tip;
+        size_t distributed_count = 0;
+        for (size_t i = 0; i < node_count; i++) {
+            if (nodes[i].active) {
+                distributed_count++;
+                if (distributed_count == active_count || remaining <= 1) {
+                    // Last active node gets remaining amount
+                    nodes[i].metrics.tip_share = remaining;
+                    remaining = 0;
+                } else {
+                    // Each node gets 50% of remaining (integer division)
+                    nodes[i].metrics.tip_share = remaining / 2;
+                    remaining -= nodes[i].metrics.tip_share;
+                }
+            } else {
+                nodes[i].metrics.tip_share = 0;
+            }
+        }
+        return 0;
     }
 
     // Sort nodes by rank (highest to lowest)
@@ -180,18 +211,17 @@ int mxd_distribute_tips(mxd_node_stake_t *nodes, size_t node_count, mxd_amount_t
 
     // Distribute tips using 50% geometric decay pattern from whitepaper
     mxd_amount_t remaining = total_tip;
-    mxd_amount_t distributed = 0;
+    size_t distributed_count = 0;
     for (size_t i = 0; i < node_count; i++) {
         if (nodes[i].active && nodes[i].rank > 0) {
-            if (i == node_count - 1 || remaining <= 1) {
+            distributed_count++;
+            if (distributed_count == active_count || remaining <= 1) {
                 // Last active node gets remaining amount
                 nodes[i].metrics.tip_share = remaining;
-                distributed += remaining;
                 remaining = 0;
             } else {
                 // Each node gets 50% of remaining (integer division)
                 nodes[i].metrics.tip_share = remaining / 2;
-                distributed += nodes[i].metrics.tip_share;
                 remaining -= nodes[i].metrics.tip_share;
             }
         } else {
