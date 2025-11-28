@@ -531,16 +531,20 @@ int mxd_tx_deep_copy(mxd_transaction_t *dst, const mxd_transaction_t *src) {
 
 void mxd_free_transaction(mxd_transaction_t *tx) {
   if (tx) {
-    for (uint32_t i = 0; i < tx->input_count; i++) {
-      if (tx->inputs[i].public_key) {
-        free(tx->inputs[i].public_key);
+    if (tx->inputs) {
+      for (uint32_t i = 0; i < tx->input_count; i++) {
+        if (tx->inputs[i].public_key) {
+          free(tx->inputs[i].public_key);
+        }
+        if (tx->inputs[i].signature) {
+          free(tx->inputs[i].signature);
+        }
       }
-      if (tx->inputs[i].signature) {
-        free(tx->inputs[i].signature);
-      }
+      free(tx->inputs);
     }
-    free(tx->inputs);
-    free(tx->outputs);
+    if (tx->outputs) {
+      free(tx->outputs);
+    }
     memset(tx, 0, sizeof(mxd_transaction_t));
   }
 }

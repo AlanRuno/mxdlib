@@ -141,7 +141,8 @@ static void test_node_lifecycle(void) {
     double remaining_amount = 1000.0;
     
     uint64_t tx_start_time = get_current_time_ms();
-    int tx_count = 0;
+    int tx_count = 0;  // Used by TEST_TX_RATE_UPDATE macro
+    int created_tx_count = 0;  // Track actually created transactions for cleanup
     
     printf("Starting transaction processing with validation\n");
     
@@ -150,7 +151,7 @@ static void test_node_lifecycle(void) {
         
         TEST_ASSERT(mxd_create_transaction(&transactions[i]) == 0,
                    "Transaction creation");
-        tx_count = i + 1;
+        created_tx_count = i + 1;
         
         // Add input from previous transaction
         TEST_ASSERT(test_add_tx_input_ed25519(&transactions[i], prev_tx_hash, prev_output_index,
@@ -322,7 +323,7 @@ static void test_node_lifecycle(void) {
     }
     
     // Cleanup - only free transactions that were actually created
-    for (int i = 0; i < tx_count; i++) {
+    for (int i = 0; i < created_tx_count; i++) {
         mxd_free_transaction(&transactions[i]);
     }
     mxd_free_transaction(&genesis_tx);

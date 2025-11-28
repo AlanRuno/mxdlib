@@ -17,11 +17,12 @@ extern "C" {
 // Contract state
 typedef struct {
   uint8_t contract_hash[64]; // SHA-512 hash of contract code
-  uint8_t state_hash[64];    // SHA-512 hash of contract state
+  uint8_t state_hash[64];    // SHA-512 hash of contract state (merkle root)
   uint64_t gas_used;         // Gas used by contract
   uint64_t gas_limit;        // Gas limit for contract
-  uint8_t *storage;          // Contract storage
-  size_t storage_size;       // Storage size
+  uint8_t *storage;          // Legacy linear storage (for backward compatibility)
+  size_t storage_size;       // Legacy storage size
+  void *storage_trie;        // Merkle patricia trie for production storage
   void *module;              // WebAssembly module handle
 } mxd_contract_state_t;
 

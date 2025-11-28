@@ -125,11 +125,15 @@ static void test_state_transition(void) {
   // Deploy contract
   TEST_ASSERT(mxd_deploy_contract(test_wasm, test_wasm_len, &old_state) == 0, "Initial contract deployment successful");
 
-  // Create new state with deep copy
+  // Create new state - copy hash and module, but create fresh storage
   TEST_VALUE("Creating new state", "%s", "deep copy with shared module");
-  memcpy(&new_state, &old_state, sizeof(mxd_contract_state_t));
+  memcpy(new_state.contract_hash, old_state.contract_hash, 64);
+  memcpy(new_state.state_hash, old_state.state_hash, 64);
+  new_state.gas_used = old_state.gas_used;
+  new_state.gas_limit = old_state.gas_limit;
   new_state.storage = NULL;
   new_state.storage_size = 0;
+  new_state.storage_trie = NULL;  // Will be created by mxd_set_contract_storage if needed
   new_state.module = old_state.module; // Share the module between states
 
   // Modify state

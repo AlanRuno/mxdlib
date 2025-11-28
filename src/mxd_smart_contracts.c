@@ -83,12 +83,13 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
   // Calculate contract hash
   mxd_sha512(code, code_size, state->contract_hash);
 
-  // Initialize state
-  memset(state->state_hash, 0, sizeof(state->state_hash));
-  state->gas_used = 0;
-  state->gas_limit = MXD_MAX_GAS;
-  state->storage = NULL;
-  state->storage_size = 0;
+    // Initialize state
+    memset(state->state_hash, 0, sizeof(state->state_hash));
+    state->gas_used = 0;
+    state->gas_limit = MXD_MAX_GAS;
+    state->storage = NULL;
+    state->storage_size = 0;
+    state->storage_trie = mxd_trie_create();  // Create merkle trie for production storage
 
   // Calculate contract hash
   mxd_sha512(code, code_size, state->contract_hash);
@@ -267,22 +268,23 @@ int mxd_get_contract_storage(const mxd_contract_state_t *state,
     return -1;
   }
   
-  if (!state || !key || !value || !value_size || !state->storage) {
+  if (!state || !key || !value || !value_size) {
     return -1;
   }
 
-  // MINOR FIX: Document contract storage linear search limitation
-  // Simple key-value storage implementation (use memcpy to avoid misaligned access)
-  // TODO: Implement proper storage with merkle patricia trie for verifiable state
-  // WARNING: Current implementation uses linear search without merkle verification
-  // This is NOT production-ready for the following reasons:
-  // 1. Linear search has O(n) complexity - performance degrades with storage size
-  // 2. No merkle verification means state transitions cannot be cryptographically proven
-  // 3. No indexing or caching - every lookup scans from the beginning
-  // For production use, implement a merkle patricia trie or similar authenticated data structure
+  // Use merkle patricia trie for production storage (O(log n) lookup with cryptographic verification)
+  if (state->storage_trie) {
+    mxd_merkle_trie_t *trie = (mxd_merkle_trie_t *)state->storage_trie;
+    return mxd_trie_get(trie, key, key_size, value, value_size);
+  }
+
+  // Fallback to legacy linear storage for backward compatibility
+  if (!state->storage) {
+    return -1;
+  }
+
   size_t offset = 0;
   while (offset < state->storage_size) {
-    // CRITICAL FIX: Use endian conversion for size_t values for cross-platform compatibility
     uint64_t stored_key_size_be;
     memcpy(&stored_key_size_be, state->storage + offset, sizeof(uint64_t));
     size_t stored_key_size = (size_t)mxd_ntohll(stored_key_size_be);
@@ -328,36 +330,23 @@ int mxd_set_contract_storage(mxd_contract_state_t *state, const uint8_t *key,
     return -1;
   }
 
-  // CRITICAL FIX: Calculate new storage size using fixed-size uint64_t instead of platform-dependent size_t
-  size_t entry_size = sizeof(uint64_t) + key_size + sizeof(uint64_t) + value_size;
-  size_t new_size = state->storage_size + entry_size;
-
-  // Reallocate storage
-  uint8_t *new_storage = realloc(state->storage, new_size);
-  if (!new_storage) {
-    return -1;
+  // Use merkle patricia trie for production storage (O(log n) insert with cryptographic verification)
+  // Create trie if it doesn't exist yet
+  if (!state->storage_trie) {
+    state->storage_trie = mxd_trie_create();
+    if (!state->storage_trie) {
+      MXD_LOG_ERROR("contracts", "Failed to create storage trie");
+      return -1;
+    }
   }
-
-  // CRITICAL FIX: Add new entry with endian conversion for cross-platform compatibility
-  size_t offset = state->storage_size;
-  uint64_t key_size_be = mxd_htonll((uint64_t)key_size);
-  memcpy(new_storage + offset, &key_size_be, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
-  memcpy(new_storage + offset, key, key_size);
-  offset += key_size;
-  uint64_t value_size_be = mxd_htonll((uint64_t)value_size);
-  memcpy(new_storage + offset, &value_size_be, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
-  memcpy(new_storage + offset, value, value_size);
-
-  // Update state
-  state->storage = new_storage;
-  state->storage_size = new_size;
-
-  // Update state hash
-  mxd_sha512(state->storage, state->storage_size, state->state_hash);
-
-  return 0;
+  
+  mxd_merkle_trie_t *trie = (mxd_merkle_trie_t *)state->storage_trie;
+  int result = mxd_trie_set(trie, key, key_size, value, value_size);
+  if (result == 0) {
+    // Update state hash with merkle root
+    mxd_trie_get_root_hash(trie, state->state_hash);
+  }
+  return result;
 }
 
 // Free contract state resources
@@ -366,6 +355,10 @@ void mxd_free_contract_state(mxd_contract_state_t *state) {
     if (state->storage) {
       free(state->storage);
       state->storage = NULL;
+    }
+    if (state->storage_trie) {
+      mxd_trie_free((mxd_merkle_trie_t *)state->storage_trie);
+      state->storage_trie = NULL;
     }
     // Note: module is managed by the runtime and shared between states
     memset(state, 0, sizeof(mxd_contract_state_t));
