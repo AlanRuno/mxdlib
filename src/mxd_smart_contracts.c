@@ -347,37 +347,6 @@ int mxd_set_contract_storage(mxd_contract_state_t *state, const uint8_t *key,
     mxd_trie_get_root_hash(trie, state->state_hash);
   }
   return result;
-
-  // Fallback to legacy linear storage for backward compatibility
-  size_t entry_size = sizeof(uint64_t) + key_size + sizeof(uint64_t) + value_size;
-  size_t new_size = state->storage_size + entry_size;
-
-  // Reallocate storage
-  uint8_t *new_storage = realloc(state->storage, new_size);
-  if (!new_storage) {
-    return -1;
-  }
-
-  // Add new entry with endian conversion for cross-platform compatibility
-  size_t offset = state->storage_size;
-  uint64_t key_size_be = mxd_htonll((uint64_t)key_size);
-  memcpy(new_storage + offset, &key_size_be, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
-  memcpy(new_storage + offset, key, key_size);
-  offset += key_size;
-  uint64_t value_size_be = mxd_htonll((uint64_t)value_size);
-  memcpy(new_storage + offset, &value_size_be, sizeof(uint64_t));
-  offset += sizeof(uint64_t);
-  memcpy(new_storage + offset, value, value_size);
-
-  // Update state
-  state->storage = new_storage;
-  state->storage_size = new_size;
-
-  // Update state hash
-  mxd_sha512(state->storage, state->storage_size, state->state_hash);
-
-  return 0;
 }
 
 // Free contract state resources
