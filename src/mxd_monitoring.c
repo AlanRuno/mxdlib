@@ -35,10 +35,12 @@ static mxd_config_t* global_config = NULL;
 typedef struct {
     char ip[64];
     time_t last_request;
+    time_t last_access;  // For LRU eviction
     int request_count;
 } rate_limit_entry_t;
 
-static rate_limit_entry_t rate_limits[100];
+#define RATE_LIMIT_TABLE_SIZE 256  // Increased capacity for better coverage
+static rate_limit_entry_t rate_limits[RATE_LIMIT_TABLE_SIZE];
 static int rate_limit_count = 0;
 static pthread_mutex_t rate_limit_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -58,31 +60,58 @@ static int check_rate_limit(const char* client_ip) {
     pthread_mutex_lock(&rate_limit_mutex);
     
     time_t now = time(NULL);
-    int found = 0;
+    int found_idx = -1;
     
+    // Search for existing entry
     for (int i = 0; i < rate_limit_count; i++) {
         if (strcmp(rate_limits[i].ip, client_ip) == 0) {
-            found = 1;
-            if (now - rate_limits[i].last_request >= 60) {
-                rate_limits[i].request_count = 1;
-                rate_limits[i].last_request = now;
-            } else {
-                rate_limits[i].request_count++;
-                if (rate_limits[i].request_count > (int)global_config->http.rate_limit_per_minute) {
-                    pthread_mutex_unlock(&rate_limit_mutex);
-                    mxd_metrics_increment("mxd_http_rate_limit_violations_total");
-                    return 0;
-                }
-            }
+            found_idx = i;
             break;
         }
     }
     
-    if (!found && rate_limit_count < 100) {
-        strncpy(rate_limits[rate_limit_count].ip, client_ip, sizeof(rate_limits[rate_limit_count].ip) - 1);
-        rate_limits[rate_limit_count].last_request = now;
-        rate_limits[rate_limit_count].request_count = 1;
-        rate_limit_count++;
+    if (found_idx >= 0) {
+        // Update existing entry
+        rate_limits[found_idx].last_access = now;
+        if (now - rate_limits[found_idx].last_request >= 60) {
+            rate_limits[found_idx].request_count = 1;
+            rate_limits[found_idx].last_request = now;
+        } else {
+            rate_limits[found_idx].request_count++;
+            if (rate_limits[found_idx].request_count > (int)global_config->http.rate_limit_per_minute) {
+                pthread_mutex_unlock(&rate_limit_mutex);
+                mxd_metrics_increment("mxd_http_rate_limit_violations_total");
+                return 0;
+            }
+        }
+    } else {
+        // Need to add new entry
+        int target_idx;
+        
+        if (rate_limit_count < RATE_LIMIT_TABLE_SIZE) {
+            // Table not full, use next slot
+            target_idx = rate_limit_count;
+            rate_limit_count++;
+        } else {
+            // Table full - LRU eviction: find oldest entry by last_access time
+            target_idx = 0;
+            time_t oldest_access = rate_limits[0].last_access;
+            for (int i = 1; i < rate_limit_count; i++) {
+                if (rate_limits[i].last_access < oldest_access) {
+                    oldest_access = rate_limits[i].last_access;
+                    target_idx = i;
+                }
+            }
+            MXD_LOG_DEBUG("monitoring", "Rate limit table full, evicting LRU entry for IP: %s", 
+                          rate_limits[target_idx].ip);
+        }
+        
+        // Initialize new entry
+        strncpy(rate_limits[target_idx].ip, client_ip, sizeof(rate_limits[target_idx].ip) - 1);
+        rate_limits[target_idx].ip[sizeof(rate_limits[target_idx].ip) - 1] = '\0';
+        rate_limits[target_idx].last_request = now;
+        rate_limits[target_idx].last_access = now;
+        rate_limits[target_idx].request_count = 1;
     }
     
     pthread_mutex_unlock(&rate_limit_mutex);
@@ -94,8 +123,12 @@ static int check_bearer_token(const char* auth_header) {
         return 1;
     }
     
+    // SECURITY FIX: Fail closed when require_auth is true but no token is configured
+    // This prevents accidental exposure of wallet endpoints when operators forget to set a token
     if (global_config->http.api_token[0] == '\0') {
-        return 1;
+        MXD_LOG_WARN("monitoring", "Authentication required but no API token configured - denying access");
+        mxd_metrics_increment("mxd_http_auth_failures_total");
+        return 0;
     }
     
     if (!auth_header || strncmp(auth_header, "Bearer ", 7) != 0) {

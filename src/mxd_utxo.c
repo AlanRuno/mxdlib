@@ -339,21 +339,44 @@ int mxd_init_utxo_db(const char *db_path) {
     pruned_count = 0;
     total_value = 0;
     
-    // RISKY FIX: Load persisted UTXO statistics on startup
+    // Load persisted UTXO statistics on startup with version checking
+    // Version 1 format: [version:uint32_t][utxo_count:size_t][pruned_count:size_t][total_value:mxd_amount_t]
+    // Legacy format (v0): [utxo_count:size_t][pruned_count:size_t][total_value:mxd_amount_t]
     uint8_t stats_key[] = "utxo_stats";
     char *value = NULL;
     size_t value_len = 0;
     err = NULL;
     value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(), 
                        (char *)stats_key, sizeof(stats_key) - 1, &value_len, &err);
-    if (value && value_len == sizeof(size_t) * 2 + sizeof(mxd_amount_t)) {
+    
+    size_t expected_v1_len = sizeof(uint32_t) + sizeof(size_t) * 2 + sizeof(mxd_amount_t);
+    size_t expected_v0_len = sizeof(size_t) * 2 + sizeof(mxd_amount_t);
+    
+    if (value && value_len == expected_v1_len) {
+        // Version 1 format with version field
+        uint32_t version;
+        memcpy(&version, value, sizeof(uint32_t));
+        if (version == 1) {
+            memcpy(&utxo_count, value + sizeof(uint32_t), sizeof(size_t));
+            memcpy(&pruned_count, value + sizeof(uint32_t) + sizeof(size_t), sizeof(size_t));
+            memcpy(&total_value, value + sizeof(uint32_t) + sizeof(size_t) * 2, sizeof(mxd_amount_t));
+            MXD_LOG_DEBUG("utxo", "Loaded UTXO stats v1: count=%zu, pruned=%zu, value=%lu",
+                          utxo_count, pruned_count, (unsigned long)total_value);
+        } else {
+            MXD_LOG_WARN("utxo", "Unknown UTXO stats version %u, ignoring persisted stats", version);
+        }
+        free(value);
+    } else if (value && value_len == expected_v0_len) {
+        // Legacy format without version field - migrate on next save
         memcpy(&utxo_count, value, sizeof(size_t));
         memcpy(&pruned_count, value + sizeof(size_t), sizeof(size_t));
         memcpy(&total_value, value + sizeof(size_t) * 2, sizeof(mxd_amount_t));
+        MXD_LOG_INFO("utxo", "Migrating UTXO stats from legacy format to v1");
         free(value);
     } else if (err) {
         free(err);
     } else if (value) {
+        MXD_LOG_WARN("utxo", "Invalid UTXO stats size %zu, ignoring persisted stats", value_len);
         free(value);
     }
     
@@ -903,12 +926,15 @@ int mxd_get_utxo_stats(size_t *total_count, size_t *pruned_count_out, mxd_amount
     pruned_count = pruned;
     total_value = value;
     
-    // RISKY FIX: Persist UTXO statistics to database for restart recovery
+    // Persist UTXO statistics to database for restart recovery with versioned format
+    // Version 1 format: [version:uint32_t][utxo_count:size_t][pruned_count:size_t][total_value:mxd_amount_t]
     uint8_t stats_key[] = "utxo_stats";
-    uint8_t stats_data[sizeof(size_t) * 2 + sizeof(mxd_amount_t)];
-    memcpy(stats_data, &utxo_count, sizeof(size_t));
-    memcpy(stats_data + sizeof(size_t), &pruned_count, sizeof(size_t));
-    memcpy(stats_data + sizeof(size_t) * 2, &total_value, sizeof(mxd_amount_t));
+    uint32_t stats_version = 1;
+    uint8_t stats_data[sizeof(uint32_t) + sizeof(size_t) * 2 + sizeof(mxd_amount_t)];
+    memcpy(stats_data, &stats_version, sizeof(uint32_t));
+    memcpy(stats_data + sizeof(uint32_t), &utxo_count, sizeof(size_t));
+    memcpy(stats_data + sizeof(uint32_t) + sizeof(size_t), &pruned_count, sizeof(size_t));
+    memcpy(stats_data + sizeof(uint32_t) + sizeof(size_t) * 2, &total_value, sizeof(mxd_amount_t));
     
     char *err = NULL;
     rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(),

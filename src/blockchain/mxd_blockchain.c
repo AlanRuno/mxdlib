@@ -167,7 +167,8 @@ int mxd_freeze_transaction_set(mxd_block_t *block) {
     return 0; // Already frozen
   }
   
-  // Calculate merkle root over all transactions
+  // Calculate merkle root over all transactions using a proper binary merkle tree
+  // This enables SPV (Simplified Payment Verification) proofs
   if (block->transaction_count == 0) {
     // No transactions - use zero hash
     memset(block->merkle_root, 0, 64);
@@ -177,31 +178,70 @@ int mxd_freeze_transaction_set(mxd_block_t *block) {
       return -1;
     }
   } else {
-    // Multiple transactions - build merkle tree
-    // For simplicity, concatenate all transaction hashes and hash the result
-    // This is a simplified merkle root (not a full merkle tree)
-    size_t total_hash_size = block->transaction_count * 64;
-    uint8_t *hash_buffer = malloc(total_hash_size);
-    if (!hash_buffer) {
+    // Multiple transactions - build proper binary merkle tree for SPV support
+    // Each level pairs adjacent hashes; odd nodes are duplicated
+    
+    // Calculate number of leaf nodes (round up to power of 2 for balanced tree)
+    uint32_t leaf_count = block->transaction_count;
+    
+    // Allocate buffer for current level hashes
+    uint8_t *current_level = malloc(leaf_count * 64);
+    if (!current_level) {
       return -1;
     }
     
-    // Hash each transaction
-    for (uint32_t i = 0; i < block->transaction_count; i++) {
+    // Hash each transaction to create leaf nodes
+    for (uint32_t i = 0; i < leaf_count; i++) {
       if (mxd_sha512(block->transactions[i].data, block->transactions[i].length, 
-                     hash_buffer + (i * 64)) != 0) {
-        free(hash_buffer);
+                     current_level + (i * 64)) != 0) {
+        free(current_level);
         return -1;
       }
     }
     
-    // Hash all transaction hashes together to get merkle root
-    if (mxd_sha512(hash_buffer, total_hash_size, block->merkle_root) != 0) {
-      free(hash_buffer);
-      return -1;
+    // Build tree level by level until we reach the root
+    uint32_t level_size = leaf_count;
+    while (level_size > 1) {
+      // Calculate next level size (ceiling division by 2)
+      uint32_t next_level_size = (level_size + 1) / 2;
+      uint8_t *next_level = malloc(next_level_size * 64);
+      if (!next_level) {
+        free(current_level);
+        return -1;
+      }
+      
+      // Pair adjacent hashes and hash them together
+      for (uint32_t i = 0; i < next_level_size; i++) {
+        uint32_t left_idx = i * 2;
+        uint32_t right_idx = left_idx + 1;
+        
+        // Concatenate left and right hashes (duplicate left if odd)
+        uint8_t pair_buffer[128];
+        memcpy(pair_buffer, current_level + (left_idx * 64), 64);
+        
+        if (right_idx < level_size) {
+          memcpy(pair_buffer + 64, current_level + (right_idx * 64), 64);
+        } else {
+          // Odd number of nodes - duplicate the last one
+          memcpy(pair_buffer + 64, current_level + (left_idx * 64), 64);
+        }
+        
+        // Hash the pair to create parent node
+        if (mxd_sha512(pair_buffer, 128, next_level + (i * 64)) != 0) {
+          free(current_level);
+          free(next_level);
+          return -1;
+        }
+      }
+      
+      free(current_level);
+      current_level = next_level;
+      level_size = next_level_size;
     }
     
-    free(hash_buffer);
+    // Copy root hash
+    memcpy(block->merkle_root, current_level, 64);
+    free(current_level);
   }
   
   // Mark as frozen - merkle_root is now immutable

@@ -252,10 +252,17 @@ int mxd_validate_transaction(const mxd_transaction_t *tx) {
     }
   }
 
-  // Verify output amounts are positive
-  double total_output = 0;
+  // Verify output amounts are positive and calculate total using integer arithmetic
+  // to ensure consensus-critical calculations are deterministic across platforms
+  mxd_amount_t total_output = 0;
   for (uint32_t i = 0; i < tx->output_count; i++) {
-    if (tx->outputs[i].amount <= 0) {
+    if (tx->outputs[i].amount == 0) {
+      MXD_LOG_ERROR("transaction", "Transaction validation failed: output %u has zero amount", i);
+      return -1;
+    }
+    // Check for overflow before adding
+    if (total_output > UINT64_MAX - tx->outputs[i].amount) {
+      MXD_LOG_ERROR("transaction", "Transaction validation failed: output sum overflow");
       return -1;
     }
     total_output += tx->outputs[i].amount;
@@ -263,14 +270,25 @@ int mxd_validate_transaction(const mxd_transaction_t *tx) {
 
   // For non-coinbase transactions, verify total output plus tip doesn't exceed input amount
   if (!tx->is_coinbase) {
-    double total_input = 0;
+    mxd_amount_t total_input = 0;
     for (uint32_t i = 0; i < tx->input_count; i++) {
+      // Check for overflow before adding
+      if (total_input > UINT64_MAX - tx->inputs[i].amount) {
+        MXD_LOG_ERROR("transaction", "Transaction validation failed: input sum overflow");
+        return -1;
+      }
       total_input += tx->inputs[i].amount;
     }
     
+    // Check for overflow when adding tip to outputs
+    if (total_output > UINT64_MAX - tx->voluntary_tip) {
+      MXD_LOG_ERROR("transaction", "Transaction validation failed: output + tip overflow");
+      return -1;
+    }
+    
     if (total_output + tx->voluntary_tip > total_input) {
-      MXD_LOG_ERROR("transaction", "Transaction validation failed: outputs (%f) + tip (%f) exceed inputs (%f)",
-             total_output, tx->voluntary_tip, total_input);
+      MXD_LOG_ERROR("transaction", "Transaction validation failed: outputs (%lu) + tip (%lu) exceed inputs (%lu)",
+             (unsigned long)total_output, (unsigned long)tx->voluntary_tip, (unsigned long)total_input);
       return -1;
     }
   }
