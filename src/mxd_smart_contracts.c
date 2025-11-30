@@ -154,18 +154,35 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     return -1;
   }
 
-  // RISKY FIX: Enforce gas limits during contract execution
-  // Simple gas calculation based on input size
-  uint64_t gas_used = 100 + input_size;
-  
-  // Check if gas limit would be exceeded before execution
-  if (gas_used > state->gas_limit) {
-    MXD_LOG_ERROR("contracts", "Gas limit exceeded before execution: %lu > %lu", gas_used, state->gas_limit);
+  // Validate input size before accessing as uint32_t to prevent out-of-bounds read
+  // This is a memory safety fix - callers must provide at least 4 bytes of input
+  if (input_size < sizeof(uint32_t)) {
+    MXD_LOG_ERROR("contracts", "Input size too small: %zu bytes (minimum: %zu)", 
+                  input_size, sizeof(uint32_t));
     mxd_metrics_increment("contract_execution_errors_total");
     return -1;
   }
 
-  uint32_t input_val = *(const uint32_t *)input;
+  // Gas metering with WASM instruction-level analysis for production-ready cost estimation
+  // Base cost (100) + per-byte cost (1) + instruction complexity estimate
+  uint64_t gas_used = mxd_calculate_gas_from_bytecode(
+      (const uint8_t *)wasm_state.runtime, input_size);
+  if (gas_used == 0) {
+    // Fallback to simple calculation if bytecode analysis fails
+    gas_used = 100 + input_size;
+  }
+  
+  // Check if gas limit would be exceeded before execution
+  if (gas_used > state->gas_limit) {
+    MXD_LOG_ERROR("contracts", "Gas limit exceeded before execution: %lu > %lu", 
+                  (unsigned long)gas_used, (unsigned long)state->gas_limit);
+    mxd_metrics_increment("contract_execution_errors_total");
+    return -1;
+  }
+
+  // Safe access after size validation - copy to avoid alignment issues
+  uint32_t input_val;
+  memcpy(&input_val, input, sizeof(uint32_t));
   res = m3_CallV(func, input_val);
   
   time_t end_time = time(NULL);
