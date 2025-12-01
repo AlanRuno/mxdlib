@@ -345,11 +345,47 @@ static void test_validation_chain_fork_resolution(void) {
 static void test_validation_chain_expiry(void) {
     TEST_START("Validation Chain Expiry");
     
-    printf("  SKIPPED: mxd_prune_expired_signatures has a byte-order bug.\n");
-    printf("  The pruning function reads height without ntohl() conversion,\n");
-    printf("  but create_signature_key stores height with htonl().\n");
-    printf("  This is a known implementation bug that needs to be fixed in\n");
-    printf("  mxd_blockchain_db.c:611 (add ntohl() when reading height).\n");
+    TEST_ASSERT(mxd_init_blockchain_db("test_blockchain_db") == 0, 
+                "Blockchain database initialization");
+    
+    mxd_block_t block;
+    TEST_ASSERT(create_test_block_with_validation(&block, TEST_BLOCK_HEIGHT) == 0, 
+                "Block initialization");
+    
+    TEST_ASSERT(add_validator_signatures(&block, MIN_VALIDATORS) == 0, 
+                "Adding validator signatures");
+    
+    TEST_ASSERT(mxd_store_block(&block) == 0, 
+                "Block storage with validation chain");
+    
+    for (uint32_t i = 0; i < block.validation_count; i++) {
+        TEST_ASSERT(mxd_store_signature(block.height, 
+                                      block.validation_chain[i].validator_id, 
+                                      block.validation_chain[i].signature,
+                                      block.validation_chain[i].signature_length) == 0, 
+                    "Signature storage for replay protection");
+    }
+    
+    for (uint32_t i = 0; i < block.validation_count; i++) {
+        TEST_ASSERT(mxd_signature_exists(block.height, 
+                                       block.validation_chain[i].validator_id, 
+                                       block.validation_chain[i].signature,
+                                       block.validation_chain[i].signature_length) == 1, 
+                    "Signature exists check");
+    }
+    
+    TEST_ASSERT(mxd_prune_expired_signatures(block.height + 6) == 0, 
+                "Pruning expired signatures");
+    
+    for (uint32_t i = 0; i < block.validation_count; i++) {
+        TEST_ASSERT(mxd_signature_exists(block.height, 
+                                       block.validation_chain[i].validator_id, 
+                                       block.validation_chain[i].signature,
+                                       block.validation_chain[i].signature_length) == 0, 
+                    "Signature should be pruned");
+    }
+    
+    mxd_close_blockchain_db();
     
     TEST_END("Validation Chain Expiry");
 }
