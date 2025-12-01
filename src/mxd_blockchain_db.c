@@ -609,6 +609,7 @@ int mxd_prune_expired_signatures(uint32_t current_height) {
         if (key_len > 4 && memcmp(key, "sig:", 4) == 0) {
             uint32_t height;
             memcpy(&height, key + 4, sizeof(uint32_t));
+            height = ntohl(height);  // Convert from big-endian (stored by create_signature_key)
             
             if (height < expiry_height) {
                 uint8_t validator_id[20];
@@ -654,7 +655,8 @@ int mxd_get_signatures_by_height(uint32_t height, mxd_validator_signature_t **si
     
     uint8_t prefix_key[4 + sizeof(uint32_t)];
     memcpy(prefix_key, "sig:", 4);
-    memcpy(prefix_key + 4, &height, sizeof(uint32_t));
+    uint32_t height_be = htonl(height);  // Convert to big-endian to match create_signature_key
+    memcpy(prefix_key + 4, &height_be, sizeof(uint32_t));
     size_t prefix_key_len = 4 + sizeof(uint32_t);
     
     rocksdb_iterator_t *iter = rocksdb_create_iterator(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions());
