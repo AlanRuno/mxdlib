@@ -2163,6 +2163,38 @@ int mxd_send_message_with_retry(const char* address, uint16_t port,
     return -1;
 }
 
+static int mxd_send_message_nonblocking(const char* address, uint16_t port, 
+                    mxd_message_type_t type, const void* payload, 
+                    size_t payload_length) {
+    if (!p2p_initialized || !address || !payload || 
+        payload_length > MXD_MAX_MESSAGE_SIZE) {
+        return -1;
+    }
+    
+    peer_connection_t *conn = find_connection_for_peer(address, port);
+    
+    if (!conn) {
+        return -1;
+    }
+    
+    pthread_mutex_lock(&peer_mutex);
+    int token_ready = conn->active && conn->has_received_token;
+    pthread_mutex_unlock(&peer_mutex);
+    
+    if (!token_ready) {
+        return -1;
+    }
+    
+    if (send_on_connection(conn, type, payload, payload_length) != 0) {
+        MXD_LOG_DEBUG("p2p", "Failed to send message to %s:%d on persistent connection", address, port);
+        return -1;
+    }
+    
+    update_unified_peer_sent(address, port);
+    
+    return 0;
+}
+
 int mxd_send_message(const char* address, uint16_t port, 
                     mxd_message_type_t type, const void* payload, 
                     size_t payload_length) {
@@ -2272,7 +2304,7 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
     pthread_mutex_lock(&manual_peer_mutex);
     for (size_t i = 0; i < manual_peer_count; i++) {
         if (manual_peers[i].active) {
-            if (mxd_send_message(manual_peers[i].address, manual_peers[i].port, type, payload, payload_length) == 0) {
+            if (mxd_send_message_nonblocking(manual_peers[i].address, manual_peers[i].port, type, payload, payload_length) == 0) {
                 success_count++;
             }
         }
@@ -2281,7 +2313,7 @@ int mxd_broadcast_message(mxd_message_type_t type, const void* payload, size_t p
     
     for (size_t i = 0; i < peer_count; i++) {
         if (peers[i].active) {
-            if (mxd_send_message(peers[i].address, peers[i].port, type, payload, payload_length) == 0) {
+            if (mxd_send_message_nonblocking(peers[i].address, peers[i].port, type, payload, payload_length) == 0) {
                 success_count++;
             }
         }
