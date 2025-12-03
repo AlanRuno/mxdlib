@@ -1841,7 +1841,6 @@ int mxd_try_coordinate_genesis_block(void) {
         return -1;
     }
     
-    uint64_t current_time;
     if (mxd_get_network_time(&current_time) != 0) {
         current_time = mxd_now_ms(); // Use NTP-synchronized time in milliseconds
     }
