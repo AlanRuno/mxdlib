@@ -1268,6 +1268,36 @@ int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *l
     }
     
     genesis_coordination_initialized = 1;
+    
+    // Automatically add local node to pending genesis members
+    // This ensures the local node is counted as a genesis validator
+    mxd_genesis_member_t *local_member = &pending_genesis_members[0];
+    memcpy(local_member->node_address, local_address, 20);
+    local_member->algo_id = algo_id;
+    memcpy(local_member->public_key, local_pubkey, pubkey_len);
+    local_member->timestamp = mxd_now_ms();
+    // Sign the announce payload for consistency
+    uint8_t announce_payload[20 + MXD_PUBKEY_MAX_LEN + 8];
+    uint64_t timestamp_net = mxd_htonll(local_member->timestamp);
+    memcpy(announce_payload, local_address, 20);
+    memcpy(announce_payload + 20, local_pubkey, pubkey_len);
+    memcpy(announce_payload + 20 + pubkey_len, &timestamp_net, 8);
+    size_t announce_payload_len = 20 + pubkey_len + 8;
+    size_t sig_len = sizeof(local_member->signature);
+    if (mxd_sig_sign(algo_id, local_member->signature, &sig_len, announce_payload, announce_payload_len, local_privkey) == 0) {
+        local_member->signature_length = (uint16_t)sig_len;
+        pending_genesis_count = 1;
+        
+        // Register local node's public key for validation
+        if (mxd_test_register_validator_pubkey(local_address, local_pubkey, pubkey_len) != 0) {
+            MXD_LOG_WARN("rsc", "Failed to register local validator pubkey");
+        }
+        
+        MXD_LOG_INFO("rsc", "Local node automatically added to pending genesis members");
+    } else {
+        MXD_LOG_WARN("rsc", "Failed to sign local genesis announce, local node not added to pending members");
+    }
+    
     MXD_LOG_INFO("rsc", "Genesis coordination initialized with %s", mxd_sig_alg_name(local_genesis_algo_id));
     return 0;
 }
@@ -1663,6 +1693,10 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
     return 0;
 }
 
+// Track when we first had 3+ genesis members for timeout-based proposer fallback
+static uint64_t genesis_quorum_reached_time = 0;
+#define MXD_GENESIS_PROPOSER_TIMEOUT_MS 30000  // 30 seconds timeout for proposer fallback
+
 int mxd_try_coordinate_genesis_block(void) {
     if (!genesis_coordination_initialized) {
         return -1;
@@ -1674,7 +1708,15 @@ int mxd_try_coordinate_genesis_block(void) {
     }
     
     if (pending_genesis_count < 3) {
+        genesis_quorum_reached_time = 0;  // Reset timeout tracking
         return 0;
+    }
+    
+    // Track when we first reached quorum
+    uint64_t current_time = mxd_now_ms();
+    if (genesis_quorum_reached_time == 0) {
+        genesis_quorum_reached_time = current_time;
+        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, starting coordination", pending_genesis_count);
     }
     
     uint8_t addresses[10][20];
@@ -1687,7 +1729,22 @@ int mxd_try_coordinate_genesis_block(void) {
     
     qsort(addresses, addr_count, 20, compare_addresses);
     
-    if (memcmp(local_genesis_address, addresses[0], 20) != 0) {
+    // Check if this node is the designated proposer (lexicographically smallest address)
+    int is_designated_proposer = (memcmp(local_genesis_address, addresses[0], 20) == 0);
+    
+    // Allow fallback proposer if timeout exceeded and we're in the top 3
+    int is_fallback_proposer = 0;
+    if (!is_designated_proposer && (current_time - genesis_quorum_reached_time) > MXD_GENESIS_PROPOSER_TIMEOUT_MS) {
+        for (size_t i = 1; i < addr_count && i < 3; i++) {
+            if (memcmp(local_genesis_address, addresses[i], 20) == 0) {
+                is_fallback_proposer = 1;
+                MXD_LOG_INFO("rsc", "Designated proposer timeout, this node becoming fallback proposer (position %zu)", i);
+                break;
+            }
+        }
+    }
+    
+    if (!is_designated_proposer && !is_fallback_proposer) {
         return 0;
     }
     

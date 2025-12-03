@@ -85,7 +85,7 @@ void mxd_set_default_config(mxd_config_t* config) {
     config->preferred_sign_algo = 1;
     config->protocol_version = 3;
     
-    strncpy(config->http.bind_address, "127.0.0.1", sizeof(config->http.bind_address) - 1);
+    strncpy(config->http.bind_address, "0.0.0.0", sizeof(config->http.bind_address) - 1);
     config->http.port = 8080;
     config->http.require_auth = 1;
     config->http.api_token[0] = '\0';
