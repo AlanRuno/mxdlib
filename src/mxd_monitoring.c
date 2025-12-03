@@ -224,7 +224,7 @@ int mxd_init_monitoring(uint16_t http_port) {
     monitoring_initialized = 1;
     MXD_LOG_INFO("monitoring", "Monitoring system initialized on port %d", http_port);
     MXD_LOG_INFO("monitoring", "HTTP binding: %s, Auth: %s, Wallet: %s",
-        global_config ? global_config->http.bind_address : "127.0.0.1",
+        global_config ? global_config->http.bind_address : "0.0.0.0",
         global_config && global_config->http.require_auth ? "enabled" : "disabled",
         global_config && global_config->http.wallet_enabled ? "enabled" : "disabled");
     return 0;
@@ -1829,11 +1829,11 @@ int mxd_start_metrics_server(void) {
     server_addr.sin_family = AF_INET;
     
     const char* bind_addr = (global_config && global_config->http.bind_address[0]) 
-        ? global_config->http.bind_address : "127.0.0.1";
+        ? global_config->http.bind_address : "0.0.0.0";
     
     if (inet_pton(AF_INET, bind_addr, &server_addr.sin_addr) <= 0) {
-        MXD_LOG_WARN("monitoring", "Invalid bind address %s, using 127.0.0.1", bind_addr);
-        inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+        MXD_LOG_WARN("monitoring", "Invalid bind address %s, using 0.0.0.0", bind_addr);
+        inet_pton(AF_INET, "0.0.0.0", &server_addr.sin_addr);
     }
     
     server_addr.sin_port = htons(metrics_port);
