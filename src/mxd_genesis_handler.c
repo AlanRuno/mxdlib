@@ -3,6 +3,7 @@
 #include "../include/mxd_logging.h"
 #include "../include/mxd_endian.h"
 #include <string.h>
+#include <stdlib.h>
 
 void mxd_genesis_message_handler(const char *address, uint16_t port,
                                   mxd_message_type_t type,
