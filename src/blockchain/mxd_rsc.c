@@ -1644,6 +1644,11 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
         return -1;
     }
     
+    if (!genesis_sign_request_sent) {
+        MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response (not active proposer)");
+        return 0;
+    }
+    
     if (memcmp(membership_digest, pending_genesis_digest, 64) != 0) {
         MXD_LOG_WARN("rsc", "Genesis sign response digest mismatch");
         return -1;
@@ -1751,6 +1756,9 @@ int mxd_try_coordinate_genesis_block(void) {
     if (!genesis_sign_request_sent) {
         MXD_LOG_INFO("rsc", "This node is the designated proposer for genesis block");
         
+        genesis_locked = 1;
+        MXD_LOG_INFO("rsc", "Genesis coordination locked early - no new members will be accepted");
+        
         mxd_block_t genesis_block;
         uint8_t prev_hash[64] = {0};
         
@@ -1794,9 +1802,6 @@ int mxd_try_coordinate_genesis_block(void) {
         self_sig->signature_length = (uint16_t)self_sig_len;
         self_sig->received = 1;
         collected_signature_count++;
-        
-        genesis_locked = 1;
-        MXD_LOG_INFO("rsc", "Genesis coordination locked - no new members will be accepted");
         
         for (size_t i = 0; i < pending_genesis_count && i < 3; i++) {
             if (memcmp(pending_genesis_members[i].node_address, local_genesis_address, 20) != 0) {
