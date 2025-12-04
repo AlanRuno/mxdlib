@@ -2363,6 +2363,23 @@ int mxd_get_connection_count(void) {
     return (int)count;
 }
 
+int mxd_get_authenticated_connection_count(void) {
+    if (!p2p_initialized) {
+        return 0;
+    }
+    
+    pthread_mutex_lock(&peer_mutex);
+    int count = 0;
+    for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
+        if (active_connections[i].active && active_connections[i].has_sent_token) {
+            count++;
+        }
+    }
+    pthread_mutex_unlock(&peer_mutex);
+    
+    return count;
+}
+
 int mxd_get_known_peer_count(void) {
     size_t dht_count = MXD_MAX_PEERS;
     mxd_dht_node_t dht_nodes[MXD_MAX_PEERS];

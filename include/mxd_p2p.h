@@ -168,6 +168,9 @@ int mxd_disable_nat_traversal(void);
 // Get number of active connections
 int mxd_get_connection_count(void);
 
+// Get number of authenticated connections (with completed handshake and session token)
+int mxd_get_authenticated_connection_count(void);
+
 // Get number of known peers from DHT
 int mxd_get_known_peer_count(void);
 

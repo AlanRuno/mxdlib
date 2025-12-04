@@ -514,17 +514,22 @@ int main(int argc, char** argv) {
         if (genesis_initialized && blockchain_height == 0) {
             uint64_t current_time = time(NULL);
             
-            if (current_time - last_genesis_announce >= 3) {
-                mxd_broadcast_genesis_announce();
-                last_genesis_announce = current_time;
-            }
-            
-            pthread_mutex_lock(&metrics_mutex);
-            mxd_sync_pending_genesis_to_rapid_table(&rapid_table, current_config.node_id);
-            pthread_mutex_unlock(&metrics_mutex);
-            
-            if (mxd_get_pending_genesis_count() >= 3) {
-                mxd_try_coordinate_genesis_block();
+            int authenticated_peers = mxd_get_authenticated_connection_count();
+            if (authenticated_peers > 0) {
+                if (current_time - last_genesis_announce >= 3) {
+                    mxd_broadcast_genesis_announce();
+                    last_genesis_announce = current_time;
+                }
+                
+                pthread_mutex_lock(&metrics_mutex);
+                mxd_sync_pending_genesis_to_rapid_table(&rapid_table, current_config.node_id);
+                pthread_mutex_unlock(&metrics_mutex);
+                
+                if (mxd_get_pending_genesis_count() >= 3) {
+                    mxd_try_coordinate_genesis_block();
+                }
+            } else {
+                MXD_LOG_DEBUG("node", "Waiting for authenticated P2P connections before genesis coordination");
             }
         }
         
