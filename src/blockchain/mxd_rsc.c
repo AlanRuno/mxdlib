@@ -1562,8 +1562,20 @@ static int compare_addresses(const void *a, const void *b) {
 }
 
 int mxd_send_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest, 
-                                   const uint8_t *proposer_id, uint32_t height) {
-    uint8_t message[20 + 64 + 20 + 4];
+                                   const uint8_t *proposer_id, uint32_t height,
+                                   const mxd_genesis_member_t *members, size_t member_count) {
+    if (!members || member_count == 0 || member_count > 10) {
+        MXD_LOG_ERROR("rsc", "Invalid member list for genesis sign request");
+        return -1;
+    }
+    
+    size_t max_message_size = 20 + 64 + 20 + 4 + 1 + (member_count * (20 + 1 + 2 + MXD_PUBKEY_MAX_LEN));
+    uint8_t *message = malloc(max_message_size);
+    if (!message) {
+        MXD_LOG_ERROR("rsc", "Failed to allocate memory for genesis sign request");
+        return -1;
+    }
+    
     size_t offset = 0;
     
     memcpy(message + offset, target_address, 20);
@@ -1575,7 +1587,34 @@ int mxd_send_genesis_sign_request(const uint8_t *target_address, const uint8_t *
     memcpy(message + offset, &height, 4);
     offset += 4;
     
-    if (mxd_broadcast_message(MXD_MSG_GENESIS_SIGN_REQUEST, message, offset) != 0) {
+    uint8_t count = (uint8_t)member_count;
+    memcpy(message + offset, &count, 1);
+    offset += 1;
+    
+    for (size_t i = 0; i < member_count; i++) {
+        const mxd_genesis_member_t *m = &members[i];
+        
+        memcpy(message + offset, m->node_address, 20);
+        offset += 20;
+        
+        memcpy(message + offset, &m->algo_id, 1);
+        offset += 1;
+        
+        size_t pubkey_len = mxd_sig_pubkey_len(m->algo_id);
+        uint16_t pubkey_len_net = htons((uint16_t)pubkey_len);
+        memcpy(message + offset, &pubkey_len_net, 2);
+        offset += 2;
+        
+        memcpy(message + offset, m->public_key, pubkey_len);
+        offset += pubkey_len;
+    }
+    
+    MXD_LOG_INFO("rsc", "Sending genesis sign request with %zu members, message size=%zu", member_count, offset);
+    
+    int result = mxd_broadcast_message(MXD_MSG_GENESIS_SIGN_REQUEST, message, offset);
+    free(message);
+    
+    if (result != 0) {
         MXD_LOG_ERROR("rsc", "Failed to send genesis sign request");
         return -1;
     }
@@ -1584,7 +1623,8 @@ int mxd_send_genesis_sign_request(const uint8_t *target_address, const uint8_t *
 }
 
 int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t *membership_digest,
-                                     const uint8_t *proposer_id, uint32_t height) {
+                                     const uint8_t *proposer_id, uint32_t height,
+                                     const mxd_genesis_member_t *members, size_t member_count) {
     if (!genesis_coordination_initialized) {
         return -1;
     }
@@ -1604,6 +1644,37 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         MXD_LOG_WARN("rsc", "Already signed genesis block");
         return -1;
     }
+    
+    if (member_count != pending_genesis_count) {
+        MXD_LOG_WARN("rsc", "Genesis sign request member count mismatch: received %zu, local %zu", 
+                     member_count, pending_genesis_count);
+        return -1;
+    }
+    
+    for (size_t i = 0; i < member_count; i++) {
+        int found = 0;
+        for (size_t j = 0; j < pending_genesis_count; j++) {
+            if (memcmp(members[i].node_address, pending_genesis_members[j].node_address, 20) == 0) {
+                if (members[i].algo_id != pending_genesis_members[j].algo_id) {
+                    MXD_LOG_WARN("rsc", "Genesis sign request algo_id mismatch for member %zu", i);
+                    return -1;
+                }
+                size_t pubkey_len = mxd_sig_pubkey_len(members[i].algo_id);
+                if (memcmp(members[i].public_key, pending_genesis_members[j].public_key, pubkey_len) != 0) {
+                    MXD_LOG_WARN("rsc", "Genesis sign request public_key mismatch for member %zu", i);
+                    return -1;
+                }
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            MXD_LOG_WARN("rsc", "Genesis sign request contains unknown member at index %zu", i);
+            return -1;
+        }
+    }
+    
+    MXD_LOG_INFO("rsc", "Genesis sign request member list validated (%zu members)", member_count);
     
     genesis_locked = 1;
     MXD_LOG_INFO("rsc", "Genesis coordination locked - no new members will be accepted");
@@ -1642,6 +1713,11 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
                                       const uint8_t *signature, uint16_t signature_length) {
     if (!genesis_coordination_initialized) {
         return -1;
+    }
+    
+    if (!genesis_sign_request_sent) {
+        MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response (not active proposer)");
+        return 0;
     }
     
     if (memcmp(membership_digest, pending_genesis_digest, 64) != 0) {
@@ -1751,6 +1827,9 @@ int mxd_try_coordinate_genesis_block(void) {
     if (!genesis_sign_request_sent) {
         MXD_LOG_INFO("rsc", "This node is the designated proposer for genesis block");
         
+        genesis_locked = 1;
+        MXD_LOG_INFO("rsc", "Genesis coordination locked early - no new members will be accepted");
+        
         mxd_block_t genesis_block;
         uint8_t prev_hash[64] = {0};
         
@@ -1795,13 +1874,11 @@ int mxd_try_coordinate_genesis_block(void) {
         self_sig->received = 1;
         collected_signature_count++;
         
-        genesis_locked = 1;
-        MXD_LOG_INFO("rsc", "Genesis coordination locked - no new members will be accepted");
-        
         for (size_t i = 0; i < pending_genesis_count && i < 3; i++) {
             if (memcmp(pending_genesis_members[i].node_address, local_genesis_address, 20) != 0) {
                 mxd_send_genesis_sign_request(pending_genesis_members[i].node_address, 
-                                              pending_genesis_digest, local_genesis_address, 0);
+                                              pending_genesis_digest, local_genesis_address, 0,
+                                              pending_genesis_members, pending_genesis_count);
             }
         }
         

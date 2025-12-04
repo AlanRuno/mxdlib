@@ -3,6 +3,7 @@
 #include "../include/mxd_logging.h"
 #include "../include/mxd_endian.h"
 #include <string.h>
+#include <stdlib.h>
 
 void mxd_genesis_message_handler(const char *address, uint16_t port,
                                   mxd_message_type_t type,
@@ -78,8 +79,9 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
         }
         
         case MXD_MSG_GENESIS_SIGN_REQUEST: {
-            if (payload_length < 20 + 64 + 20 + 4) {
-                MXD_LOG_WARN("genesis", "Invalid GENESIS_SIGN_REQUEST message size");
+            if (payload_length < 20 + 64 + 20 + 4 + 1) {
+                MXD_LOG_WARN("genesis", "Invalid GENESIS_SIGN_REQUEST message size: %zu (min: %zu)", 
+                             payload_length, (size_t)(20 + 64 + 20 + 4 + 1));
                 return;
             }
             
@@ -94,8 +96,62 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
             offset += 20;
             uint32_t height;
             memcpy(&height, data + offset, 4);
+            offset += 4;
             
-            mxd_handle_genesis_sign_request(target_address, membership_digest, proposer_id, height);
+            uint8_t member_count = data[offset];
+            offset += 1;
+            
+            if (member_count == 0 || member_count > 10) {
+                MXD_LOG_WARN("genesis", "Invalid GENESIS_SIGN_REQUEST member count: %u", member_count);
+                return;
+            }
+            
+            mxd_genesis_member_t *members = calloc(member_count, sizeof(mxd_genesis_member_t));
+            if (!members) {
+                MXD_LOG_ERROR("genesis", "Failed to allocate memory for genesis members");
+                return;
+            }
+            
+            for (uint8_t i = 0; i < member_count; i++) {
+                if (offset + 20 + 1 + 2 > payload_length) {
+                    MXD_LOG_WARN("genesis", "GENESIS_SIGN_REQUEST truncated at member %u", i);
+                    free(members);
+                    return;
+                }
+                
+                memcpy(members[i].node_address, data + offset, 20);
+                offset += 20;
+                
+                members[i].algo_id = data[offset];
+                offset += 1;
+                
+                uint16_t pubkey_len_net;
+                memcpy(&pubkey_len_net, data + offset, 2);
+                uint16_t pubkey_len = ntohs(pubkey_len_net);
+                offset += 2;
+                
+                size_t expected_pubkey_len = mxd_sig_pubkey_len(members[i].algo_id);
+                if (pubkey_len != expected_pubkey_len) {
+                    MXD_LOG_WARN("genesis", "Invalid pubkey length %u for member %u algo %u (expected %zu)", 
+                                 pubkey_len, i, members[i].algo_id, expected_pubkey_len);
+                    free(members);
+                    return;
+                }
+                
+                if (offset + pubkey_len > payload_length) {
+                    MXD_LOG_WARN("genesis", "GENESIS_SIGN_REQUEST truncated at member %u pubkey", i);
+                    free(members);
+                    return;
+                }
+                
+                memcpy(members[i].public_key, data + offset, pubkey_len);
+                offset += pubkey_len;
+            }
+            
+            MXD_LOG_INFO("genesis", "Parsed genesis sign request with %u members", member_count);
+            
+            mxd_handle_genesis_sign_request(target_address, membership_digest, proposer_id, height, members, member_count);
+            free(members);
             break;
         }
         
