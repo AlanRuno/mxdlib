@@ -80,6 +80,7 @@ typedef struct {
     uint8_t received_session_token[16]; // Token peer sent to us (for sending outgoing messages)
     int has_sent_token;
     int has_received_token;
+    int handshake_done;                 // Flag to indicate handshake is already completed (for outbound connections)
 } peer_connection_t;
 
 static peer_connection_t active_connections[MXD_MAX_PEERS];
@@ -1335,18 +1336,6 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
         return -1;
     }
     
-    const mxd_handshake_payload_t *response = (const mxd_handshake_payload_t *)payload;
-    
-    if (strcmp(response->node_id, node_config.node_id) == 0) {
-        MXD_LOG_INFO("p2p", "Rejecting self-connection to %s:%d (node_id: %s)", 
-                   address, port, response->node_id);
-        free(payload);
-        close(sock);
-        return -1;
-    }
-    
-    free(payload);
-    
     pthread_mutex_lock(&peer_mutex);
     
     int slot = -1;
@@ -1360,6 +1349,7 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     if (slot == -1) {
         pthread_mutex_unlock(&peer_mutex);
         MXD_LOG_WARN("p2p", "No available slots for persistent connection to %s:%d", address, port);
+        free(payload);
         close(sock);
         return -1;
     }
@@ -1367,7 +1357,7 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     strncpy(active_connections[slot].address, address, sizeof(active_connections[slot].address) - 1);
     active_connections[slot].address[sizeof(active_connections[slot].address) - 1] = '\0';
     active_connections[slot].port = port;
-    active_connections[slot].peer_listen_port = 0;
+    active_connections[slot].peer_listen_port = port; // For outbound connections, we know the listen port
     active_connections[slot].socket = sock;
     active_connections[slot].active = 1;
     active_connections[slot].connected_at = time(NULL);
@@ -1377,7 +1367,29 @@ static int try_establish_persistent_connection(const char *address, uint16_t por
     memset(active_connections[slot].received_session_token, 0, 16);
     active_connections[slot].has_sent_token = 0;
     active_connections[slot].has_received_token = 0;
+    active_connections[slot].handshake_done = 0;
     active_connection_count++;
+    
+    pthread_mutex_unlock(&peer_mutex);
+    
+    // Process the handshake response to set up session tokens
+    // This will generate our session token and send it to the peer
+    if (handle_handshake_message(address, port, payload, header.length, &active_connections[slot]) != 0) {
+        MXD_LOG_INFO("p2p", "Handshake validation failed for outbound connection to %s:%d", address, port);
+        pthread_mutex_lock(&peer_mutex);
+        active_connections[slot].active = 0;
+        active_connection_count--;
+        pthread_mutex_unlock(&peer_mutex);
+        free(payload);
+        close(sock);
+        return -1;
+    }
+    free(payload);
+    
+    // Mark handshake as done so connection_handler skips the handshake phase
+    active_connections[slot].handshake_done = 1;
+    
+    pthread_mutex_lock(&peer_mutex);
     
     pthread_t thread;
     pthread_attr_t thread_attr;
@@ -1559,45 +1571,8 @@ static void* keepalive_thread_func(void* arg) {
 static void* connection_handler(void* arg) {
     peer_connection_t *conn = (peer_connection_t*)arg;
     
-    MXD_LOG_INFO("p2p", "Connection handler started for %s:%d", conn->address, conn->port);
-    
-    mxd_handshake_payload_t handshake;
-    if (create_signed_handshake(&handshake, NULL, 0) != 0) {
-        MXD_LOG_ERROR("p2p", "Failed to create signed handshake for %s:%d", conn->address, conn->port);
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
-    }
-    
-    size_t wire_buf_size = handshake_wire_size(&handshake);
-    uint8_t *wire_buf = malloc(wire_buf_size);
-    if (!wire_buf) {
-        MXD_LOG_ERROR("p2p", "Failed to allocate wire buffer for handshake");
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
-    }
-    size_t wire_len = handshake_to_wire(&handshake, wire_buf, wire_buf_size);
-    if (wire_len == 0 || send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
-        MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE to %s:%d", conn->address, conn->port);
-        free(wire_buf);
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
-    }
-    free(wire_buf);
-    
-    MXD_LOG_INFO("p2p", "Sent HANDSHAKE to %s:%d", conn->address, conn->port);
-    
-    uint8_t header_buffer[92];
-    int read_result = read_n(conn->socket, header_buffer, sizeof(header_buffer));
-    if (read_result != 0) {
-        MXD_LOG_WARN("p2p", "Failed to read HANDSHAKE from %s:%d (v2 protocol requires HANDSHAKE)", 
-                   conn->address, conn->port);
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
-    }
+    MXD_LOG_INFO("p2p", "Connection handler started for %s:%d (handshake_done=%d)", 
+                conn->address, conn->port, conn->handshake_done);
     
     const mxd_secrets_t *secrets = mxd_get_secrets();
     if (!secrets) {
@@ -1607,50 +1582,94 @@ static void* connection_handler(void* arg) {
         return NULL;
     }
     
-    mxd_message_header_t header;
-    if (parse_wire_header(header_buffer, &header, secrets->network_magic) != 0) {
-        MXD_LOG_WARN("p2p", "Failed to parse header from %s:%d (invalid v2 wire format)", 
+    // Skip handshake phase if already completed (for outbound connections)
+    if (!conn->handshake_done) {
+        mxd_handshake_payload_t handshake;
+        if (create_signed_handshake(&handshake, NULL, 0) != 0) {
+            MXD_LOG_ERROR("p2p", "Failed to create signed handshake for %s:%d", conn->address, conn->port);
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        
+        size_t wire_buf_size = handshake_wire_size(&handshake);
+        uint8_t *wire_buf = malloc(wire_buf_size);
+        if (!wire_buf) {
+            MXD_LOG_ERROR("p2p", "Failed to allocate wire buffer for handshake");
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        size_t wire_len = handshake_to_wire(&handshake, wire_buf, wire_buf_size);
+        if (wire_len == 0 || send_on_socket(conn->socket, MXD_MSG_HANDSHAKE, wire_buf, wire_len) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to send HANDSHAKE to %s:%d", conn->address, conn->port);
+            free(wire_buf);
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        free(wire_buf);
+        
+        MXD_LOG_INFO("p2p", "Sent HANDSHAKE to %s:%d", conn->address, conn->port);
+        
+        uint8_t header_buffer[92];
+        int read_result = read_n(conn->socket, header_buffer, sizeof(header_buffer));
+        if (read_result != 0) {
+            MXD_LOG_WARN("p2p", "Failed to read HANDSHAKE from %s:%d (v2 protocol requires HANDSHAKE)", 
+                       conn->address, conn->port);
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        
+        mxd_message_header_t header;
+        if (parse_wire_header(header_buffer, &header, secrets->network_magic) != 0) {
+            MXD_LOG_WARN("p2p", "Failed to parse header from %s:%d (invalid v2 wire format)", 
+                       conn->address, conn->port);
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        
+        if (header.type != MXD_MSG_HANDSHAKE) {
+            MXD_LOG_WARN("p2p", "Peer %s:%d sent %d instead of HANDSHAKE (v2 protocol violation)", 
+                       conn->address, conn->port, header.type);
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        
+        uint8_t *payload = malloc(header.length);
+        if (!payload) {
+            MXD_LOG_ERROR("p2p", "Failed to allocate memory for HANDSHAKE");
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        
+        if (read_n(conn->socket, payload, header.length) != 0) {
+            MXD_LOG_WARN("p2p", "Error reading HANDSHAKE payload from %s:%d", conn->address, conn->port);
+            free(payload);
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        
+        if (handle_handshake_message(conn->address, conn->port, payload, header.length, conn) != 0) {
+            MXD_LOG_INFO("p2p", "Handshake validation failed for %s:%d", conn->address, conn->port);
+            free(payload);
+            close(conn->socket);
+            conn->active = 0;
+            return NULL;
+        }
+        free(payload);
+        
+        MXD_LOG_INFO("p2p", "Handshake completed for %s:%d, connection established", 
                    conn->address, conn->port);
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
+    } else {
+        MXD_LOG_INFO("p2p", "Handshake already done for %s:%d, skipping to message loop", 
+                   conn->address, conn->port);
     }
-    
-    if (header.type != MXD_MSG_HANDSHAKE) {
-        MXD_LOG_WARN("p2p", "Peer %s:%d sent %d instead of HANDSHAKE (v2 protocol violation)", 
-                   conn->address, conn->port, header.type);
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
-    }
-    
-    uint8_t *payload = malloc(header.length);
-    if (!payload) {
-        MXD_LOG_ERROR("p2p", "Failed to allocate memory for HANDSHAKE");
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
-    }
-    
-    if (read_n(conn->socket, payload, header.length) != 0) {
-        MXD_LOG_WARN("p2p", "Error reading HANDSHAKE payload from %s:%d", conn->address, conn->port);
-        free(payload);
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
-    }
-    
-    if (handle_handshake_message(conn->address, conn->port, payload, header.length, conn) != 0) {
-        MXD_LOG_INFO("p2p", "Handshake validation failed for %s:%d", conn->address, conn->port);
-        free(payload);
-        close(conn->socket);
-        conn->active = 0;
-        return NULL;
-    }
-    free(payload);
-    
-    MXD_LOG_INFO("p2p", "Handshake completed for %s:%d, connection established", 
-               conn->address, conn->port);
     
     while (conn->active && server_running) {
         uint8_t header_buffer[92];
@@ -1784,6 +1803,7 @@ static void* server_thread_func(void* arg) {
         memset(active_connections[slot].received_session_token, 0, 16);
         active_connections[slot].has_sent_token = 0;
         active_connections[slot].has_received_token = 0;
+        active_connections[slot].handshake_done = 0;  // Inbound connections need handshake
         active_connections[slot].active = 1;
         
         pthread_attr_t conn_attr;
