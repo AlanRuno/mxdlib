@@ -129,7 +129,8 @@ check_wasm3_installed() {
 }
 
 check_libuv_installed() {
-    check_library_installed "libuv.so" && [ -f "/usr/local/include/uv.h" ]
+    # Check for libuv library and headers (either from source build or system package)
+    check_library_installed "libuv.so" && ([ -f "/usr/local/include/uv.h" ] || [ -f "/usr/include/uv.h" ])
 }
 
 check_uvwasi_installed() {
@@ -379,22 +380,28 @@ install_libuv() {
         sudo rm -rf /usr/local/lib/libuv.so* /usr/local/include/uv*
     elif check_libuv_installed; then
         log "libuv is already installed, skipping (use --force_build to override)"
+        # If system libuv is installed but no pkg-config, that's okay - CMake can find it
         return 0
     fi
     log "Installing libuv..."
+    rm -rf libuv
     git clone https://github.com/libuv/libuv
     cd libuv
     mkdir -p build && cd build
     cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_FLAGS="-fPIC -fvisibility=default" -DCMAKE_INSTALL_RPATH="/usr/local/lib" -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON -DLIBUV_BUILD_SHARED=ON -DUVWASI_BUILD_SHARED=ON ..
-    make
+    make -j$(nproc)
     sudo make install
     cd ../..
     rm -rf libuv
     
-    # Verify libuv installation
+    # Verify libuv installation - allow system package without pkg-config
     if ! verify_pkgconfig libuv "1.0.0"; then
-        log "Error: libuv pkg-config verification failed"
-        exit 1
+        if check_libuv_installed; then
+            log "Warning: libuv pkg-config not found but library is installed"
+        else
+            log "Error: libuv pkg-config verification failed"
+            exit 1
+        fi
     fi
 }
 
@@ -490,13 +497,22 @@ verify_installation() {
         fi
     done
     
-    # Verify pkg-config files
+    # Verify pkg-config files (libuv from system package may not have pkg-config)
     local pkgconfig_errors=0
-    for pkg in wasm3 uvwasi libuv; do
+    for pkg in wasm3 uvwasi; do
         if ! verify_pkgconfig "$pkg"; then
             pkgconfig_errors=$((pkgconfig_errors + 1))
         fi
     done
+    
+    # Check libuv separately - system package may not have pkg-config
+    if ! verify_pkgconfig "libuv"; then
+        if check_libuv_installed; then
+            log "Warning: libuv pkg-config not found but library is installed (system package)"
+        else
+            pkgconfig_errors=$((pkgconfig_errors + 1))
+        fi
+    fi
     
     if [ "$pkgconfig_errors" -gt 0 ]; then
         log "Error: Some pkg-config files are missing or invalid"
