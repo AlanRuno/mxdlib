@@ -529,9 +529,12 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
     }
 
     // Session token validation (protocol v3)
-    // Allow empty token only for HANDSHAKE and SESSION_TOKEN messages
+    // Allow empty token for HANDSHAKE, SESSION_TOKEN, and genesis-related messages
+    // Genesis messages are broadcast and may arrive before sessions are fully established
     // Validate against the token WE SENT (sent_session_token), not the one we received
-    if (header->type != MXD_MSG_HANDSHAKE && header->type != MXD_MSG_SESSION_TOKEN) {
+    if (header->type != MXD_MSG_HANDSHAKE && header->type != MXD_MSG_SESSION_TOKEN &&
+        header->type != MXD_MSG_GENESIS_ANNOUNCE && header->type != MXD_MSG_GENESIS_SIGN_REQUEST &&
+        header->type != MXD_MSG_GENESIS_SIGN_RESPONSE) {
         if (conn && conn->has_sent_token) {
             if (memcmp(header->session_token, conn->sent_session_token, 16) != 0) {
                 MXD_LOG_WARN("p2p", "Session token mismatch for message type %d", header->type);
