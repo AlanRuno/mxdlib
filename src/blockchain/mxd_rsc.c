@@ -1902,13 +1902,18 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
     }
     
     if (!genesis_sign_request_sent) {
-        MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response (not active proposer)");
+        MXD_LOG_INFO("rsc", "Ignoring genesis sign response (not active proposer, genesis_sign_request_sent=%d)", genesis_sign_request_sent);
         return 0;
     }
     
     // Verify this response is for our sign request (not another proposer's)
     if (memcmp(proposer_id, local_genesis_address, 20) != 0) {
-        MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response for different proposer");
+        char proposer_hex[41], local_hex[41];
+        for (int i = 0; i < 20; i++) {
+            sprintf(proposer_hex + i*2, "%02x", proposer_id[i]);
+            sprintf(local_hex + i*2, "%02x", local_genesis_address[i]);
+        }
+        MXD_LOG_INFO("rsc", "Ignoring genesis sign response for different proposer: got=%s, local=%s", proposer_hex, local_hex);
         return 0;
     }
     
@@ -2096,7 +2101,9 @@ int mxd_try_coordinate_genesis_block(void) {
         self_sig->received = 1;
         collected_signature_count++;
         
-        for (size_t i = 0; i < pending_genesis_count && i < 3; i++) {
+        // Send sign requests to ALL pending genesis members (not just first 3)
+        // This ensures we get enough responses even if some nodes don't respond
+        for (size_t i = 0; i < pending_genesis_count; i++) {
             if (memcmp(pending_genesis_members[i].node_address, local_genesis_address, 20) != 0) {
                 mxd_send_genesis_sign_request(pending_genesis_members[i].node_address, 
                                               pending_genesis_digest, local_genesis_address, 0,
