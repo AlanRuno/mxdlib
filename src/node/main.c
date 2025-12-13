@@ -335,6 +335,10 @@ int main(int argc, char** argv) {
     }
     log_memory_usage("after_dht_init");
     
+    // Register message handler BEFORE starting DHT to ensure all messages are handled
+    mxd_set_message_handler(mxd_message_multiplexer);
+    MXD_LOG_INFO("node", "Message multiplexer registered (genesis + validation handlers)");
+    
     // Start DHT service
     if (mxd_start_dht(current_config.port) != 0) {
         MXD_LOG_ERROR("node", "Failed to start DHT service");
@@ -385,9 +389,6 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-    
-    mxd_set_message_handler(mxd_message_multiplexer);
-    MXD_LOG_INFO("node", "Message multiplexer registered (genesis + validation handlers)");
     
     // Get the actual node algo_id from P2P (based on persisted keys)
     uint8_t node_algo_id = MXD_SIGALG_ED25519; // Default fallback
