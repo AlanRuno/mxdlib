@@ -1809,42 +1809,40 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         return -1;
     }
     
-    // Accept sign requests where all members are known to us (even if we know more members)
-    // This allows the proposer's member list to be used for genesis, ensuring consistency
+    // Accept sign requests if:
+    // 1. Member count is at least 3 (minimum for genesis)
+    // 2. This node is included in the member list
+    // We trust the proposer's member list to ensure consistency across the network
     if (member_count < 3) {
         MXD_LOG_WARN("rsc", "Genesis sign request has insufficient members: %zu (need at least 3)", member_count);
         return -1;
     }
     
-    // Verify all members in the request are known to us
+    // Verify this node is included in the member list
+    int self_included = 0;
     for (size_t i = 0; i < member_count; i++) {
-        int found = 0;
-        for (size_t j = 0; j < pending_genesis_count; j++) {
-            if (memcmp(members[i].node_address, pending_genesis_members[j].node_address, 20) == 0) {
-                if (members[i].algo_id != pending_genesis_members[j].algo_id) {
-                    MXD_LOG_WARN("rsc", "Genesis sign request algo_id mismatch for member %zu", i);
-                    return -1;
-                }
-                size_t pubkey_len = mxd_sig_pubkey_len(members[i].algo_id);
-                if (memcmp(members[i].public_key, pending_genesis_members[j].public_key, pubkey_len) != 0) {
-                    MXD_LOG_WARN("rsc", "Genesis sign request public_key mismatch for member %zu", i);
-                    return -1;
-                }
-                found = 1;
-                break;
+        if (memcmp(members[i].node_address, local_genesis_address, 20) == 0) {
+            // Verify our public key matches
+            size_t pubkey_len = mxd_sig_pubkey_len(local_genesis_algo_id);
+            if (members[i].algo_id != local_genesis_algo_id) {
+                MXD_LOG_WARN("rsc", "Genesis sign request has wrong algo_id for this node");
+                return -1;
             }
-        }
-        if (!found) {
-            MXD_LOG_WARN("rsc", "Genesis sign request contains unknown member at index %zu", i);
-            return -1;
+            if (memcmp(members[i].public_key, local_genesis_pubkey, pubkey_len) != 0) {
+                MXD_LOG_WARN("rsc", "Genesis sign request has wrong public_key for this node");
+                return -1;
+            }
+            self_included = 1;
+            break;
         }
     }
     
-    // Log if we're accepting a subset of our known members
-    if (member_count != pending_genesis_count) {
-        MXD_LOG_INFO("rsc", "Accepting genesis sign request with %zu members (we know %zu) - using proposer's list", 
-                     member_count, pending_genesis_count);
+    if (!self_included) {
+        MXD_LOG_DEBUG("rsc", "Genesis sign request does not include this node - ignoring");
+        return 0;
     }
+    
+    MXD_LOG_INFO("rsc", "Accepting genesis sign request with %zu members (trusting proposer's list)", member_count);
     
     MXD_LOG_INFO("rsc", "Genesis sign request member list validated (%zu members)", member_count);
     
