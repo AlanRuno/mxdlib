@@ -44,6 +44,7 @@ static void mxd_message_multiplexer(const char *address, uint16_t port,
         case MXD_MSG_GENESIS_ANNOUNCE:
         case MXD_MSG_GENESIS_SIGN_REQUEST:
         case MXD_MSG_GENESIS_SIGN_RESPONSE:
+        case MXD_MSG_GENESIS_SYNC:
             mxd_genesis_message_handler(address, port, type, payload, payload_length);
             break;
         
