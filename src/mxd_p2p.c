@@ -529,10 +529,11 @@ static int validate_message(const mxd_message_header_t *header, const void *payl
     }
 
     // Session token validation (protocol v3)
-    // Allow empty token for HANDSHAKE, SESSION_TOKEN, and genesis-related messages
-    // Genesis messages are broadcast and may arrive before sessions are fully established
+    // Allow empty token for HANDSHAKE, SESSION_TOKEN, peer discovery, and genesis-related messages
+    // These messages are used during initial connection setup before sessions are fully established
     // Validate against the token WE SENT (sent_session_token), not the one we received
     if (header->type != MXD_MSG_HANDSHAKE && header->type != MXD_MSG_SESSION_TOKEN &&
+        header->type != MXD_MSG_GET_PEERS && header->type != MXD_MSG_PEERS &&
         header->type != MXD_MSG_GENESIS_ANNOUNCE && header->type != MXD_MSG_GENESIS_SIGN_REQUEST &&
         header->type != MXD_MSG_GENESIS_SIGN_RESPONSE) {
         if (conn && conn->has_sent_token) {
