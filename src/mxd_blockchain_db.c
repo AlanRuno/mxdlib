@@ -419,8 +419,10 @@ int mxd_store_block(const mxd_block_t *block) {
                             block->validation_chain[i].signature_length);
     }
     
-    if (block->height > current_height) {
-        current_height = block->height;
+    // Update height if this block extends the chain
+    // For genesis block (height 0), we need >= to set current_height to 1 (meaning we have 1 block)
+    if (block->height >= current_height) {
+        current_height = block->height + 1;  // current_height represents "number of blocks" not "highest height"
         
         // CRITICAL FIX: Store current_height with endian conversion for cross-platform compatibility
         uint8_t height_meta_key[] = "current_height";
