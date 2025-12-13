@@ -1600,6 +1600,13 @@ int mxd_handle_genesis_announce(uint8_t algo_id, const uint8_t *node_address, co
     // Protect genesis globals with mutex
     pthread_mutex_lock(&genesis_mutex);
     
+    // Check if genesis coordination is locked (no new members allowed)
+    if (genesis_locked) {
+        MXD_LOG_DEBUG("rsc", "Genesis coordination locked, ignoring new member announce from %s", addr_hex);
+        pthread_mutex_unlock(&genesis_mutex);
+        return 0;
+    }
+    
     for (size_t i = 0; i < pending_genesis_count; i++) {
         if (memcmp(pending_genesis_members[i].node_address, node_address, 20) == 0) {
             MXD_LOG_DEBUG("rsc", "Genesis member already registered");
