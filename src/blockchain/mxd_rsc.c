@@ -1924,16 +1924,24 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
         }
     }
     
+    // Look up signer's public key from pending_genesis_members (not the registry, which may not have it yet)
     uint8_t signer_pubkey[MXD_PUBKEY_MAX_LEN];
-    size_t pubkey_len = sizeof(signer_pubkey);
-    if (mxd_get_validator_public_key(signer_address, signer_pubkey, sizeof(signer_pubkey), &pubkey_len) != 0) {
-        MXD_LOG_WARN("rsc", "Failed to get public key for signer");
-        return -1;
+    size_t pubkey_len = 0;
+    uint8_t signer_algo_id = 0;
+    int found_signer = 0;
+    
+    for (size_t i = 0; i < pending_genesis_count; i++) {
+        if (memcmp(pending_genesis_members[i].node_address, signer_address, 20) == 0) {
+            signer_algo_id = pending_genesis_members[i].algo_id;
+            pubkey_len = mxd_sig_pubkey_len(signer_algo_id);
+            memcpy(signer_pubkey, pending_genesis_members[i].public_key, pubkey_len);
+            found_signer = 1;
+            break;
+        }
     }
     
-    uint8_t signer_algo_id;
-    if (mxd_get_validator_algo_id(signer_address, &signer_algo_id) != 0) {
-        MXD_LOG_WARN("rsc", "Failed to get algorithm ID for signer");
+    if (!found_signer) {
+        MXD_LOG_WARN("rsc", "Signer not found in pending genesis members");
         return -1;
     }
     
