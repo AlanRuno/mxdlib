@@ -54,6 +54,7 @@ if(MXD_WITH_WASI)
   pkg_check_modules(UVWASI QUIET uvwasi)
 endif()
 pkg_check_modules(WASM3 REQUIRED wasm3)
+pkg_check_modules(MICROHTTPD REQUIRED libmicrohttpd)
 
 # Enable WASM3 gas metering for Phase 3 security implementation
 add_definitions(-DM3_COMPILE_WITH_METERING=1)
@@ -73,6 +74,7 @@ include_directories(
     ${CURL_INCLUDE_DIRS}
     ${MINIUPNPC_INCLUDE_DIRS}
     ${ROCKSDB_INCLUDE_DIR}
+    ${MICROHTTPD_INCLUDE_DIRS}
 )
 if(MXD_WITH_WASI AND UVWASI_FOUND)
     include_directories(${UVWASI_INCLUDE_DIRS})
@@ -166,6 +168,7 @@ else()
         ${CURL_LIBRARIES}
         ${MINIUPNPC_LIBRARIES}
         ${ROCKSDB_LIBRARY}
+        ${MICROHTTPD_LIBRARIES}
         -Wl,--no-whole-archive
         m
         pthread)
@@ -219,7 +222,8 @@ target_sources(mxd PRIVATE
     src/utils/mxd_http.c
     src/utils/mxd_cert_pinning.c
     src/utils/mxd_replay.c
-    src/metrics/mxd_prometheus.c)
+    src/metrics/mxd_prometheus.c
+    src/mxd_http_api.c)
 
 # Add main node executable
 add_executable(mxd_node src/node/main.c)
