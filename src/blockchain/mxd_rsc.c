@@ -1950,7 +1950,8 @@ int mxd_try_coordinate_genesis_block(void) {
     if (genesis_quorum_reached_time == 0) {
         genesis_quorum_reached_time = current_time;
         genesis_sync_started_time = current_time;
-        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, starting sync phase", pending_genesis_count);
+        genesis_locked = 1;  // Lock member list immediately when quorum is reached
+        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, locking member list and starting sync phase", pending_genesis_count);
     }
     
     // Sync phase: broadcast our member list hash and wait for confirmations
@@ -2007,9 +2008,6 @@ int mxd_try_coordinate_genesis_block(void) {
     
     if (!genesis_sign_request_sent) {
         MXD_LOG_INFO("rsc", "This node is the designated proposer for genesis block");
-        
-        genesis_locked = 1;
-        MXD_LOG_INFO("rsc", "Genesis coordination locked early - no new members will be accepted");
         
         mxd_block_t genesis_block;
         uint8_t prev_hash[64] = {0};
