@@ -1409,6 +1409,9 @@ int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *l
         return -1;
     }
     
+    // Reset genesis_locked to allow new members to be added
+    genesis_locked = 0;
+    
     local_genesis_algo_id = algo_id;
     
     size_t pubkey_len = mxd_sig_pubkey_len(local_genesis_algo_id);
