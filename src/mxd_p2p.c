@@ -594,11 +594,11 @@ static int check_rate_limit(mxd_message_type_t type) {
 }
 
 // Set message handler callback
+// Note: This can be called before p2p_initialized to ensure handler is ready
+// when connections start arriving
 int mxd_set_message_handler(mxd_message_handler_t handler) {
-    if (!p2p_initialized) {
-        return -1;
-    }
     message_handler = handler;
+    MXD_LOG_INFO("p2p", "Message handler %s", handler ? "registered" : "cleared");
     return 0;
 }
 

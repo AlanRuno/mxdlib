@@ -1409,6 +1409,9 @@ int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *l
         return -1;
     }
     
+    // Reset genesis_locked to allow new members to be added
+    genesis_locked = 0;
+    
     local_genesis_algo_id = algo_id;
     
     size_t pubkey_len = mxd_sig_pubkey_len(local_genesis_algo_id);
@@ -1599,6 +1602,13 @@ int mxd_handle_genesis_announce(uint8_t algo_id, const uint8_t *node_address, co
     
     // Protect genesis globals with mutex
     pthread_mutex_lock(&genesis_mutex);
+    
+    // Check if genesis coordination is locked (no new members allowed)
+    if (genesis_locked) {
+        MXD_LOG_DEBUG("rsc", "Genesis coordination locked, ignoring new member announce from %s", addr_hex);
+        pthread_mutex_unlock(&genesis_mutex);
+        return 0;
+    }
     
     for (size_t i = 0; i < pending_genesis_count; i++) {
         if (memcmp(pending_genesis_members[i].node_address, node_address, 20) == 0) {
@@ -1802,34 +1812,40 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         return -1;
     }
     
-    if (member_count != pending_genesis_count) {
-        MXD_LOG_WARN("rsc", "Genesis sign request member count mismatch: received %zu, local %zu", 
-                     member_count, pending_genesis_count);
+    // Accept sign requests if:
+    // 1. Member count is at least 3 (minimum for genesis)
+    // 2. This node is included in the member list
+    // We trust the proposer's member list to ensure consistency across the network
+    if (member_count < 3) {
+        MXD_LOG_WARN("rsc", "Genesis sign request has insufficient members: %zu (need at least 3)", member_count);
         return -1;
     }
     
+    // Verify this node is included in the member list
+    int self_included = 0;
     for (size_t i = 0; i < member_count; i++) {
-        int found = 0;
-        for (size_t j = 0; j < pending_genesis_count; j++) {
-            if (memcmp(members[i].node_address, pending_genesis_members[j].node_address, 20) == 0) {
-                if (members[i].algo_id != pending_genesis_members[j].algo_id) {
-                    MXD_LOG_WARN("rsc", "Genesis sign request algo_id mismatch for member %zu", i);
-                    return -1;
-                }
-                size_t pubkey_len = mxd_sig_pubkey_len(members[i].algo_id);
-                if (memcmp(members[i].public_key, pending_genesis_members[j].public_key, pubkey_len) != 0) {
-                    MXD_LOG_WARN("rsc", "Genesis sign request public_key mismatch for member %zu", i);
-                    return -1;
-                }
-                found = 1;
-                break;
+        if (memcmp(members[i].node_address, local_genesis_address, 20) == 0) {
+            // Verify our public key matches
+            size_t pubkey_len = mxd_sig_pubkey_len(local_genesis_algo_id);
+            if (members[i].algo_id != local_genesis_algo_id) {
+                MXD_LOG_WARN("rsc", "Genesis sign request has wrong algo_id for this node");
+                return -1;
             }
-        }
-        if (!found) {
-            MXD_LOG_WARN("rsc", "Genesis sign request contains unknown member at index %zu", i);
-            return -1;
+            if (memcmp(members[i].public_key, local_genesis_pubkey, pubkey_len) != 0) {
+                MXD_LOG_WARN("rsc", "Genesis sign request has wrong public_key for this node");
+                return -1;
+            }
+            self_included = 1;
+            break;
         }
     }
+    
+    if (!self_included) {
+        MXD_LOG_DEBUG("rsc", "Genesis sign request does not include this node - ignoring");
+        return 0;
+    }
+    
+    MXD_LOG_INFO("rsc", "Accepting genesis sign request with %zu members (trusting proposer's list)", member_count);
     
     MXD_LOG_INFO("rsc", "Genesis sign request member list validated (%zu members)", member_count);
     
@@ -1845,9 +1861,12 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
     
     already_signed_genesis = 1;
     
-    uint8_t response[20 + 64 + 2 + 4096];
+    // Response format: signer_address (20) + proposer_id (20) + membership_digest (64) + sig_len (2) + signature
+    uint8_t response[20 + 20 + 64 + 2 + 4096];
     size_t offset = 0;
     memcpy(response + offset, local_genesis_address, 20);
+    offset += 20;
+    memcpy(response + offset, proposer_id, 20);  // Include proposer_id so proposer can verify this response is for them
     offset += 20;
     memcpy(response + offset, membership_digest, 64);
     offset += 64;
@@ -1862,11 +1881,12 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         return -1;
     }
     
-    MXD_LOG_INFO("rsc", "Sent genesis signature response");
+    MXD_LOG_INFO("rsc", "Sent genesis signature response for proposer");
     return 0;
 }
 
-int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *membership_digest,
+int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *proposer_id,
+                                      const uint8_t *membership_digest,
                                       const uint8_t *signature, uint16_t signature_length) {
     if (!genesis_coordination_initialized) {
         return -1;
@@ -1874,6 +1894,12 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
     
     if (!genesis_sign_request_sent) {
         MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response (not active proposer)");
+        return 0;
+    }
+    
+    // Verify this response is for our sign request (not another proposer's)
+    if (memcmp(proposer_id, local_genesis_address, 20) != 0) {
+        MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response for different proposer");
         return 0;
     }
     
@@ -1950,7 +1976,8 @@ int mxd_try_coordinate_genesis_block(void) {
     if (genesis_quorum_reached_time == 0) {
         genesis_quorum_reached_time = current_time;
         genesis_sync_started_time = current_time;
-        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, starting sync phase", pending_genesis_count);
+        genesis_locked = 1;  // Lock member list immediately when quorum is reached
+        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, locking member list and starting sync phase", pending_genesis_count);
     }
     
     // Sync phase: broadcast our member list hash and wait for confirmations
@@ -2007,9 +2034,6 @@ int mxd_try_coordinate_genesis_block(void) {
     
     if (!genesis_sign_request_sent) {
         MXD_LOG_INFO("rsc", "This node is the designated proposer for genesis block");
-        
-        genesis_locked = 1;
-        MXD_LOG_INFO("rsc", "Genesis coordination locked early - no new members will be accepted");
         
         mxd_block_t genesis_block;
         uint8_t prev_hash[64] = {0};

@@ -156,7 +156,8 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
         }
         
         case MXD_MSG_GENESIS_SIGN_RESPONSE: {
-            if (payload_length < 20 + 64 + 2) {
+            // Response format: signer_address (20) + proposer_id (20) + membership_digest (64) + sig_len (2) + signature
+            if (payload_length < 20 + 20 + 64 + 2) {
                 MXD_LOG_WARN("genesis", "Invalid GENESIS_SIGN_RESPONSE message size");
                 return;
             }
@@ -165,6 +166,8 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
             size_t offset = 0;
             
             const uint8_t *signer_address = data + offset;
+            offset += 20;
+            const uint8_t *proposer_id = data + offset;
             offset += 20;
             const uint8_t *membership_digest = data + offset;
             offset += 64;
@@ -179,7 +182,7 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
             
             const uint8_t *signature = data + offset;
             
-            mxd_handle_genesis_sign_response(signer_address, membership_digest, signature, sig_len);
+            mxd_handle_genesis_sign_response(signer_address, proposer_id, membership_digest, signature, sig_len);
             break;
         }
         
