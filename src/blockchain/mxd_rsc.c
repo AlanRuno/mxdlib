@@ -1809,12 +1809,14 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         return -1;
     }
     
-    if (member_count != pending_genesis_count) {
-        MXD_LOG_WARN("rsc", "Genesis sign request member count mismatch: received %zu, local %zu", 
-                     member_count, pending_genesis_count);
+    // Accept sign requests where all members are known to us (even if we know more members)
+    // This allows the proposer's member list to be used for genesis, ensuring consistency
+    if (member_count < 3) {
+        MXD_LOG_WARN("rsc", "Genesis sign request has insufficient members: %zu (need at least 3)", member_count);
         return -1;
     }
     
+    // Verify all members in the request are known to us
     for (size_t i = 0; i < member_count; i++) {
         int found = 0;
         for (size_t j = 0; j < pending_genesis_count; j++) {
@@ -1836,6 +1838,12 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
             MXD_LOG_WARN("rsc", "Genesis sign request contains unknown member at index %zu", i);
             return -1;
         }
+    }
+    
+    // Log if we're accepting a subset of our known members
+    if (member_count != pending_genesis_count) {
+        MXD_LOG_INFO("rsc", "Accepting genesis sign request with %zu members (we know %zu) - using proposer's list", 
+                     member_count, pending_genesis_count);
     }
     
     MXD_LOG_INFO("rsc", "Genesis sign request member list validated (%zu members)", member_count);
