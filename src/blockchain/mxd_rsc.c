@@ -1861,9 +1861,12 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
     
     already_signed_genesis = 1;
     
-    uint8_t response[20 + 64 + 2 + 4096];
+    // Response format: signer_address (20) + proposer_id (20) + membership_digest (64) + sig_len (2) + signature
+    uint8_t response[20 + 20 + 64 + 2 + 4096];
     size_t offset = 0;
     memcpy(response + offset, local_genesis_address, 20);
+    offset += 20;
+    memcpy(response + offset, proposer_id, 20);  // Include proposer_id so proposer can verify this response is for them
     offset += 20;
     memcpy(response + offset, membership_digest, 64);
     offset += 64;
@@ -1878,11 +1881,12 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         return -1;
     }
     
-    MXD_LOG_INFO("rsc", "Sent genesis signature response");
+    MXD_LOG_INFO("rsc", "Sent genesis signature response for proposer");
     return 0;
 }
 
-int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *membership_digest,
+int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *proposer_id,
+                                      const uint8_t *membership_digest,
                                       const uint8_t *signature, uint16_t signature_length) {
     if (!genesis_coordination_initialized) {
         return -1;
@@ -1890,6 +1894,12 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
     
     if (!genesis_sign_request_sent) {
         MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response (not active proposer)");
+        return 0;
+    }
+    
+    // Verify this response is for our sign request (not another proposer's)
+    if (memcmp(proposer_id, local_genesis_address, 20) != 0) {
+        MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response for different proposer");
         return 0;
     }
     

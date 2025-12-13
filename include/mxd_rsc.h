@@ -151,7 +151,8 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
                                      const uint8_t *proposer_id, uint32_t height,
                                      const mxd_genesis_member_t *members, size_t member_count);
 
-int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *membership_digest,
+int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *proposer_id,
+                                      const uint8_t *membership_digest,
                                       const uint8_t *signature, uint16_t signature_length);
 
 int mxd_broadcast_genesis_sync(void);
