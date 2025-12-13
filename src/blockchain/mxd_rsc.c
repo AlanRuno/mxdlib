@@ -1239,6 +1239,7 @@ static size_t collected_signature_count = 0;
 static uint8_t pending_genesis_digest[64] = {0};
 static int genesis_sign_request_sent = 0;
 static int genesis_locked = 0;
+static int already_signed_genesis = 0;  // Track if we've signed a genesis request from another proposer
 static pthread_mutex_t genesis_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Genesis sync phase tracking
@@ -1815,7 +1816,6 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         return -1;
     }
     
-    static int already_signed_genesis = 0;
     if (already_signed_genesis) {
         MXD_LOG_WARN("rsc", "Already signed genesis block");
         return -1;
@@ -2039,8 +2039,9 @@ int mxd_try_coordinate_genesis_block(void) {
     int is_designated_proposer = (memcmp(local_genesis_address, addresses[0], 20) == 0);
     
     // Allow fallback proposer if timeout exceeded and we're in the top 3
+    // BUT NOT if we've already signed a genesis request from another proposer
     int is_fallback_proposer = 0;
-    if (!is_designated_proposer && (current_time - genesis_quorum_reached_time) > MXD_GENESIS_PROPOSER_TIMEOUT_MS) {
+    if (!is_designated_proposer && !already_signed_genesis && (current_time - genesis_quorum_reached_time) > MXD_GENESIS_PROPOSER_TIMEOUT_MS) {
         for (size_t i = 1; i < addr_count && i < 3; i++) {
             if (memcmp(local_genesis_address, addresses[i], 20) == 0) {
                 is_fallback_proposer = 1;
