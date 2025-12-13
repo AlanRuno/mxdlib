@@ -57,7 +57,8 @@ typedef enum {
   MXD_MSG_GENESIS_SIGN_REQUEST = 15,
   MXD_MSG_GENESIS_SIGN_RESPONSE = 16,
   MXD_MSG_SESSION_TOKEN = 17,
-  MXD_MSG_MAX = MXD_MSG_SESSION_TOKEN
+  MXD_MSG_GENESIS_SYNC = 18,  // Genesis member list synchronization
+  MXD_MSG_MAX = MXD_MSG_GENESIS_SYNC
 } mxd_message_type_t;
 
 // Message header

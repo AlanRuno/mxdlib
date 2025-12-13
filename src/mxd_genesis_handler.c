@@ -183,6 +183,38 @@ void mxd_genesis_message_handler(const char *address, uint16_t port,
             break;
         }
         
+        case MXD_MSG_GENESIS_SYNC: {
+            // Message format: [node_address(20)] [member_count(4)] [member_list_hash(64)] [timestamp(8)]
+            if (payload_length < 20 + 4 + 64 + 8) {
+                MXD_LOG_WARN("genesis", "Invalid GENESIS_SYNC message size: %zu (expected: %zu)", 
+                             payload_length, (size_t)(20 + 4 + 64 + 8));
+                return;
+            }
+            
+            const uint8_t *data = (const uint8_t *)payload;
+            size_t offset = 0;
+            
+            const uint8_t *node_address = data + offset;
+            offset += 20;
+            
+            uint32_t member_count_net;
+            memcpy(&member_count_net, data + offset, 4);
+            uint32_t member_count = ntohl(member_count_net);
+            offset += 4;
+            
+            const uint8_t *member_list_hash = data + offset;
+            offset += 64;
+            
+            uint64_t timestamp_net;
+            memcpy(&timestamp_net, data + offset, 8);
+            uint64_t timestamp = mxd_ntohll(timestamp_net);
+            
+            MXD_LOG_INFO("genesis", "Received genesis sync: member_count=%u", member_count);
+            
+            mxd_handle_genesis_sync(node_address, member_count, member_list_hash, timestamp);
+            break;
+        }
+        
         default:
             break;
     }

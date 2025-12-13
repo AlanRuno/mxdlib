@@ -154,6 +154,11 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
 int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_t *membership_digest,
                                       const uint8_t *signature, uint16_t signature_length);
 
+int mxd_broadcast_genesis_sync(void);
+
+int mxd_handle_genesis_sync(const uint8_t *node_address, size_t member_count, 
+                             const uint8_t *member_list_hash, uint64_t timestamp);
+
 int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_address,
                                   const uint8_t *private_key, const uint8_t *public_key);
 

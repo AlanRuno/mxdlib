@@ -1241,6 +1241,163 @@ static int genesis_sign_request_sent = 0;
 static int genesis_locked = 0;
 static pthread_mutex_t genesis_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// Genesis sync phase tracking
+#define MXD_GENESIS_SYNC_TIMEOUT_MS 10000  // 10 seconds to wait for sync confirmations
+#define MXD_GENESIS_SYNC_MIN_CONFIRMATIONS 3  // Minimum nodes that must agree on member list
+
+typedef struct {
+    uint8_t node_address[20];
+    uint8_t member_list_hash[64];  // SHA-512 hash of sorted member addresses
+    size_t member_count;
+    uint64_t timestamp;
+} mxd_genesis_sync_t;
+
+static mxd_genesis_sync_t genesis_sync_confirmations[20];
+static size_t genesis_sync_count = 0;
+static uint64_t genesis_sync_started_time = 0;
+static int genesis_sync_phase_complete = 0;
+static uint8_t local_member_list_hash[64] = {0};
+
+// Forward declaration for compare_addresses (defined later in file)
+static int compare_addresses(const void *a, const void *b);
+
+// Calculate hash of sorted member list for sync comparison
+static int calculate_member_list_hash(uint8_t *hash_out) {
+    if (!hash_out || pending_genesis_count == 0) {
+        return -1;
+    }
+    
+    // Create sorted copy of member addresses
+    uint8_t sorted_addresses[20][20];
+    for (size_t i = 0; i < pending_genesis_count && i < 20; i++) {
+        memcpy(sorted_addresses[i], pending_genesis_members[i].node_address, 20);
+    }
+    
+    // Sort addresses
+    size_t count = pending_genesis_count < 20 ? pending_genesis_count : 20;
+    qsort(sorted_addresses, count, 20, compare_addresses);
+    
+    // Hash the sorted addresses
+    return mxd_sha512((uint8_t*)sorted_addresses, count * 20, hash_out);
+}
+
+// Broadcast genesis sync message with current member list hash
+int mxd_broadcast_genesis_sync(void) {
+    if (!genesis_coordination_initialized || pending_genesis_count < 3) {
+        return -1;
+    }
+    
+    pthread_mutex_lock(&genesis_mutex);
+    
+    // Calculate current member list hash
+    if (calculate_member_list_hash(local_member_list_hash) != 0) {
+        pthread_mutex_unlock(&genesis_mutex);
+        return -1;
+    }
+    
+    size_t count = pending_genesis_count;
+    pthread_mutex_unlock(&genesis_mutex);
+    
+    // Build sync message: [node_address(20)] [member_count(4)] [member_list_hash(64)] [timestamp(8)]
+    uint8_t message[20 + 4 + 64 + 8];
+    size_t offset = 0;
+    
+    memcpy(message + offset, local_genesis_address, 20);
+    offset += 20;
+    
+    uint32_t count_net = htonl((uint32_t)count);
+    memcpy(message + offset, &count_net, 4);
+    offset += 4;
+    
+    memcpy(message + offset, local_member_list_hash, 64);
+    offset += 64;
+    
+    uint64_t timestamp = mxd_now_ms();
+    uint64_t timestamp_net = mxd_htonll(timestamp);
+    memcpy(message + offset, &timestamp_net, 8);
+    offset += 8;
+    
+    MXD_LOG_INFO("rsc", "Broadcasting genesis sync: member_count=%zu", count);
+    
+    return mxd_broadcast_message(MXD_MSG_GENESIS_SYNC, message, offset);
+}
+
+// Handle incoming genesis sync message
+int mxd_handle_genesis_sync(const uint8_t *node_address, size_t member_count, 
+                            const uint8_t *member_list_hash, uint64_t timestamp) {
+    if (!genesis_coordination_initialized || !node_address || !member_list_hash) {
+        return -1;
+    }
+    
+    pthread_mutex_lock(&genesis_mutex);
+    
+    // Check if we already have a sync from this node
+    for (size_t i = 0; i < genesis_sync_count; i++) {
+        if (memcmp(genesis_sync_confirmations[i].node_address, node_address, 20) == 0) {
+            // Update existing entry if newer
+            if (timestamp > genesis_sync_confirmations[i].timestamp) {
+                genesis_sync_confirmations[i].member_count = member_count;
+                memcpy(genesis_sync_confirmations[i].member_list_hash, member_list_hash, 64);
+                genesis_sync_confirmations[i].timestamp = timestamp;
+            }
+            pthread_mutex_unlock(&genesis_mutex);
+            return 0;
+        }
+    }
+    
+    // Add new sync confirmation
+    if (genesis_sync_count < 20) {
+        mxd_genesis_sync_t *sync = &genesis_sync_confirmations[genesis_sync_count];
+        memcpy(sync->node_address, node_address, 20);
+        sync->member_count = member_count;
+        memcpy(sync->member_list_hash, member_list_hash, 64);
+        sync->timestamp = timestamp;
+        genesis_sync_count++;
+        
+        char addr_hex[41] = {0};
+        for (int i = 0; i < 20; i++) {
+            snprintf(addr_hex + (i * 2), 3, "%02x", node_address[i]);
+        }
+        MXD_LOG_INFO("rsc", "Received genesis sync from %s: member_count=%zu (total syncs: %zu)", 
+                     addr_hex, member_count, genesis_sync_count);
+    }
+    
+    pthread_mutex_unlock(&genesis_mutex);
+    return 0;
+}
+
+// Check if sync phase is complete (enough nodes agree on member list)
+static int check_genesis_sync_complete(void) {
+    if (genesis_sync_phase_complete) {
+        return 1;
+    }
+    
+    // Calculate our current member list hash
+    uint8_t our_hash[64];
+    if (calculate_member_list_hash(our_hash) != 0) {
+        return 0;
+    }
+    
+    // Count how many nodes agree with our member list
+    int matching_count = 1;  // Count ourselves
+    
+    for (size_t i = 0; i < genesis_sync_count; i++) {
+        if (memcmp(genesis_sync_confirmations[i].member_list_hash, our_hash, 64) == 0 &&
+            genesis_sync_confirmations[i].member_count == pending_genesis_count) {
+            matching_count++;
+        }
+    }
+    
+    if (matching_count >= MXD_GENESIS_SYNC_MIN_CONFIRMATIONS) {
+        MXD_LOG_INFO("rsc", "Genesis sync complete: %d nodes agree on member list (%zu members)", 
+                     matching_count, pending_genesis_count);
+        genesis_sync_phase_complete = 1;
+        return 1;
+    }
+    
+    return 0;
+}
+
 int mxd_init_genesis_coordination(const uint8_t *local_address, const uint8_t *local_pubkey, const uint8_t *local_privkey, uint8_t algo_id) {
     if (!local_address || !local_pubkey || !local_privkey) {
         return -1;
@@ -1792,7 +1949,31 @@ int mxd_try_coordinate_genesis_block(void) {
     uint64_t current_time = mxd_now_ms();
     if (genesis_quorum_reached_time == 0) {
         genesis_quorum_reached_time = current_time;
-        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, starting coordination", pending_genesis_count);
+        genesis_sync_started_time = current_time;
+        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, starting sync phase", pending_genesis_count);
+    }
+    
+    // Sync phase: broadcast our member list hash and wait for confirmations
+    if (!genesis_sync_phase_complete) {
+        // Periodically broadcast sync message (every 2 seconds)
+        static uint64_t last_sync_broadcast = 0;
+        if (current_time - last_sync_broadcast > 2000) {
+            mxd_broadcast_genesis_sync();
+            last_sync_broadcast = current_time;
+        }
+        
+        // Check if sync is complete
+        if (!check_genesis_sync_complete()) {
+            // Check for sync timeout
+            if (current_time - genesis_sync_started_time > MXD_GENESIS_SYNC_TIMEOUT_MS) {
+                MXD_LOG_WARN("rsc", "Genesis sync timeout after %llu ms, proceeding with %zu sync confirmations",
+                            (unsigned long long)(current_time - genesis_sync_started_time), genesis_sync_count);
+                genesis_sync_phase_complete = 1;
+            } else {
+                return 0;  // Still waiting for sync
+            }
+        }
+        MXD_LOG_INFO("rsc", "Genesis sync phase complete, proceeding to sign request phase");
     }
     
     uint8_t addresses[10][20];
