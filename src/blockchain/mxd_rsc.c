@@ -1793,11 +1793,20 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
                                      const uint8_t *proposer_id, uint32_t height,
                                      const mxd_genesis_member_t *members, size_t member_count) {
     if (!genesis_coordination_initialized) {
+        MXD_LOG_INFO("rsc", "Genesis sign request rejected: coordination not initialized");
         return -1;
     }
     
+    // Log target address vs local address for debugging
+    char target_hex[41], local_hex[41];
+    for (int i = 0; i < 20; i++) {
+        sprintf(target_hex + i*2, "%02x", target_address[i]);
+        sprintf(local_hex + i*2, "%02x", local_genesis_address[i]);
+    }
+    MXD_LOG_INFO("rsc", "Genesis sign request: target=%s, local=%s", target_hex, local_hex);
+    
     if (memcmp(target_address, local_genesis_address, 20) != 0) {
-        MXD_LOG_DEBUG("rsc", "Genesis sign request not for this node");
+        MXD_LOG_INFO("rsc", "Genesis sign request not for this node (address mismatch)");
         return 0;
     }
     
