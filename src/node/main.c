@@ -1,4 +1,5 @@
 #include "../include/mxd_logging.h"
+#include "../include/mxd_http_api.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -181,6 +182,7 @@ int main(int argc, char** argv) {
     char default_config_path[PATH_MAX];
     const char* config_path = NULL;
     uint16_t override_port = 0;
+    uint16_t http_api_port = 0;
     int is_bootstrap = 0;
     uint8_t override_algo_id = 0;
     int algo_specified = 0;
@@ -213,10 +215,18 @@ int main(int argc, char** argv) {
         } else if (strcmp(argv[i], "--bootstrap") == 0) {
             is_bootstrap = 1;
             MXD_LOG_INFO("node", "Running in bootstrap mode");
+        } else if (strcmp(argv[i], "--http-api") == 0 && i + 1 < argc) {
+            int port = atoi(argv[++i]);
+            if (port < 1024 || port > 65535) {
+                MXD_LOG_ERROR("node", "HTTP API port must be between 1024 and 65535");
+                return 1;
+            }
+            http_api_port = (uint16_t)port;
+            MXD_LOG_INFO("node", "HTTP API will be enabled on port %d", http_api_port);
         } else if (argv[i][0] != '-' && !config_path) {
             config_path = argv[i];
         } else {
-            MXD_LOG_ERROR("node", "Usage: %s [config_file] [--config <file>] [--port <number>] [--algo <ed25519|dilithium5>] [--bootstrap]", argv[0]);
+            MXD_LOG_ERROR("node", "Usage: %s [config_file] [--config <file>] [--port <number>] [--algo <ed25519|dilithium5>] [--bootstrap] [--http-api <port>]", argv[0]);
             return 1;
         }
     }
@@ -387,6 +397,27 @@ int main(int argc, char** argv) {
             mxd_cleanup_monitoring();
             mxd_stop_dht();
             return 1;
+        }
+    }
+    
+    // Check for HTTP API port from environment variable if not specified on command line
+    if (http_api_port == 0) {
+        const char *env_port = getenv("MXD_HTTP_API_PORT");
+        if (env_port) {
+            int port = atoi(env_port);
+            if (port >= 1024 && port <= 65535) {
+                http_api_port = (uint16_t)port;
+                MXD_LOG_INFO("node", "HTTP API port from environment: %d", http_api_port);
+            }
+        }
+    }
+    
+    // Start HTTP API server if port is specified
+    if (http_api_port > 0) {
+        if (mxd_http_api_start(http_api_port) == 0) {
+            MXD_LOG_INFO("node", "HTTP API server started on port %d", http_api_port);
+        } else {
+            MXD_LOG_WARN("node", "Failed to start HTTP API server on port %d", http_api_port);
         }
     }
     
@@ -585,6 +616,7 @@ int main(int argc, char** argv) {
     
     // Cleanup
     pthread_join(collector_thread, NULL);
+    mxd_http_api_stop();
     mxd_stop_metrics_server();
     mxd_cleanup_monitoring();
     mxd_stop_dht();
