@@ -1239,6 +1239,7 @@ static size_t collected_signature_count = 0;
 static uint8_t pending_genesis_digest[64] = {0};
 static int genesis_sign_request_sent = 0;
 static int genesis_locked = 0;
+static int already_signed_genesis = 0;  // Track if we've signed a genesis request from another proposer
 static pthread_mutex_t genesis_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Genesis sync phase tracking
@@ -1793,11 +1794,20 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
                                      const uint8_t *proposer_id, uint32_t height,
                                      const mxd_genesis_member_t *members, size_t member_count) {
     if (!genesis_coordination_initialized) {
+        MXD_LOG_INFO("rsc", "Genesis sign request rejected: coordination not initialized");
         return -1;
     }
     
+    // Log target address vs local address for debugging
+    char target_hex[41], local_hex[41];
+    for (int i = 0; i < 20; i++) {
+        sprintf(target_hex + i*2, "%02x", target_address[i]);
+        sprintf(local_hex + i*2, "%02x", local_genesis_address[i]);
+    }
+    MXD_LOG_INFO("rsc", "Genesis sign request: target=%s, local=%s", target_hex, local_hex);
+    
     if (memcmp(target_address, local_genesis_address, 20) != 0) {
-        MXD_LOG_DEBUG("rsc", "Genesis sign request not for this node");
+        MXD_LOG_INFO("rsc", "Genesis sign request not for this node (address mismatch)");
         return 0;
     }
     
@@ -1806,7 +1816,6 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
         return -1;
     }
     
-    static int already_signed_genesis = 0;
     if (already_signed_genesis) {
         MXD_LOG_WARN("rsc", "Already signed genesis block");
         return -1;
@@ -1893,13 +1902,18 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
     }
     
     if (!genesis_sign_request_sent) {
-        MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response (not active proposer)");
+        MXD_LOG_INFO("rsc", "Ignoring genesis sign response (not active proposer, genesis_sign_request_sent=%d)", genesis_sign_request_sent);
         return 0;
     }
     
     // Verify this response is for our sign request (not another proposer's)
     if (memcmp(proposer_id, local_genesis_address, 20) != 0) {
-        MXD_LOG_DEBUG("rsc", "Ignoring genesis sign response for different proposer");
+        char proposer_hex[41], local_hex[41];
+        for (int i = 0; i < 20; i++) {
+            sprintf(proposer_hex + i*2, "%02x", proposer_id[i]);
+            sprintf(local_hex + i*2, "%02x", local_genesis_address[i]);
+        }
+        MXD_LOG_INFO("rsc", "Ignoring genesis sign response for different proposer: got=%s, local=%s", proposer_hex, local_hex);
         return 0;
     }
     
@@ -1915,16 +1929,24 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
         }
     }
     
+    // Look up signer's public key from pending_genesis_members (not the registry, which may not have it yet)
     uint8_t signer_pubkey[MXD_PUBKEY_MAX_LEN];
-    size_t pubkey_len = sizeof(signer_pubkey);
-    if (mxd_get_validator_public_key(signer_address, signer_pubkey, sizeof(signer_pubkey), &pubkey_len) != 0) {
-        MXD_LOG_WARN("rsc", "Failed to get public key for signer");
-        return -1;
+    size_t pubkey_len = 0;
+    uint8_t signer_algo_id = 0;
+    int found_signer = 0;
+    
+    for (size_t i = 0; i < pending_genesis_count; i++) {
+        if (memcmp(pending_genesis_members[i].node_address, signer_address, 20) == 0) {
+            signer_algo_id = pending_genesis_members[i].algo_id;
+            pubkey_len = mxd_sig_pubkey_len(signer_algo_id);
+            memcpy(signer_pubkey, pending_genesis_members[i].public_key, pubkey_len);
+            found_signer = 1;
+            break;
+        }
     }
     
-    uint8_t signer_algo_id;
-    if (mxd_get_validator_algo_id(signer_address, &signer_algo_id) != 0) {
-        MXD_LOG_WARN("rsc", "Failed to get algorithm ID for signer");
+    if (!found_signer) {
+        MXD_LOG_WARN("rsc", "Signer not found in pending genesis members");
         return -1;
     }
     
@@ -2017,8 +2039,9 @@ int mxd_try_coordinate_genesis_block(void) {
     int is_designated_proposer = (memcmp(local_genesis_address, addresses[0], 20) == 0);
     
     // Allow fallback proposer if timeout exceeded and we're in the top 3
+    // BUT NOT if we've already signed a genesis request from another proposer
     int is_fallback_proposer = 0;
-    if (!is_designated_proposer && (current_time - genesis_quorum_reached_time) > MXD_GENESIS_PROPOSER_TIMEOUT_MS) {
+    if (!is_designated_proposer && !already_signed_genesis && (current_time - genesis_quorum_reached_time) > MXD_GENESIS_PROPOSER_TIMEOUT_MS) {
         for (size_t i = 1; i < addr_count && i < 3; i++) {
             if (memcmp(local_genesis_address, addresses[i], 20) == 0) {
                 is_fallback_proposer = 1;
@@ -2079,7 +2102,9 @@ int mxd_try_coordinate_genesis_block(void) {
         self_sig->received = 1;
         collected_signature_count++;
         
-        for (size_t i = 0; i < pending_genesis_count && i < 3; i++) {
+        // Send sign requests to ALL pending genesis members (not just first 3)
+        // This ensures we get enough responses even if some nodes don't respond
+        for (size_t i = 0; i < pending_genesis_count; i++) {
             if (memcmp(pending_genesis_members[i].node_address, local_genesis_address, 20) != 0) {
                 mxd_send_genesis_sign_request(pending_genesis_members[i].node_address, 
                                               pending_genesis_digest, local_genesis_address, 0,
