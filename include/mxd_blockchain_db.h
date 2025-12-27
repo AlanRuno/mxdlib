@@ -45,6 +45,8 @@ int mxd_retrieve_validator_metadata(const uint8_t validator_id[20], uint8_t *out
 
 int mxd_load_all_validator_metadata(void);
 
+int mxd_broadcast_block(const mxd_block_t *block);
+
 #ifdef __cplusplus
 }
 #endif

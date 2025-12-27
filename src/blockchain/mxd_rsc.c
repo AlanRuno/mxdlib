@@ -2185,6 +2185,12 @@ int mxd_try_coordinate_genesis_block(void) {
     MXD_LOG_INFO("rsc", "Genesis block created successfully with %u validators",
                  genesis_block.rapid_membership_count);
     
+    if (mxd_broadcast_block(&genesis_block) != 0) {
+        MXD_LOG_WARN("rsc", "Failed to broadcast genesis block to network");
+    } else {
+        MXD_LOG_INFO("rsc", "Genesis block broadcast to network");
+    }
+    
     mxd_free_validation_chain(&genesis_block);
     
     return 1;
