@@ -5,6 +5,7 @@
 #include "../include/blockchain/mxd_rsc.h"
 #include "../include/mxd_endian.h"
 #include "../include/mxd_serialize.h"
+#include "../include/mxd_p2p.h"
 #include <rocksdb/c.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1011,4 +1012,29 @@ int mxd_load_all_validator_metadata(void) {
     
     MXD_LOG_INFO("db", "Loaded %d validator metadata entries from database", loaded_count);
     return 0;
+}
+
+int mxd_broadcast_block(const mxd_block_t *block) {
+    if (!block) {
+        return -1;
+    }
+    
+    uint8_t *data = NULL;
+    size_t data_len = 0;
+    
+    if (serialize_block(block, &data, &data_len) != 0) {
+        MXD_LOG_ERROR("db", "Failed to serialize block for broadcast");
+        return -1;
+    }
+    
+    int result = mxd_broadcast_message(MXD_MSG_BLOCKS, data, data_len);
+    
+    if (result == 0) {
+        MXD_LOG_INFO("db", "Broadcast block at height %u to network", block->height);
+    } else {
+        MXD_LOG_WARN("db", "Failed to broadcast block at height %u", block->height);
+    }
+    
+    free(data);
+    return result;
 }
