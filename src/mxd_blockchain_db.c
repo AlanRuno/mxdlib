@@ -1038,3 +1038,10 @@ int mxd_broadcast_block(const mxd_block_t *block) {
     free(data);
     return result;
 }
+
+int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_len, mxd_block_t *block) {
+    if (!data || !block || data_len == 0) {
+        return -1;
+    }
+    return deserialize_block(data, data_len, block);
+}
