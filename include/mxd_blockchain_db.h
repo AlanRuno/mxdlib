@@ -47,6 +47,8 @@ int mxd_load_all_validator_metadata(void);
 
 int mxd_broadcast_block(const mxd_block_t *block);
 
+int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_len, mxd_block_t *block);
+
 #ifdef __cplusplus
 }
 #endif

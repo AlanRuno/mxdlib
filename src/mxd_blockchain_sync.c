@@ -106,12 +106,54 @@ static mxd_block_t *pending_blocks = NULL;
 static volatile uint32_t pending_blocks_received = 0;
 static volatile uint32_t pending_blocks_expected = 0;
 
+// Forward declaration for deserializing blocks from database format
+extern int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_len, mxd_block_t *block);
+
 // Called by P2P layer when block data is received
 void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t block_index) {
-    if (!data || data_len == 0 || !pending_blocks) return;
+    if (!data || data_len == 0) return;
+    
+    // Handle unsolicited blocks (e.g., genesis block broadcast)
+    if (!pending_blocks) {
+        MXD_LOG_INFO("sync", "Received unsolicited block data (len=%zu), attempting to process", data_len);
+        
+        // Deserialize the block using the network format
+        mxd_block_t block;
+        memset(&block, 0, sizeof(block));
+        
+        if (mxd_deserialize_block_from_network(data, data_len, &block) != 0) {
+            MXD_LOG_WARN("sync", "Failed to deserialize unsolicited block");
+            return;
+        }
+        
+        MXD_LOG_INFO("sync", "Deserialized unsolicited block: height=%u, validators=%u, membership=%u",
+                     block.height, block.validation_count, block.rapid_membership_count);
+        
+        // Check if we already have this block
+        uint32_t current_height = 0;
+        mxd_get_blockchain_height(&current_height);
+        
+        if (block.height <= current_height) {
+            MXD_LOG_DEBUG("sync", "Already have block at height %u (current=%u), ignoring",
+                         block.height, current_height);
+            mxd_free_block(&block);
+            return;
+        }
+        
+        // Store the block
+        if (mxd_store_block(&block) == 0) {
+            MXD_LOG_INFO("sync", "Stored unsolicited block at height %u", block.height);
+        } else {
+            MXD_LOG_ERROR("sync", "Failed to store unsolicited block at height %u", block.height);
+        }
+        
+        mxd_free_block(&block);
+        return;
+    }
+    
     if (block_index >= pending_blocks_expected) return;
     
-    // Deserialize block from received data
+    // Deserialize block from received data (for requested blocks)
     mxd_block_t *block = &pending_blocks[block_index];
     
     const uint8_t *ptr = data;
