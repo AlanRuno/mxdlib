@@ -6,7 +6,7 @@ build/
 *.wat
 
 # Generated headers
-wasm_binary.h
+# Note: wasm_binary.h is now tracked in tests/ directory
 
 # External dependencies
 wasm3/
