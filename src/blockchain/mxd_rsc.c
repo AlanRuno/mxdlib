@@ -357,12 +357,17 @@ int mxd_init_rapid_table(mxd_rapid_table_t *table, size_t capacity) {
 
 int mxd_add_to_rapid_table(mxd_rapid_table_t *table, mxd_node_stake_t *node, const char *local_node_id) {
     if (!table || !node || !table->nodes) {
+        MXD_LOG_DEBUG("rsc", "add_to_rapid_table: null check failed (table=%p, node=%p, nodes=%p)", 
+                     (void*)table, (void*)node, table ? (void*)table->nodes : NULL);
         return -1;
     }
     
     // Check if we're in genesis mode (network height is 0)
     uint32_t blockchain_height = 0;
     int is_genesis = (mxd_get_blockchain_height(&blockchain_height) != 0 || blockchain_height == 0);
+    
+    MXD_LOG_DEBUG("rsc", "add_to_rapid_table: node=%s, is_genesis=%d, height=%u, count=%zu, capacity=%zu", 
+                 node->node_id, is_genesis, blockchain_height, table->count, table->capacity);
     
     if (!is_genesis && local_node_id && strcmp(node->node_id, local_node_id) == 0) {
         MXD_LOG_DEBUG("rsc", "Skipping self-node %s from rapid table (non-genesis mode)", node->node_id);
@@ -376,12 +381,15 @@ int mxd_add_to_rapid_table(mxd_rapid_table_t *table, mxd_node_stake_t *node, con
     // Check if node is already in table
     for (size_t i = 0; i < table->count; i++) {
         if (table->nodes[i] && strcmp(table->nodes[i]->node_id, node->node_id) == 0) {
+            MXD_LOG_DEBUG("rsc", "Node %s already in rapid table at position %zu", node->node_id, i);
             return 0; // Node already in table
         }
     }
     
     // Check if table is full
     if (table->count >= table->capacity) {
+        MXD_LOG_WARN("rsc", "Rapid table full (count=%zu, capacity=%zu), cannot add %s", 
+                    table->count, table->capacity, node->node_id);
         return -1;
     }
     
@@ -391,6 +399,8 @@ int mxd_add_to_rapid_table(mxd_rapid_table_t *table, mxd_node_stake_t *node, con
     table->count++;
     
     table->last_update = mxd_now_ms();
+    
+    MXD_LOG_DEBUG("rsc", "Successfully added %s to rapid table at position %zu", node->node_id, table->count - 1);
     
     return 0;
 }
@@ -1672,6 +1682,8 @@ void mxd_set_genesis_locked(int locked) {
 
 int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char *local_node_id) {
     if (!genesis_coordination_initialized || !table) {
+        MXD_LOG_DEBUG("rsc", "sync_pending_genesis: early return (init=%d, table=%p)", 
+                     genesis_coordination_initialized, (void*)table);
         return -1;
     }
     
@@ -1679,6 +1691,9 @@ int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char
         MXD_LOG_DEBUG("rsc", "Genesis coordination locked, skipping sync to rapid table");
         return 0;
     }
+    
+    MXD_LOG_DEBUG("rsc", "sync_pending_genesis: processing %zu pending members (table count=%zu, capacity=%zu, nodes=%p)", 
+                 pending_genesis_count, table->count, table->capacity, (void*)table->nodes);
     
     for (size_t i = 0; i < pending_genesis_count; i++) {
         mxd_genesis_member_t *member = &pending_genesis_members[i];
@@ -1701,6 +1716,7 @@ int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char
         if (!found) {
             mxd_node_stake_t *node = malloc(sizeof(mxd_node_stake_t));
             if (!node) {
+                MXD_LOG_WARN("rsc", "Failed to allocate node for genesis member %s", node_id_hex);
                 continue;
             }
             
@@ -1714,11 +1730,15 @@ int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char
             // Initialize metrics
             mxd_init_node_metrics(&node->metrics);
             
-            if (mxd_add_to_rapid_table(table, node, local_node_id) == 0) {
-                MXD_LOG_INFO("rsc", "Added pre-genesis member %s to rapid table", node_id_hex);
+            int add_result = mxd_add_to_rapid_table(table, node, local_node_id);
+            if (add_result == 0) {
+                MXD_LOG_INFO("rsc", "Added pre-genesis member %s to rapid table (count now %zu)", node_id_hex, table->count);
             } else {
+                MXD_LOG_WARN("rsc", "Failed to add pre-genesis member %s to rapid table (result=%d)", node_id_hex, add_result);
                 free(node);
             }
+        } else {
+            MXD_LOG_DEBUG("rsc", "Genesis member %s already in rapid table", node_id_hex);
         }
     }
     
