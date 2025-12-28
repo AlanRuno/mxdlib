@@ -547,22 +547,30 @@ int main(int argc, char** argv) {
         if (genesis_initialized && blockchain_height == 0) {
             uint64_t current_time = time(NULL);
             
-            int authenticated_peers = mxd_get_authenticated_connection_count();
-            if (authenticated_peers > 0) {
-                if (current_time - last_genesis_announce >= 3) {
-                    mxd_broadcast_genesis_announce();
-                    last_genesis_announce = current_time;
-                }
-                
-                pthread_mutex_lock(&metrics_mutex);
-                mxd_sync_pending_genesis_to_rapid_table(&rapid_table, current_config.node_id);
-                pthread_mutex_unlock(&metrics_mutex);
-                
-                if (mxd_get_pending_genesis_count() >= 3) {
-                    mxd_try_coordinate_genesis_block();
-                }
-            } else {
-                MXD_LOG_DEBUG("node", "Waiting for authenticated P2P connections before genesis coordination");
+            // During genesis, broadcast announces and sync to rapid table regardless of
+            // authenticated peer count. Genesis announces are received via regular P2P
+            // messages, not persistent authenticated connections.
+            int connected_peers = mxd_get_connection_count();
+            int pending_count = mxd_get_pending_genesis_count();
+            
+            if (current_time - last_genesis_announce >= 3) {
+                mxd_broadcast_genesis_announce();
+                last_genesis_announce = current_time;
+            }
+            
+            // Always sync pending genesis members to rapid table during genesis
+            // This is critical because genesis announces come via regular P2P, not
+            // authenticated persistent connections
+            pthread_mutex_lock(&metrics_mutex);
+            mxd_sync_pending_genesis_to_rapid_table(&rapid_table, current_config.node_id);
+            pthread_mutex_unlock(&metrics_mutex);
+            
+            if (pending_count >= 3) {
+                MXD_LOG_INFO("node", "Have %d pending genesis members, attempting genesis coordination", pending_count);
+                mxd_try_coordinate_genesis_block();
+            } else if (connected_peers > 0) {
+                MXD_LOG_DEBUG("node", "Waiting for more genesis members: %d/3 (connected peers: %d)", 
+                             pending_count, connected_peers);
             }
         }
         
