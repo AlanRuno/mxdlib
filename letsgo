@@ -39,7 +39,7 @@ echo "Step 3/5: Building project..."
 mkdir build
 cd build
 cmake ..
-make -j$(nproc)
+make -j$(nproc) mxd_node || make -j$(nproc)
 cd ..
 
 echo ""
