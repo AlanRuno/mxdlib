@@ -1155,15 +1155,21 @@ int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time) {
         return -1;
     }
     
+    size_t initial_count = table->count;
     size_t write_idx = 0;
+    size_t expired_count = 0;
     for (size_t read_idx = 0; read_idx < table->count; read_idx++) {
         if (table->nodes[read_idx]) {
             uint64_t last_update = table->nodes[read_idx]->metrics.last_update;
             
             // Check if node has expired (1 week of inactivity)
-            if (current_time > last_update && (current_time - last_update) > MXD_NODE_EXPIRY_TIME) {
+            // Note: Both current_time and last_update should be in milliseconds
+            if (current_time > last_update && (current_time - last_update) > (MXD_NODE_EXPIRY_TIME * 1000ULL)) {
+                MXD_LOG_DEBUG("rsc", "Expiring node: last_update=%lu, current_time=%lu, diff=%lu ms, expiry=%lu ms",
+                             last_update, current_time, current_time - last_update, MXD_NODE_EXPIRY_TIME * 1000ULL);
                 free(table->nodes[read_idx]);
                 table->nodes[read_idx] = NULL;
+                expired_count++;
             } else {
                 if (write_idx != read_idx) {
                     table->nodes[write_idx] = table->nodes[read_idx];
@@ -1175,6 +1181,8 @@ int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time) {
     }
     
     table->count = write_idx;
+    MXD_LOG_INFO("rsc", "Remove expired nodes: initial=%zu, expired=%zu, remaining=%zu",
+                 initial_count, expired_count, table->count);
     return 0;
 }
 
@@ -1197,10 +1205,17 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
         memset(&block, 0, sizeof(mxd_block_t));
         
         if (mxd_retrieve_block_by_height(height, &block) != 0) {
+            MXD_LOG_WARN("rsc", "Failed to retrieve block at height %u", height);
             continue;
         }
         
+        MXD_LOG_INFO("rsc", "Retrieved block at height %u: rapid_membership_count=%u, rapid_membership_entries=%p",
+                     height, block.rapid_membership_count, (void*)block.rapid_membership_entries);
+        
+        size_t count_before = table->count;
         mxd_apply_membership_deltas(table, &block, local_node_id);
+        MXD_LOG_INFO("rsc", "After applying deltas from height %u: table count %zu -> %zu (local_node_id=%s)",
+                     height, count_before, table->count, local_node_id ? local_node_id : "NULL");
         
         mxd_free_validation_chain(&block);
     }
