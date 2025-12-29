@@ -859,27 +859,12 @@ const char* mxd_handle_wallet_send(const char* recipient, const char* amount) {
         return wallet_response_buffer;
     }
     
-    if (mxd_validate_address(recipient) != 0) {
+    // Parse the recipient address to get the 20-byte address
+    uint8_t algo_id;
+    uint8_t recipient_addr20[20];
+    if (mxd_parse_address(recipient, &algo_id, recipient_addr20) != 0) {
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Invalid recipient address\"}");
-        return wallet_response_buffer;
-    }
-    
-    pthread_mutex_lock(&wallet_mutex);
-    
-    uint8_t* recipient_pubkey = NULL;
-    for (size_t i = 0; i < wallet.keypair_count; i++) {
-        if (strcmp(wallet.keypairs[i].address, recipient) == 0) {
-            recipient_pubkey = wallet.keypairs[i].public_key;
-            break;
-        }
-    }
-    
-    pthread_mutex_unlock(&wallet_mutex);
-    
-    if (!recipient_pubkey) {
-        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
-            "{\"success\":false,\"error\":\"Recipient address not found\"}");
         return wallet_response_buffer;
     }
     
@@ -890,7 +875,7 @@ const char* mxd_handle_wallet_send(const char* recipient, const char* amount) {
         return wallet_response_buffer;
     }
     
-    if (mxd_add_tx_output(&tx, recipient_pubkey, amount_value) != 0) {
+    if (mxd_add_tx_output(&tx, recipient_addr20, amount_value) != 0) {
         mxd_free_transaction(&tx);
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Failed to add transaction output\"}");
