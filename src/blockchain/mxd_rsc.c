@@ -1103,6 +1103,9 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
     for (uint32_t i = 0; i < block->rapid_membership_count; i++) {
         const mxd_rapid_membership_entry_t *entry = &block->rapid_membership_entries[i];
         
+        MXD_LOG_INFO("rsc", "Processing membership entry %u: timestamp=%lu, algo_id=%u, pk_len=%u, sig_len=%u",
+                     i, entry->timestamp, entry->algo_id, entry->public_key_length, entry->signature_length);
+        
         if (local_node_id) {
             char node_id_str[41];
             // Convert address bytes to hex string for comparison
