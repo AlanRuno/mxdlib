@@ -1581,6 +1581,14 @@ static void handle_http_request(int client_socket) {
         return;
     }
     
+    // Save the body pointer BEFORE strtok destroys the buffer
+    char* saved_body = strstr(buffer, "\r\n\r\n");
+    char body_copy[1024] = {0};
+    if (saved_body) {
+        saved_body += 4;
+        strncpy(body_copy, saved_body, sizeof(body_copy) - 1);
+    }
+    
     char* auth_header = NULL;
     char* line = strtok(buffer, "\r\n");
     while (line != NULL) {
@@ -1676,10 +1684,8 @@ static void handle_http_request(int client_socket) {
         } else if (strcmp(path, "/wallet/send") == 0) {
             if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
             } else {
-                char* body_start = strstr(buffer, "\r\n\r\n");
-                if (body_start) {
-                    body_start += 4;
-                    cJSON* json = cJSON_Parse(body_start);
+                if (body_copy[0] != '\0') {
+                    cJSON* json = cJSON_Parse(body_copy);
                     if (json) {
                         cJSON* to = cJSON_GetObjectItem(json, "to");
                         cJSON* amount = cJSON_GetObjectItem(json, "amount");
@@ -1700,10 +1706,8 @@ static void handle_http_request(int client_socket) {
         } else if (strcmp(path, "/wallet/export") == 0) {
             if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
             } else {
-                char* body_start = strstr(buffer, "\r\n\r\n");
-                if (body_start) {
-                    body_start += 4;
-                    cJSON* json = cJSON_Parse(body_start);
+                if (body_copy[0] != '\0') {
+                    cJSON* json = cJSON_Parse(body_copy);
                     if (json) {
                         cJSON* password = cJSON_GetObjectItem(json, "password");
                         if (password && cJSON_IsString(password)) {
@@ -1723,10 +1727,8 @@ static void handle_http_request(int client_socket) {
         } else if (strcmp(path, "/wallet/import") == 0) {
             if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {
             } else {
-                char* body_start = strstr(buffer, "\r\n\r\n");
-                if (body_start) {
-                    body_start += 4;
-                    cJSON* json = cJSON_Parse(body_start);
+                if (body_copy[0] != '\0') {
+                    cJSON* json = cJSON_Parse(body_copy);
                     if (json) {
                         cJSON* encrypted_data = cJSON_GetObjectItem(json, "encrypted_data");
                         cJSON* password = cJSON_GetObjectItem(json, "password");
