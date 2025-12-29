@@ -87,9 +87,9 @@ void mxd_set_default_config(mxd_config_t* config) {
     
     strncpy(config->http.bind_address, "0.0.0.0", sizeof(config->http.bind_address) - 1);
     config->http.port = 8080;
-    config->http.require_auth = 1;
+    config->http.require_auth = 0;  // Disabled by default for testnet
     config->http.api_token[0] = '\0';
-    config->http.wallet_enabled = 0;
+    config->http.wallet_enabled = 1;  // Enabled by default for testnet
     config->http.rate_limit_per_minute = 60;
     config->http.timeout_seconds = 30;
     
