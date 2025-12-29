@@ -1143,8 +1143,13 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
             memset(table->nodes[table->count], 0, sizeof(mxd_node_stake_t));
             memcpy(table->nodes[table->count]->node_id, entry->node_address, 20);
             table->nodes[table->count]->active = 1;
-            table->nodes[table->count]->metrics.last_update = entry->timestamp;
+            // IMPORTANT: Call mxd_init_node_metrics BEFORE setting last_update
+            // because mxd_init_node_metrics resets last_update to 0
             mxd_init_node_metrics(&table->nodes[table->count]->metrics);
+            table->nodes[table->count]->metrics.last_update = entry->timestamp;
+            
+            MXD_LOG_INFO("rsc", "Added node to rapid table: last_update=%lu from entry timestamp=%lu",
+                         table->nodes[table->count]->metrics.last_update, entry->timestamp);
             
             table->count++;
         }
