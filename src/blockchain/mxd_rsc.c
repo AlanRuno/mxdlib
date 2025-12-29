@@ -1164,8 +1164,12 @@ int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time) {
             
             // Check if node has expired (1 week of inactivity)
             // Note: Both current_time and last_update should be in milliseconds
+            MXD_LOG_INFO("rsc", "Checking node expiry: last_update=%lu, current_time=%lu, diff=%lu, expiry_threshold=%lu",
+                         last_update, current_time, 
+                         (current_time > last_update) ? (current_time - last_update) : 0,
+                         MXD_NODE_EXPIRY_TIME * 1000ULL);
             if (current_time > last_update && (current_time - last_update) > (MXD_NODE_EXPIRY_TIME * 1000ULL)) {
-                MXD_LOG_DEBUG("rsc", "Expiring node: last_update=%lu, current_time=%lu, diff=%lu ms, expiry=%lu ms",
+                MXD_LOG_INFO("rsc", "Expiring node: last_update=%lu, current_time=%lu, diff=%lu ms, expiry=%lu ms",
                              last_update, current_time, current_time - last_update, MXD_NODE_EXPIRY_TIME * 1000ULL);
                 free(table->nodes[read_idx]);
                 table->nodes[read_idx] = NULL;
