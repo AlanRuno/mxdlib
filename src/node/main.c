@@ -585,6 +585,18 @@ int main(int argc, char** argv) {
             pthread_mutex_unlock(&metrics_mutex);
         }
         
+        // Post-genesis consensus tick - drives block production
+        if (genesis_initialized && blockchain_height > 0) {
+            pthread_mutex_lock(&metrics_mutex);
+            int tick_result = mxd_consensus_tick(&rapid_table, node_address, node_pubkey, node_privkey, node_algo_id);
+            if (tick_result == 1) {
+                MXD_LOG_INFO("node", "Block finalized by consensus tick");
+            } else if (tick_result < 0) {
+                MXD_LOG_DEBUG("node", "Consensus tick returned error");
+            }
+            pthread_mutex_unlock(&metrics_mutex);
+        }
+        
         last_blockchain_height = blockchain_height;
         
         pthread_mutex_lock(&metrics_mutex);
