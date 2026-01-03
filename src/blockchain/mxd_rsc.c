@@ -2015,8 +2015,14 @@ int mxd_try_coordinate_genesis_block(void) {
         return 0;
     }
     
-    if (pending_genesis_count < 3) {
+    // Use mutex to safely read and modify genesis coordination state
+    pthread_mutex_lock(&genesis_mutex);
+    
+    size_t local_pending_count = pending_genesis_count;
+    
+    if (local_pending_count < 3) {
         genesis_quorum_reached_time = 0;  // Reset timeout tracking
+        pthread_mutex_unlock(&genesis_mutex);
         return 0;
     }
     
@@ -2026,8 +2032,17 @@ int mxd_try_coordinate_genesis_block(void) {
         genesis_quorum_reached_time = current_time;
         genesis_sync_started_time = current_time;
         genesis_locked = 1;  // Lock member list immediately when quorum is reached
-        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, locking member list and starting sync phase", pending_genesis_count);
+        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, locking member list and starting sync phase", local_pending_count);
     }
+    
+    // Make a local copy of pending genesis members while holding the lock
+    mxd_genesis_member_t local_members[10];
+    size_t local_member_count = local_pending_count < 10 ? local_pending_count : 10;
+    for (size_t i = 0; i < local_member_count; i++) {
+        local_members[i] = pending_genesis_members[i];
+    }
+    
+    pthread_mutex_unlock(&genesis_mutex);
     
     // Sync phase: broadcast our member list hash and wait for confirmations
     if (!genesis_sync_phase_complete) {
@@ -2055,8 +2070,9 @@ int mxd_try_coordinate_genesis_block(void) {
     uint8_t addresses[10][20];
     size_t addr_count = 0;
     
-    for (size_t i = 0; i < pending_genesis_count && addr_count < 10; i++) {
-        memcpy(addresses[addr_count], pending_genesis_members[i].node_address, 20);
+    // Use local copy of members instead of accessing shared state
+    for (size_t i = 0; i < local_member_count && addr_count < 10; i++) {
+        memcpy(addresses[addr_count], local_members[i].node_address, 20);
         addr_count++;
     }
     
@@ -2131,11 +2147,11 @@ int mxd_try_coordinate_genesis_block(void) {
         
         // Send sign requests to ALL pending genesis members (not just first 3)
         // This ensures we get enough responses even if some nodes don't respond
-        for (size_t i = 0; i < pending_genesis_count; i++) {
-            if (memcmp(pending_genesis_members[i].node_address, local_genesis_address, 20) != 0) {
-                mxd_send_genesis_sign_request(pending_genesis_members[i].node_address, 
+        for (size_t i = 0; i < local_member_count; i++) {
+            if (memcmp(local_members[i].node_address, local_genesis_address, 20) != 0) {
+                mxd_send_genesis_sign_request(local_members[i].node_address, 
                                               pending_genesis_digest, local_genesis_address, 0,
-                                              pending_genesis_members, pending_genesis_count);
+                                              local_members, local_member_count);
             }
         }
         
