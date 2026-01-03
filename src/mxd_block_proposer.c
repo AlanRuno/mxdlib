@@ -166,8 +166,17 @@ int mxd_should_close_block(void) {
         return 0;
     }
     
-    if (proposer_state.current_block->rapid_membership_count == 0 &&
-        !proposer_state.current_block->transaction_set_frozen) {
+    // Block should close if:
+    // 1. Already frozen (ready for validation)
+    // 2. Has transactions and timeout reached
+    // 3. Has membership entries and timeout reached
+    if (proposer_state.current_block->transaction_set_frozen) {
+        return 0;  // Already closed
+    }
+    
+    // Don't close empty blocks (no transactions and no membership entries)
+    if (proposer_state.current_block->transaction_count == 0 &&
+        proposer_state.current_block->rapid_membership_count == 0) {
         return 0;
     }
     
@@ -175,8 +184,8 @@ int mxd_should_close_block(void) {
     uint64_t elapsed = current_time - proposer_state.block_start_time;
     
     if (elapsed >= MXD_BLOCK_CLOSE_TIMEOUT_MS) {
-        MXD_LOG_INFO("proposer", "Block timeout reached (%llu ms elapsed), should close block",
-                     (unsigned long long)elapsed);
+        MXD_LOG_INFO("proposer", "Block timeout reached (%llu ms elapsed, %u txs), should close block",
+                     (unsigned long long)elapsed, proposer_state.current_block->transaction_count);
         return 1;
     }
     

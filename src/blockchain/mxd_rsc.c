@@ -2257,3 +2257,200 @@ int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_a
                                   const uint8_t *private_key, const uint8_t *public_key) {
     return mxd_try_coordinate_genesis_block();
 }
+
+// Forward declarations for block proposer functions
+extern int mxd_init_block_proposer(const uint8_t proposer_id[20]);
+extern int mxd_start_block_proposal(const uint8_t prev_hash[64], uint32_t height);
+extern int mxd_add_transaction_to_block(const void* tx);
+extern int mxd_should_close_block(void);
+extern int mxd_close_block(void);
+extern void* mxd_get_current_block(void);
+extern int mxd_stop_block_proposal(void);
+
+// Forward declarations for mempool functions
+extern size_t mxd_get_mempool_size(void);
+extern int mxd_get_priority_transactions(void *txs, size_t *tx_count, int min_priority);
+extern int mxd_remove_from_mempool(const uint8_t tx_hash[64]);
+
+// Static state for consensus tick
+static int consensus_initialized = 0;
+static uint8_t consensus_local_address[20] = {0};
+static uint8_t consensus_local_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
+static uint8_t consensus_local_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
+static uint8_t consensus_algo_id = 0;
+static uint32_t last_proposed_height = 0;
+
+// Check if this node is the proposer for the given height
+// Uses deterministic selection: proposer = validators[height % validator_count]
+// Validators are sorted by their 20-byte address lexicographically
+int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *local_address, uint32_t height) {
+    if (!table || !local_address || table->count == 0) {
+        return 0;
+    }
+    
+    // Get the latest block to extract canonical validator list
+    mxd_block_t latest_block;
+    memset(&latest_block, 0, sizeof(latest_block));
+    
+    uint32_t current_height = 0;
+    if (mxd_get_blockchain_height(&current_height) != 0 || current_height == 0) {
+        return 0;
+    }
+    
+    if (mxd_retrieve_block_by_height(current_height, &latest_block) != 0) {
+        return 0;
+    }
+    
+    // Use membership entries from the latest block as canonical validator list
+    if (latest_block.rapid_membership_count == 0) {
+        mxd_free_block(&latest_block);
+        return 0;
+    }
+    
+    // Sort validators by address (already sorted in block, but verify)
+    // For simplicity, use round-robin based on membership order
+    uint32_t proposer_index = height % latest_block.rapid_membership_count;
+    
+    int is_proposer = (memcmp(local_address, 
+                              latest_block.rapid_membership_entries[proposer_index].node_address, 
+                              20) == 0);
+    
+    if (is_proposer) {
+        MXD_LOG_INFO("rsc", "This node is proposer for height %u (index %u of %u validators)",
+                     height, proposer_index, latest_block.rapid_membership_count);
+    }
+    
+    mxd_free_block(&latest_block);
+    return is_proposer;
+}
+
+// Post-genesis consensus tick - drives block production after genesis
+int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
+                       const uint8_t *local_pubkey, const uint8_t *local_privkey, uint8_t algo_id) {
+    if (!table || !local_address || !local_pubkey || !local_privkey) {
+        return -1;
+    }
+    
+    // Get current blockchain height
+    uint32_t current_height = 0;
+    if (mxd_get_blockchain_height(&current_height) != 0) {
+        return -1;
+    }
+    
+    // Only run after genesis (height > 0)
+    if (current_height == 0) {
+        return 0;
+    }
+    
+    // Initialize consensus state if needed
+    if (!consensus_initialized) {
+        memcpy(consensus_local_address, local_address, 20);
+        memcpy(consensus_local_pubkey, local_pubkey, mxd_sig_pubkey_len(algo_id));
+        memcpy(consensus_local_privkey, local_privkey, mxd_sig_privkey_len(algo_id));
+        consensus_algo_id = algo_id;
+        
+        if (mxd_init_block_proposer(local_address) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to initialize block proposer");
+            return -1;
+        }
+        
+        consensus_initialized = 1;
+        MXD_LOG_INFO("rsc", "Consensus tick initialized for post-genesis operation");
+    }
+    
+    uint32_t next_height = current_height + 1;
+    
+    // Check if we're the proposer for the next block
+    int is_proposer = mxd_is_proposer_for_height(table, local_address, next_height);
+    
+    // Get current block being proposed (if any)
+    mxd_block_t *current_block = (mxd_block_t *)mxd_get_current_block();
+    
+    if (is_proposer && !current_block && next_height > last_proposed_height) {
+        // Start a new block proposal
+        mxd_block_t latest_block;
+        memset(&latest_block, 0, sizeof(latest_block));
+        
+        if (mxd_retrieve_block_by_height(current_height, &latest_block) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to retrieve latest block for proposal");
+            return -1;
+        }
+        
+        if (mxd_start_block_proposal(latest_block.block_hash, next_height) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to start block proposal at height %u", next_height);
+            mxd_free_block(&latest_block);
+            return -1;
+        }
+        
+        last_proposed_height = next_height;
+        mxd_free_block(&latest_block);
+        
+        MXD_LOG_INFO("rsc", "Started block proposal for height %u", next_height);
+        current_block = (mxd_block_t *)mxd_get_current_block();
+    }
+    
+    // If we have an active proposal, try to add transactions from mempool
+    if (current_block && !current_block->transaction_set_frozen) {
+        size_t mempool_size = mxd_get_mempool_size();
+        if (mempool_size > 0) {
+            // Add up to 100 transactions per tick
+            size_t tx_count = mempool_size < 100 ? mempool_size : 100;
+            // Note: We would need to allocate transaction array and call mxd_get_priority_transactions
+            // For now, just log that we have pending transactions
+            MXD_LOG_DEBUG("rsc", "Mempool has %zu pending transactions", mempool_size);
+        }
+    }
+    
+    // Check if block should be closed
+    if (current_block && mxd_should_close_block()) {
+        if (mxd_close_block() != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to close block");
+            return -1;
+        }
+        
+        // Calculate block hash
+        if (mxd_calculate_block_hash(current_block, current_block->block_hash) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to calculate block hash");
+            return -1;
+        }
+        
+        // Sign the block as proposer (add our signature to validation chain)
+        uint64_t timestamp = mxd_now_ms();
+        uint8_t signature[MXD_SIGNATURE_MAX];
+        size_t sig_len = sizeof(signature);
+        
+        if (mxd_sig_sign(algo_id, signature, &sig_len, current_block->block_hash, 64, local_privkey) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to sign block");
+            return -1;
+        }
+        
+        if (mxd_add_validator_signature(current_block, local_address, timestamp, algo_id, 
+                                        signature, (uint16_t)sig_len) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to add proposer signature to block");
+            return -1;
+        }
+        
+        // Store the block
+        if (mxd_store_block(current_block) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to store proposed block");
+            return -1;
+        }
+        
+        MXD_LOG_INFO("rsc", "Block at height %u closed, signed, and stored with %u transactions",
+                     current_block->height, current_block->transaction_count);
+        
+        // Broadcast the block to the network
+        if (mxd_broadcast_block(current_block) != 0) {
+            MXD_LOG_WARN("rsc", "Failed to broadcast block at height %u", current_block->height);
+        } else {
+            MXD_LOG_INFO("rsc", "Block at height %u broadcast to network", current_block->height);
+        }
+        
+        // Stop the proposal (block is now finalized)
+        mxd_stop_block_proposal();
+        
+        return 1;  // Block was finalized
+    }
+    
+    return 0;
+}

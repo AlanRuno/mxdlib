@@ -163,6 +163,21 @@ int mxd_handle_genesis_sync(const uint8_t *node_address, size_t member_count,
 int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_address,
                                   const uint8_t *private_key, const uint8_t *public_key);
 
+// Post-genesis consensus tick - drives block production after genesis
+// Should be called periodically from the main loop when height > 0
+// Parameters:
+//   table: The rapid stake table
+//   local_address: This node's 20-byte wallet address
+//   local_pubkey: This node's public key
+//   local_privkey: This node's private key
+//   algo_id: The signature algorithm ID for this node
+// Returns: 0 on success, -1 on error, 1 if a block was finalized
+int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
+                       const uint8_t *local_pubkey, const uint8_t *local_privkey, uint8_t algo_id);
+
+// Check if this node is the proposer for the given height
+int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *local_address, uint32_t height);
+
 #ifdef __cplusplus
 }
 #endif
