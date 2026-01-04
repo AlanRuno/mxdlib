@@ -131,9 +131,26 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
         
         // Check if we already have this block
         uint32_t current_height = 0;
-        mxd_get_blockchain_height(&current_height);
+        int have_blockchain = (mxd_get_blockchain_height(&current_height) == 0);
         
-        if (block.height <= current_height) {
+        // Special handling for genesis block (height 0)
+        // If we don't have any blocks yet (have_blockchain is false or current_height is 0),
+        // we should accept the genesis block
+        if (block.height == 0) {
+            if (have_blockchain && current_height >= 0) {
+                // Check if we actually have a genesis block stored
+                mxd_block_t existing_genesis;
+                memset(&existing_genesis, 0, sizeof(existing_genesis));
+                if (mxd_retrieve_block_by_height(0, &existing_genesis) == 0) {
+                    MXD_LOG_DEBUG("sync", "Already have genesis block, ignoring duplicate");
+                    mxd_free_block(&existing_genesis);
+                    mxd_free_block(&block);
+                    return;
+                }
+            }
+            // Don't have genesis block yet, proceed to store it
+            MXD_LOG_INFO("sync", "Received genesis block, will store it");
+        } else if (block.height <= current_height) {
             MXD_LOG_DEBUG("sync", "Already have block at height %u (current=%u), ignoring",
                          block.height, current_height);
             mxd_free_block(&block);

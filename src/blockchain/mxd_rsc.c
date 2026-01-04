@@ -618,6 +618,14 @@ int mxd_block_has_min_relay_signatures(const mxd_block_t *block) {
         return -1;
     }
     
+    // Special handling for genesis block (height 0)
+    // Genesis blocks use membership signatures instead of validation chain signatures
+    if (block->height == 0) {
+        // For genesis blocks, check membership quorum instead of validation signatures
+        // Genesis blocks need at least 3 membership signatures to be valid
+        return (block->rapid_membership_count >= 3) ? 1 : 0;
+    }
+    
     // Check if block has minimum required signatures for relay
     return (block->validation_count >= MXD_MIN_RELAY_SIGNATURES) ? 1 : 0;
 }
@@ -2078,23 +2086,32 @@ int mxd_try_coordinate_genesis_block(void) {
     
     qsort(addresses, addr_count, 20, compare_addresses);
     
-    // Check if this node is the designated proposer (lexicographically smallest address)
-    int is_designated_proposer = (memcmp(local_genesis_address, addresses[0], 20) == 0);
+    // DETERMINISTIC GENESIS: Limit to exactly 3 validators (first 3 sorted addresses)
+    // This ensures all nodes compute the same validator set
+    size_t genesis_validator_count = (addr_count < 3) ? addr_count : 3;
     
-    // Allow fallback proposer if timeout exceeded and we're in the top 3
-    // BUT NOT if we've already signed a genesis request from another proposer
-    int is_fallback_proposer = 0;
-    if (!is_designated_proposer && !already_signed_genesis && (current_time - genesis_quorum_reached_time) > MXD_GENESIS_PROPOSER_TIMEOUT_MS) {
-        for (size_t i = 1; i < addr_count && i < 3; i++) {
-            if (memcmp(local_genesis_address, addresses[i], 20) == 0) {
-                is_fallback_proposer = 1;
-                MXD_LOG_INFO("rsc", "Designated proposer timeout, this node becoming fallback proposer (position %zu)", i);
-                break;
-            }
+    // Check if this node is in the genesis validator set (first 3 addresses)
+    int is_genesis_validator = 0;
+    for (size_t i = 0; i < genesis_validator_count; i++) {
+        if (memcmp(local_genesis_address, addresses[i], 20) == 0) {
+            is_genesis_validator = 1;
+            break;
         }
     }
     
-    if (!is_designated_proposer && !is_fallback_proposer) {
+    if (!is_genesis_validator) {
+        // This node is not in the genesis validator set, wait for genesis block from others
+        return 0;
+    }
+    
+    // Check if this node is the designated proposer (lexicographically smallest address)
+    // ONLY the designated proposer creates the genesis block - NO fallback proposers
+    // This ensures deterministic genesis block creation with identical proposer_id
+    int is_designated_proposer = (memcmp(local_genesis_address, addresses[0], 20) == 0);
+    
+    if (!is_designated_proposer) {
+        // Not the designated proposer - wait for sign request from the proposer
+        // Do NOT become a fallback proposer as this causes multiple incompatible genesis blocks
         return 0;
     }
     
