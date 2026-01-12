@@ -532,7 +532,15 @@ int main(int argc, char** argv) {
                 }
                 
                 if (should_add) {
-                    mxd_add_to_rapid_table(&rapid_table, &node_stake, current_config.node_id);
+                    // Allocate heap memory for the node - rapid table takes ownership
+                    // and will free it later (e.g., in mxd_rebuild_rapid_table_from_blockchain)
+                    mxd_node_stake_t *heap_node = malloc(sizeof(mxd_node_stake_t));
+                    if (heap_node) {
+                        memcpy(heap_node, &node_stake, sizeof(mxd_node_stake_t));
+                        if (mxd_add_to_rapid_table(&rapid_table, heap_node, current_config.node_id) != 0) {
+                            free(heap_node);
+                        }
+                    }
                 }
             }
         }
