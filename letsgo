@@ -5,8 +5,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Function to reset node data
+# Args: $1 = data_dir, $2 = skip_confirm (optional, "true" to skip confirmation)
 reset_node_data() {
     local data_dir="${1:-./data}"
+    local skip_confirm="${2:-false}"
     
     echo "═══════════════════════════════════════════"
     echo "  MXD Node Data Reset"
@@ -16,7 +18,7 @@ reset_node_data() {
     # Check if data directory exists
     if [ ! -d "$data_dir" ]; then
         echo "Data directory '$data_dir' does not exist. Nothing to reset."
-        exit 0
+        return 0
     fi
     
     echo "This will delete the following data:"
@@ -34,10 +36,13 @@ reset_node_data() {
         echo ""
     fi
     
-    read -p "Are you sure you want to reset all node data? (y/N): " confirm
-    if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-        echo "Reset cancelled."
-        exit 0
+    # Skip confirmation if requested (e.g., when used with testnet/mainnet)
+    if [ "$skip_confirm" != "true" ]; then
+        read -p "Are you sure you want to reset all node data? (y/N): " confirm
+        if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+            echo "Reset cancelled."
+            return 1
+        fi
     fi
     
     echo ""
@@ -91,31 +96,42 @@ reset_node_data() {
     
     echo ""
     echo "Node data reset complete!"
-    echo "The node will start fresh on next run."
-    exit 0
+    echo "The node will start fresh."
+    return 0
 }
 
-# Check if reset command is provided
+# Check if standalone reset command is provided (./letsgo -reset)
 if [ "$1" == "-reset" ] || [ "$1" == "--reset" ]; then
     # Use second argument as data directory if provided, otherwise use default
     DATA_DIR="${2:-./build/lib/data}"
     reset_node_data "$DATA_DIR"
+    exit $?
 fi
 
 # Check if network type is provided
 if [ -z "$1" ]; then
-    echo "Usage: $0 [testnet|mainnet]"
-    echo "       $0 -reset [data_dir]   # Reset all node data"
+    echo "Usage: $0 [testnet|mainnet] [-reset]"
+    echo "       $0 -reset [data_dir]"
     echo ""
     echo "Examples:"
-    echo "  $0 testnet       # Build and run node on testnet"
-    echo "  $0 mainnet       # Build and run node on mainnet"
-    echo "  $0 -reset        # Reset node data (default: ./build/lib/data)"
-    echo "  $0 -reset ./data # Reset node data in specified directory"
+    echo "  $0 testnet           # Build and run node on testnet"
+    echo "  $0 mainnet           # Build and run node on mainnet"
+    echo "  $0 testnet -reset    # Reset data, then build and run on testnet"
+    echo "  $0 -reset            # Reset node data only (default: ./build/lib/data)"
+    echo "  $0 -reset ./data     # Reset node data in specified directory"
     exit 1
 fi
 
 NETWORK_TYPE=$1
+RESET_FLAG=0
+
+# Check for -reset flag in remaining arguments
+for arg in "${@:2}"; do
+    if [[ "$arg" == "-reset" ]] || [[ "$arg" == "--reset" ]]; then
+        RESET_FLAG=1
+        break
+    fi
+done
 
 if [[ "$NETWORK_TYPE" != "testnet" ]] && [[ "$NETWORK_TYPE" != "mainnet" ]]; then
     echo "Error: network type must be 'testnet' or 'mainnet'"
@@ -148,6 +164,14 @@ echo ""
 echo "Step 4/5: Configuring network ($NETWORK_TYPE)..."
 CONFIG_FILE="build/lib/default_config.json"
 ./switch_network.sh "$CONFIG_FILE" "$NETWORK_TYPE"
+
+# If -reset flag was provided, reset node data before starting
+if [ $RESET_FLAG -eq 1 ]; then
+    echo ""
+    echo "Step 4.5/5: Resetting node data (as requested)..."
+    # Reset data in build/lib/data directory, skip confirmation since user explicitly requested reset
+    reset_node_data "build/lib/data" "true"
+fi
 
 echo ""
 echo "Step 5/5: Starting node..."
