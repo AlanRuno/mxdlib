@@ -1149,7 +1149,13 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
             
             // Initialize new node
             memset(table->nodes[table->count], 0, sizeof(mxd_node_stake_t));
-            memcpy(table->nodes[table->count]->node_id, entry->node_address, 20);
+            // Convert binary address to hex string for node_id (node_id is char[64], needs 40 hex chars + null)
+            for (int j = 0; j < 20; j++) {
+                snprintf(table->nodes[table->count]->node_id + (j * 2), 3, "%02x", entry->node_address[j]);
+            }
+            table->nodes[table->count]->node_id[40] = '\0';
+            // Also copy the binary address for direct comparisons
+            memcpy(table->nodes[table->count]->node_address, entry->node_address, 20);
             table->nodes[table->count]->active = 1;
             // IMPORTANT: Call mxd_init_node_metrics BEFORE setting last_update
             // because mxd_init_node_metrics resets last_update to 0
