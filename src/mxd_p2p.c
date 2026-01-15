@@ -35,6 +35,11 @@
 #include "base58.h"
 #include "utils/mxd_replay.h"
 #include "metrics/mxd_prometheus.h"
+#include "mxd_blockchain_db.h"
+
+// Track last genesis push time per peer to avoid flooding
+static time_t last_genesis_push_time[MXD_MAX_PEERS] = {0};
+static char last_genesis_push_addr[MXD_MAX_PEERS][256] = {{0}};
 
 static struct {
     char address[256];
@@ -1040,6 +1045,61 @@ static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uin
     return 0;
 }
 
+// Push genesis block to a newly connected peer if we have it and they might not
+// This helps propagate the genesis block to late joiners
+static void push_genesis_to_peer(const char *address, uint16_t port) {
+    // Check if we have a genesis block (height >= 1 means we have at least genesis)
+    uint32_t local_height = 0;
+    if (mxd_get_blockchain_height(&local_height) != 0 || local_height == 0) {
+        return;  // We don't have any blocks yet
+    }
+    
+    // Rate limit: don't push to the same peer more than once every 30 seconds
+    time_t now = time(NULL);
+    int found_slot = 0;
+    for (int i = 0; i < MXD_MAX_PEERS; i++) {
+        if (strcmp(last_genesis_push_addr[i], address) == 0) {
+            if (now - last_genesis_push_time[i] < 30) {
+                MXD_LOG_DEBUG("p2p", "Skipping genesis push to %s:%d (rate limited)", address, port);
+                return;
+            }
+            // Update timestamp and proceed
+            last_genesis_push_time[i] = now;
+            found_slot = 1;
+            break;
+        }
+        if (!found_slot && last_genesis_push_addr[i][0] == '\0') {
+            // Found empty slot, use it
+            strncpy(last_genesis_push_addr[i], address, sizeof(last_genesis_push_addr[i]) - 1);
+            last_genesis_push_time[i] = now;
+            found_slot = 1;
+            break;
+        }
+    }
+    
+    // Retrieve the genesis block
+    mxd_block_t genesis_block;
+    memset(&genesis_block, 0, sizeof(genesis_block));
+    
+    if (mxd_retrieve_block_by_height(0, &genesis_block) != 0) {
+        MXD_LOG_DEBUG("p2p", "Failed to retrieve genesis block for push to %s:%d", address, port);
+        return;
+    }
+    
+    // Use mxd_broadcast_block to send the genesis block to all peers
+    // This will serialize and broadcast the block properly
+    MXD_LOG_INFO("p2p", "Pushing genesis block to network after new peer %s:%d connected", address, port);
+    
+    extern int mxd_broadcast_block(const mxd_block_t *block);
+    if (mxd_broadcast_block(&genesis_block) == 0) {
+        MXD_LOG_INFO("p2p", "Successfully broadcast genesis block after peer %s:%d connected", address, port);
+    } else {
+        MXD_LOG_DEBUG("p2p", "Failed to broadcast genesis block after peer %s:%d connected", address, port);
+    }
+    
+    mxd_free_block(&genesis_block);
+}
+
 static int handle_handshake_message(const char *address, uint16_t port, 
                                      const void *payload, size_t length,
                                      peer_connection_t *conn) {
@@ -1187,6 +1247,9 @@ static int handle_handshake_message(const char *address, uint16_t port,
     }
     
     update_unified_peer_algo(address, handshake.listen_port, handshake.algo_id);
+    
+    // Push genesis block to new peer if we have it (helps late joiners get the genesis block)
+    push_genesis_to_peer(address, handshake.listen_port);
     
     return 0;
 }
