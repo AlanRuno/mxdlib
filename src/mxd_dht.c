@@ -908,10 +908,24 @@ int mxd_dht_add_peer(const char* address, uint16_t port) {
         return 0;
     }
     
+    // First check for exact match (same address and port)
     for (size_t i = 0; i < peer_count; i++) {
         if (peer_list[i].port == port && strcmp(peer_list[i].address, address) == 0) {
             peer_list[i].active = 1;
             MXD_LOG_DEBUG("dht", "Peer %s:%d already exists, marked active", address, port);
+            return 0;
+        }
+    }
+    
+    // Check if we have an entry for this address with a different port
+    // If so, update the port (prefer the new port which is likely from handshake)
+    for (size_t i = 0; i < peer_count; i++) {
+        if (strcmp(peer_list[i].address, address) == 0) {
+            uint16_t old_port = peer_list[i].port;
+            peer_list[i].port = port;
+            peer_list[i].active = 1;
+            MXD_LOG_INFO("dht", "Updated peer %s port from %d to %d (likely ephemeral->listen)", 
+                        address, old_port, port);
             return 0;
         }
     }
