@@ -1842,8 +1842,8 @@ int mxd_handle_genesis_sign_request(const uint8_t *target_address, const uint8_t
     // Log target address vs local address for debugging
     char target_hex[41], local_hex[41];
     for (int i = 0; i < 20; i++) {
-        sprintf(target_hex + i*2, "%02x", target_address[i]);
-        sprintf(local_hex + i*2, "%02x", local_genesis_address[i]);
+        snprintf(target_hex + i*2, 3, "%02x", target_address[i]);
+        snprintf(local_hex + i*2, 3, "%02x", local_genesis_address[i]);
     }
     MXD_LOG_INFO("rsc", "Genesis sign request: target=%s, local=%s", target_hex, local_hex);
     
@@ -1951,8 +1951,8 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
     if (memcmp(proposer_id, local_genesis_address, 20) != 0) {
         char proposer_hex[41], local_hex[41];
         for (int i = 0; i < 20; i++) {
-            sprintf(proposer_hex + i*2, "%02x", proposer_id[i]);
-            sprintf(local_hex + i*2, "%02x", local_genesis_address[i]);
+            snprintf(proposer_hex + i*2, 3, "%02x", proposer_id[i]);
+            snprintf(local_hex + i*2, 3, "%02x", local_genesis_address[i]);
         }
         MXD_LOG_INFO("rsc", "Ignoring genesis sign response for different proposer: got=%s, local=%s", proposer_hex, local_hex);
         return 0;
