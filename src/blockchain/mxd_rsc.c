@@ -8,6 +8,9 @@
 #include "../../include/mxd_endian.h"
 #include "../../include/mxd_rocksdb_globals.h"
 #include "../../include/mxd_config.h"
+#include "../../include/mxd_transaction.h"
+#include "../../include/mxd_blockchain.h"
+#include "../../include/mxd_serialize.h"
 #include "../metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +33,52 @@
 #define MXD_VALIDATION_EXPIRY 5        // Validation signatures expire after 5 blocks
 #define MXD_BLACKLIST_DURATION_DEFAULT 1000    // Default blacklist duration (in blocks) - Per Phase 4 spec: ban for 1000 blocks
 #define MXD_MAX_TIMESTAMP_DRIFT_MS 60000ULL  // Maximum timestamp drift allowed (in milliseconds)
+
+// Helper function to serialize a coinbase transaction for adding to a block
+// Returns allocated buffer that must be freed by caller, or NULL on error
+static uint8_t* serialize_coinbase_for_block(const mxd_transaction_t* tx, size_t* out_len) {
+    if (!tx || !out_len || !tx->is_coinbase) return NULL;
+    
+    // Calculate total size needed for coinbase transaction
+    // Coinbase transactions have no inputs, only outputs
+    size_t size = 0;
+    size += 4;  // version (u32)
+    size += 4;  // input_count (u32) - always 0 for coinbase
+    size += 4;  // output_count (u32)
+    size += 8;  // voluntary_tip (u64)
+    size += 8;  // timestamp (u64)
+    size += 1;  // is_coinbase (u8)
+    size += 64; // tx_hash
+    
+    // Calculate output sizes
+    for (uint32_t i = 0; i < tx->output_count; i++) {
+        size += 20;  // recipient_addr
+        size += 8;   // amount (u64)
+    }
+    
+    uint8_t* buffer = malloc(size);
+    if (!buffer) return NULL;
+    
+    uint8_t* ptr = buffer;
+    
+    // Serialize header fields using existing serialization functions
+    mxd_write_u32_be(&ptr, tx->version);
+    mxd_write_u32_be(&ptr, 0);  // input_count (0 for coinbase)
+    mxd_write_u32_be(&ptr, tx->output_count);
+    mxd_write_u64_be(&ptr, tx->voluntary_tip);
+    mxd_write_u64_be(&ptr, tx->timestamp);
+    mxd_write_u8(&ptr, 1);  // is_coinbase
+    mxd_write_bytes(&ptr, tx->tx_hash, 64);
+    
+    // Serialize outputs
+    for (uint32_t i = 0; i < tx->output_count; i++) {
+        mxd_write_bytes(&ptr, tx->outputs[i].recipient_addr, 20);
+        mxd_write_u64_be(&ptr, tx->outputs[i].amount);
+    }
+    
+    *out_len = size;
+    return buffer;
+}
 
 // Helper function to get blacklist duration from config or use default
 static uint32_t get_blacklist_duration(void) {
@@ -2205,8 +2254,50 @@ int mxd_try_coordinate_genesis_block(void) {
     }
     
     genesis_block.height = 0;
-    genesis_block.total_supply = 0; // Genesis has no supply yet
     memcpy(genesis_block.proposer_id, local_genesis_address, 20);
+    
+    // Get initial stake amount from config for minting genesis validator balances
+    mxd_config_t *config = mxd_get_config();
+    mxd_amount_t initial_stake = config ? config->initial_stake : 0;
+    mxd_amount_t total_minted = 0;
+    
+    // Create coinbase transactions for each genesis validator (first 3 sorted addresses)
+    // This mints the initial token supply for the network
+    for (size_t i = 0; i < genesis_validator_count && i < 3; i++) {
+        if (initial_stake > 0) {
+            mxd_transaction_t coinbase_tx;
+            memset(&coinbase_tx, 0, sizeof(coinbase_tx));
+            
+            if (mxd_create_coinbase_transaction(&coinbase_tx, addresses[i], initial_stake) == 0) {
+                // Serialize the coinbase transaction for block storage
+                size_t tx_len = 0;
+                uint8_t *tx_data = serialize_coinbase_for_block(&coinbase_tx, &tx_len);
+                
+                if (tx_data && tx_len > 0) {
+                    if (mxd_add_transaction(&genesis_block, tx_data, tx_len) == 0) {
+                        total_minted += initial_stake;
+                        MXD_LOG_INFO("rsc", "Added genesis coinbase tx for validator %zu: %llu base units",
+                                    i, (unsigned long long)initial_stake);
+                    } else {
+                        MXD_LOG_WARN("rsc", "Failed to add coinbase tx to genesis block for validator %zu", i);
+                    }
+                    free(tx_data);
+                }
+                
+                // Free transaction resources
+                mxd_free_transaction(&coinbase_tx);
+            } else {
+                MXD_LOG_WARN("rsc", "Failed to create coinbase tx for genesis validator %zu", i);
+            }
+        }
+    }
+    
+    // Set total supply to the amount minted for genesis validators
+    genesis_block.total_supply = total_minted;
+    MXD_LOG_INFO("rsc", "Genesis block total_supply set to %llu base units (%zu validators * %llu each)",
+                (unsigned long long)total_minted, 
+                (genesis_validator_count < 3 ? genesis_validator_count : 3),
+                (unsigned long long)initial_stake);
     
     if (mxd_freeze_transaction_set(&genesis_block) != 0) {
         MXD_LOG_ERROR("rsc", "Failed to freeze genesis block transaction set");
