@@ -15,16 +15,11 @@ reset_node_data() {
     echo "═══════════════════════════════════════════"
     echo ""
     
-    # Check if data directory exists
-    if [ ! -d "$data_dir" ]; then
-        echo "Data directory '$data_dir' does not exist. Nothing to reset."
-        return 0
-    fi
-    
-    echo "This will delete the following data:"
-    echo "  - Peer table data"
-    echo "  - Rapid stake table data"
+    echo "This will delete ALL node data:"
     echo "  - Blockchain data (blocks, UTXO database)"
+    echo "  - DHT peer table data"
+    echo "  - Rapid stake table data"
+    echo "  - Node identity keys (will be regenerated on next start)"
     echo ""
     echo "Data directory: $data_dir"
     echo ""
@@ -33,6 +28,9 @@ reset_node_data() {
     if [ -d "$data_dir" ]; then
         echo "Current contents:"
         ls -la "$data_dir" 2>/dev/null || echo "  (empty or inaccessible)"
+        echo ""
+    else
+        echo "Data directory '$data_dir' does not exist yet."
         echo ""
     fi
     
@@ -48,62 +46,27 @@ reset_node_data() {
     echo ""
     echo "Resetting node data..."
     
-    # Remove UTXO database
-    if [ -d "$data_dir/utxo.db" ]; then
-        echo "  Removing UTXO database..."
-        rm -rf "$data_dir/utxo.db"
+    # Remove the entire data directory if it exists (this contains all persistent data)
+    if [ -d "$data_dir" ]; then
+        echo "  Removing data directory: $data_dir"
+        rm -rf "$data_dir"
     fi
     
-    # Remove blockchain database (if separate)
-    if [ -d "$data_dir/blockchain.db" ]; then
-        echo "  Removing blockchain database..."
-        rm -rf "$data_dir/blockchain.db"
-    fi
-    
-    # Remove blocks database
-    if [ -d "$data_dir/blocks.db" ]; then
-        echo "  Removing blocks database..."
-        rm -rf "$data_dir/blocks.db"
-    fi
-    
-    # Remove peers database
-    if [ -d "$data_dir/peers.db" ]; then
-        echo "  Removing peers database..."
-        rm -rf "$data_dir/peers.db"
-    fi
-    
-    # Remove DHT state
-    if [ -f "$data_dir/dht_state.json" ]; then
-        echo "  Removing DHT state..."
-        rm -f "$data_dir/dht_state.json"
-    fi
-    
-    # Remove any other .db directories
-    for db_dir in "$data_dir"/*.db; do
-        if [ -d "$db_dir" ]; then
-            echo "  Removing $(basename "$db_dir")..."
-            rm -rf "$db_dir"
-        fi
-    done
-    
-    # Remove any state files
-    for state_file in "$data_dir"/*.json "$data_dir"/*.dat "$data_dir"/*.bin; do
-        if [ -f "$state_file" ]; then
-            echo "  Removing $(basename "$state_file")..."
-            rm -f "$state_file"
-        fi
-    done
+    # Recreate empty data directory
+    mkdir -p "$data_dir"
+    echo "  Created fresh data directory: $data_dir"
     
     echo ""
     echo "Node data reset complete!"
-    echo "The node will start fresh."
+    echo "The node will start fresh with a new identity."
     return 0
 }
 
 # Check if standalone reset command is provided (./letsgo -reset)
 if [ "$1" == "-reset" ] || [ "$1" == "--reset" ]; then
     # Use second argument as data directory if provided, otherwise use default
-    DATA_DIR="${2:-./build/lib/data}"
+    # The node stores data in ./data relative to where it runs (mxdlib root)
+    DATA_DIR="${2:-./data}"
     reset_node_data "$DATA_DIR"
     exit $?
 fi
@@ -117,8 +80,8 @@ if [ -z "$1" ]; then
     echo "  $0 testnet           # Build and run node on testnet"
     echo "  $0 mainnet           # Build and run node on mainnet"
     echo "  $0 testnet -reset    # Reset data, then build and run on testnet"
-    echo "  $0 -reset            # Reset node data only (default: ./build/lib/data)"
-    echo "  $0 -reset ./data     # Reset node data in specified directory"
+    echo "  $0 -reset            # Reset node data only (default: ./data)"
+    echo "  $0 -reset /path/to/data  # Reset node data in specified directory"
     exit 1
 fi
 
@@ -169,8 +132,9 @@ CONFIG_FILE="build/lib/default_config.json"
 if [ $RESET_FLAG -eq 1 ]; then
     echo ""
     echo "Step 4.5/5: Resetting node data (as requested)..."
-    # Reset data in build/lib/data directory, skip confirmation since user explicitly requested reset
-    reset_node_data "build/lib/data" "true"
+    # Reset data in ./data directory (where the node stores all persistent data)
+    # Skip confirmation since user explicitly requested reset
+    reset_node_data "data" "true"
 fi
 
 echo ""
