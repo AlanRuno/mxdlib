@@ -16,19 +16,19 @@ static char* block_to_json(const mxd_block_t *block) {
     // Convert block hash to hex string
     char hash_hex[129] = {0};
     for (int i = 0; i < 64; i++) {
-        sprintf(hash_hex + i*2, "%02x", block->block_hash[i]);
+        snprintf(hash_hex + i*2, 3, "%02x", block->block_hash[i]);
     }
     
     // Convert prev hash to hex string
     char prev_hash_hex[129] = {0};
     for (int i = 0; i < 64; i++) {
-        sprintf(prev_hash_hex + i*2, "%02x", block->prev_block_hash[i]);
+        snprintf(prev_hash_hex + i*2, 3, "%02x", block->prev_block_hash[i]);
     }
     
     // Convert proposer_id to hex string
     char proposer_hex[41] = {0};
     for (int i = 0; i < 20; i++) {
-        sprintf(proposer_hex + i*2, "%02x", block->proposer_id[i]);
+        snprintf(proposer_hex + i*2, 3, "%02x", block->proposer_id[i]);
     }
     
     // Build JSON response
@@ -103,14 +103,14 @@ static enum MHD_Result handle_request(void *cls,
         char latest_hash[129] = {0};
         if (height > 0 && mxd_retrieve_block_by_height(height - 1, &block) == 0) {
             for (int i = 0; i < 64; i++) {
-                sprintf(latest_hash + i*2, "%02x", block.block_hash[i]);
+                snprintf(latest_hash + i*2, 3, "%02x", block.block_hash[i]);
             }
             mxd_free_block(&block);
         } else if (height == 0) {
             // Check for genesis block at height 0
             if (mxd_retrieve_block_by_height(0, &block) == 0) {
                 for (int i = 0; i < 64; i++) {
-                    sprintf(latest_hash + i*2, "%02x", block.block_hash[i]);
+                    snprintf(latest_hash + i*2, 3, "%02x", block.block_hash[i]);
                 }
                 height = 1; // We have genesis
                 mxd_free_block(&block);

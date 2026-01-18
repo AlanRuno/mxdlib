@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     libc-bin \
     libcurl4-openssl-dev \
     libminiupnpc-dev \
+    libmicrohttpd-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install custom dependencies (wasm3, libuv, uvwasi, liboqs) as root
@@ -113,7 +114,9 @@ RUN apt-get update && apt-get install -y \
     libcjson1 \
     libcurl4 \
     libminiupnpc17 \
+    libmicrohttpd12 \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
