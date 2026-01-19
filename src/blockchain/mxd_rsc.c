@@ -2261,9 +2261,9 @@ int mxd_try_coordinate_genesis_block(void) {
     mxd_amount_t initial_stake = config ? config->initial_stake : 0;
     mxd_amount_t total_minted = 0;
     
-    // Create coinbase transactions for each genesis validator (first 3 sorted addresses)
-    // This mints the initial token supply for the network
-    for (size_t i = 0; i < genesis_validator_count && i < 3; i++) {
+    // Create coinbase transactions for ALL genesis validators (not just first 3)
+    // This mints the initial token supply for the network - each validator gets initial_stake
+    for (size_t i = 0; i < genesis_validator_count; i++) {
         if (initial_stake > 0) {
             mxd_transaction_t coinbase_tx;
             memset(&coinbase_tx, 0, sizeof(coinbase_tx));
@@ -2296,7 +2296,7 @@ int mxd_try_coordinate_genesis_block(void) {
     genesis_block.total_supply = total_minted;
     MXD_LOG_INFO("rsc", "Genesis block total_supply set to %llu base units (%zu validators * %llu each)",
                 (unsigned long long)total_minted, 
-                (genesis_validator_count < 3 ? genesis_validator_count : 3),
+                genesis_validator_count,
                 (unsigned long long)initial_stake);
     
     if (mxd_freeze_transaction_set(&genesis_block) != 0) {
