@@ -5,6 +5,7 @@
 #include <time.h>
 #include <cjson/cJSON.h>
 #include "mxd_config.h"
+#include "mxd_types.h"
 #include "utils/mxd_http.h"
 #include "mxd_logging.h"
 
@@ -70,7 +71,7 @@ void mxd_set_default_config(mxd_config_t* config) {
     // Basic settings
     config->port = 8000;
     config->metrics_port = 8080;
-    config->initial_stake = 100.0;
+    config->initial_stake = 100ULL * MXD_AMOUNT_MULTIPLIER;  // 100 MXD in base units
     config->metrics_interval = 1000;
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
     
@@ -208,7 +209,9 @@ int mxd_load_config(const char* config_file, mxd_config_t* config) {
         strncpy(config->node_data, item->valuestring, sizeof(config->node_data) - 1);
     }
     if ((item = cJSON_GetObjectItem(root, "initial_stake")) && cJSON_IsNumber(item)) {
-        config->initial_stake = item->valuedouble;
+        // Convert from MXD (double) to base units (mxd_amount_t)
+        // 1 MXD = 100,000,000 base units (8 decimal places)
+        config->initial_stake = (mxd_amount_t)(item->valuedouble * (double)MXD_AMOUNT_MULTIPLIER + 0.5);
     }
     if ((item = cJSON_GetObjectItem(root, "network_type")) && cJSON_IsString(item)) {
         strncpy(config->network_type, item->valuestring, sizeof(config->network_type) - 1);
