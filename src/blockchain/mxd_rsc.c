@@ -2301,9 +2301,16 @@ int mxd_try_coordinate_genesis_block(void) {
                 
                 if (tx_data && tx_len > 0) {
                     if (mxd_add_transaction(&genesis_block, tx_data, tx_len) == 0) {
-                        total_minted += initial_stake;
-                        MXD_LOG_INFO("rsc", "Added genesis coinbase tx for validator %zu: %llu base units",
-                                    i, (unsigned long long)initial_stake);
+                        // CRITICAL: Create UTXOs from the coinbase transaction so validators have spendable balance
+                        // This must be done here because mxd_store_block does not process transactions
+                        if (mxd_create_utxos_from_tx(&coinbase_tx, coinbase_tx.tx_hash) == 0) {
+                            total_minted += initial_stake;
+                            MXD_LOG_INFO("rsc", "Added genesis coinbase tx for validator %zu: %llu base units (UTXO created)",
+                                        i, (unsigned long long)initial_stake);
+                        } else {
+                            MXD_LOG_WARN("rsc", "Failed to create UTXO for genesis validator %zu", i);
+                            total_minted += initial_stake;  // Still count as minted even if UTXO creation failed
+                        }
                     } else {
                         MXD_LOG_WARN("rsc", "Failed to add coinbase tx to genesis block for validator %zu", i);
                     }
