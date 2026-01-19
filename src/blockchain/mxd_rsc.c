@@ -1335,6 +1335,7 @@ static pthread_mutex_t genesis_mutex = PTHREAD_MUTEX_INITIALIZER;
 // Genesis sync phase tracking
 #define MXD_GENESIS_SYNC_TIMEOUT_MS 10000  // 10 seconds to wait for sync confirmations
 #define MXD_GENESIS_SYNC_MIN_CONFIRMATIONS 3  // Minimum nodes that must agree on member list
+#define MXD_GENESIS_MEMBER_COLLECTION_WAIT_MS 30000  // 30 seconds to wait for more validators to join
 
 typedef struct {
     uint8_t node_address[20];
@@ -2093,9 +2094,33 @@ int mxd_try_coordinate_genesis_block(void) {
     uint64_t current_time = mxd_now_ms();
     if (genesis_quorum_reached_time == 0) {
         genesis_quorum_reached_time = current_time;
-        genesis_sync_started_time = current_time;
-        genesis_locked = 1;  // Lock member list immediately when quorum is reached
-        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, locking member list and starting sync phase", local_pending_count);
+        MXD_LOG_INFO("rsc", "Genesis quorum reached with %zu members, waiting %d seconds for more validators to join",
+                    local_pending_count, MXD_GENESIS_MEMBER_COLLECTION_WAIT_MS / 1000);
+    }
+    
+    // Wait for member collection period before locking (allows more validators to join)
+    // Lock early if we already have 10 validators (maximum)
+    if (!genesis_locked) {
+        if (local_pending_count >= 10) {
+            genesis_locked = 1;
+            genesis_sync_started_time = current_time;
+            MXD_LOG_INFO("rsc", "Maximum validators reached (%zu), locking member list", local_pending_count);
+        } else if (current_time - genesis_quorum_reached_time >= MXD_GENESIS_MEMBER_COLLECTION_WAIT_MS) {
+            genesis_locked = 1;
+            genesis_sync_started_time = current_time;
+            MXD_LOG_INFO("rsc", "Member collection period complete, locking with %zu validators", local_pending_count);
+        } else {
+            // Still waiting for more validators
+            uint64_t remaining_ms = MXD_GENESIS_MEMBER_COLLECTION_WAIT_MS - (current_time - genesis_quorum_reached_time);
+            static uint64_t last_wait_log = 0;
+            if (current_time - last_wait_log > 5000) {  // Log every 5 seconds
+                MXD_LOG_INFO("rsc", "Waiting for more validators: %zu current, %llu seconds remaining",
+                            local_pending_count, (unsigned long long)(remaining_ms / 1000));
+                last_wait_log = current_time;
+            }
+            pthread_mutex_unlock(&genesis_mutex);
+            return 0;  // Keep waiting
+        }
     }
     
     // Make a local copy of pending genesis members while holding the lock
