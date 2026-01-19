@@ -29,9 +29,13 @@ int mxd_init_secrets(const char *config_file) {
     int have_magic = 0;
     int have_salt = 0;
 
-    if (mxd_load_secret_from_env("MXD_NETWORK_MAGIC", &secrets.network_magic, sizeof(secrets.network_magic)) == 0) {
+    // Check for network magic as hex string (e.g., "0xDEADBEEF" or "DEADBEEF")
+    const char *magic_env = getenv("MXD_NETWORK_MAGIC");
+    if (magic_env && strlen(magic_env) > 0) {
+        unsigned long magic_val = strtoul(magic_env, NULL, 0);  // Auto-detect base (0x prefix for hex)
+        secrets.network_magic = (uint32_t)magic_val;
         have_magic = 1;
-        MXD_LOG_INFO("secrets", "Loaded network magic from environment");
+        MXD_LOG_INFO("secrets", "Loaded network magic from environment: 0x%08X", secrets.network_magic);
     }
     
     if (mxd_load_secret_from_env("MXD_CRYPTO_SALT", secrets.crypto_salt, sizeof(secrets.crypto_salt)) == 0) {
