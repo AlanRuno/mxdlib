@@ -2141,11 +2141,12 @@ int mxd_try_coordinate_genesis_block(void) {
     
     qsort(addresses, addr_count, 20, compare_addresses);
     
-    // DETERMINISTIC GENESIS: Limit to exactly 3 validators (first 3 sorted addresses)
-    // This ensures all nodes compute the same validator set
-    size_t genesis_validator_count = (addr_count < 3) ? addr_count : 3;
+    // DETERMINISTIC GENESIS: Include ALL participating validators (up to 10)
+    // This ensures all nodes compute the same validator set and all get initial stake
+    // Minimum 3 validators required for quorum, maximum 10 for genesis
+    size_t genesis_validator_count = addr_count;
     
-    // Check if this node is in the genesis validator set (first 3 addresses)
+    // Check if this node is in the genesis validator set (all participating addresses)
     int is_genesis_validator = 0;
     for (size_t i = 0; i < genesis_validator_count; i++) {
         if (memcmp(local_genesis_address, addresses[i], 20) == 0) {
@@ -2309,7 +2310,9 @@ int mxd_try_coordinate_genesis_block(void) {
         current_time = mxd_now_ms(); // Use NTP-synchronized time in milliseconds
     }
     
-    for (size_t i = 0; i < collected_signature_count && i < 3; i++) {
+    // Add ALL collected signatures to membership entries (not just first 3)
+    // This ensures all participating validators are included in the genesis block
+    for (size_t i = 0; i < collected_signature_count; i++) {
         mxd_genesis_signature_t *sig = &collected_signatures[i];
         
         if (mxd_append_membership_entry(&genesis_block, sig->node_address, 
@@ -2321,8 +2324,8 @@ int mxd_try_coordinate_genesis_block(void) {
     }
     
     if (!mxd_block_has_membership_quorum(&genesis_block, 0)) {
-        MXD_LOG_ERROR("rsc", "Genesis block does not have quorum (%u/3 validators)",
-                     genesis_block.rapid_membership_count);
+        MXD_LOG_ERROR("rsc", "Genesis block does not have quorum (%u/%zu validators)",
+                     genesis_block.rapid_membership_count, collected_signature_count);
         genesis_creation_attempted = 0;
         return -1;
     }
