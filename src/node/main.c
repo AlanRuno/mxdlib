@@ -24,6 +24,7 @@
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_ntp.h"
 #include "../include/mxd_utxo.h"
+#include "../include/mxd_mempool.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
 
@@ -317,7 +318,16 @@ int main(int argc, char** argv) {
     }
     MXD_LOG_INFO("node", "UTXO database initialized successfully");
     log_memory_usage("after_utxo_db");
-    
+
+    // Initialize mempool
+    MXD_LOG_INFO("node", "Initializing mempool...");
+    if (mxd_init_mempool() != 0) {
+        MXD_LOG_ERROR("node", "Failed to initialize mempool");
+        return 1;
+    }
+    MXD_LOG_INFO("node", "Mempool initialized successfully");
+    log_memory_usage("after_mempool");
+
     // Initialize monitoring system
     MXD_LOG_INFO("node", "Initializing monitoring system on port %d...", current_config.metrics_port);
     if (mxd_init_monitoring(current_config.metrics_port) != 0) {
