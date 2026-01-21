@@ -2165,12 +2165,26 @@ int mxd_try_coordinate_genesis_block(void) {
     }
     
     qsort(addresses, addr_count, 20, compare_addresses);
-    
+
+    // DEBUG: Log the sorted addresses and local address for genesis coordinator debugging
+    {
+        char local_hex[41] = {0};
+        char first_hex[41] = {0};
+        for (int i = 0; i < 20; i++) {
+            snprintf(local_hex + i*2, 3, "%02x", local_genesis_address[i]);
+            if (addr_count > 0) {
+                snprintf(first_hex + i*2, 3, "%02x", addresses[0][i]);
+            }
+        }
+        MXD_LOG_INFO("rsc", "Genesis coordinator: addr_count=%zu, local=%s, first=%s",
+                     addr_count, local_hex, addr_count > 0 ? first_hex : "(none)");
+    }
+
     // DETERMINISTIC GENESIS: Include ALL participating validators (up to 10)
     // This ensures all nodes compute the same validator set and all get initial stake
     // Minimum 3 validators required for quorum, maximum 10 for genesis
     size_t genesis_validator_count = addr_count;
-    
+
     // Check if this node is in the genesis validator set (all participating addresses)
     int is_genesis_validator = 0;
     for (size_t i = 0; i < genesis_validator_count; i++) {
@@ -2179,17 +2193,21 @@ int mxd_try_coordinate_genesis_block(void) {
             break;
         }
     }
-    
+
     if (!is_genesis_validator) {
         // This node is not in the genesis validator set, wait for genesis block from others
+        MXD_LOG_WARN("rsc", "Genesis coordinator: local address not found in validator set!");
         return 0;
     }
-    
+
     // Check if this node is the designated proposer (lexicographically smallest address)
     // ONLY the designated proposer creates the genesis block - NO fallback proposers
     // This ensures deterministic genesis block creation with identical proposer_id
     int is_designated_proposer = (memcmp(local_genesis_address, addresses[0], 20) == 0);
-    
+
+    MXD_LOG_INFO("rsc", "Genesis coordinator: is_genesis_validator=%d, is_designated_proposer=%d",
+                 is_genesis_validator, is_designated_proposer);
+
     if (!is_designated_proposer) {
         // Not the designated proposer - wait for sign request from the proposer
         // Do NOT become a fallback proposer as this causes multiple incompatible genesis blocks
@@ -2286,7 +2304,10 @@ int mxd_try_coordinate_genesis_block(void) {
     mxd_config_t *config = mxd_get_config();
     mxd_amount_t initial_stake = config ? config->initial_stake : 0;
     mxd_amount_t total_minted = 0;
-    
+
+    MXD_LOG_INFO("rsc", "Genesis block creation: config=%p, initial_stake=%llu, genesis_validator_count=%zu",
+                 (void*)config, (unsigned long long)initial_stake, genesis_validator_count);
+
     // Create coinbase transactions for ALL genesis validators (not just first 3)
     // This mints the initial token supply for the network - each validator gets initial_stake
     for (size_t i = 0; i < genesis_validator_count; i++) {
