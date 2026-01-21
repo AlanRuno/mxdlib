@@ -72,8 +72,17 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
     
     if (block->rapid_membership_count > 0 && block->rapid_membership_entries) {
         for (uint32_t i = 0; i < block->rapid_membership_count; i++) {
-            size += 20 + 8 + 1 + 2 + block->rapid_membership_entries[i].public_key_length + 
+            size += 20 + 8 + 1 + 2 + block->rapid_membership_entries[i].public_key_length +
                     2 + block->rapid_membership_entries[i].signature_length;
+        }
+    }
+
+    // Add transaction count and transaction data sizes
+    size += sizeof(uint32_t);  // transaction_count
+    if (block->transaction_count > 0 && block->transactions) {
+        for (uint32_t i = 0; i < block->transaction_count; i++) {
+            size += sizeof(uint32_t);  // transaction length
+            size += block->transactions[i].length;  // transaction data
         }
     }
 
@@ -128,6 +137,21 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
     if (block->rapid_membership_count > 0 && block->rapid_membership_entries) {
         for (uint32_t i = 0; i < block->rapid_membership_count; i++) {
             serialize_membership_entry(&block->rapid_membership_entries[i], &ptr);
+        }
+    }
+
+    // Serialize transactions
+    uint32_t tx_count_be = htonl(block->transaction_count);
+    memcpy(ptr, &tx_count_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+
+    if (block->transaction_count > 0 && block->transactions) {
+        for (uint32_t i = 0; i < block->transaction_count; i++) {
+            uint32_t tx_len_be = htonl((uint32_t)block->transactions[i].length);
+            memcpy(ptr, &tx_len_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+            if (block->transactions[i].data && block->transactions[i].length > 0) {
+                memcpy(ptr, block->transactions[i].data, block->transactions[i].length);
+                ptr += block->transactions[i].length;
+            }
         }
     }
 
@@ -275,6 +299,46 @@ static int deserialize_block(const uint8_t *data, size_t data_len, mxd_block_t *
             }
         }
         block->rapid_membership_capacity = block->rapid_membership_count;
+    }
+
+    // Deserialize transactions
+    block->transactions = NULL;
+    block->transaction_count = 0;
+    block->transaction_capacity = 0;
+
+    if (ptr + sizeof(uint32_t) <= end) {
+        uint32_t tx_count_be;
+        memcpy(&tx_count_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+        block->transaction_count = ntohl(tx_count_be);
+
+        if (block->transaction_count > 0) {
+            block->transactions = calloc(block->transaction_count, sizeof(mxd_block_transaction_t));
+            if (!block->transactions) {
+                block->transaction_count = 0;
+                // Don't fail - old blocks may not have transactions
+            } else {
+                block->transaction_capacity = block->transaction_count;
+                for (uint32_t i = 0; i < block->transaction_count; i++) {
+                    if (ptr + sizeof(uint32_t) > end) {
+                        // Truncated - stop reading transactions
+                        block->transaction_count = i;
+                        break;
+                    }
+                    uint32_t tx_len_be;
+                    memcpy(&tx_len_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+                    uint32_t tx_len = ntohl(tx_len_be);
+
+                    if (tx_len > 0 && ptr + tx_len <= end) {
+                        block->transactions[i].data = malloc(tx_len);
+                        if (block->transactions[i].data) {
+                            memcpy(block->transactions[i].data, ptr, tx_len);
+                            block->transactions[i].length = tx_len;
+                        }
+                        ptr += tx_len;
+                    }
+                }
+            }
+        }
     }
 
     return 0;
