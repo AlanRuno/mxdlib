@@ -109,7 +109,7 @@ static pthread_mutex_t unified_peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 #define MXD_KEEPALIVE_INTERVAL 30
 #define MXD_KEEPALIVE_TIMEOUT 90
 #define MXD_MAX_KEEPALIVE_FAILURES 3
-#define MXD_PROTOCOL_VERSION 3
+#define MXD_PROTOCOL_VERSION 4
 
 static pthread_t keepalive_thread;
 static volatile int keepalive_running = 0;
@@ -133,7 +133,7 @@ typedef struct {
 
 typedef struct {
     char node_id[256];                      // Node identifier (wallet address)
-    uint32_t protocol_version;              // Protocol version (now v3 for anti-replay)
+    uint32_t protocol_version;              // Protocol version (now v4 for network filtering)
     uint16_t listen_port;                   // Listening port
     uint8_t algo_id;                        // Algorithm ID (1=Ed25519, 2=Dilithium5)
     uint16_t public_key_length;             // Length of public key
@@ -142,6 +142,7 @@ typedef struct {
     uint64_t timestamp;                     // Unix timestamp for anti-replay
     uint16_t signature_length;              // Length of signature
     uint8_t signature[MXD_SIG_MAX_LEN];     // Signature (variable size)
+    char network_type[32];                  // Network identifier for isolation
 } mxd_handshake_payload_t;
 
 static void* connection_handler(void* arg);
@@ -609,45 +610,47 @@ int mxd_set_message_handler(mxd_message_handler_t handler) {
 
 static void handle_get_peers_message(const char *address, uint16_t port, const void *payload, size_t length) {
     uint16_t peer_listening_port = port;
-    
+
     if (length >= sizeof(uint16_t)) {
         memcpy(&peer_listening_port, payload, sizeof(uint16_t));
         MXD_LOG_INFO("p2p", "GET_PEERS from %s:%d (listening on port %d)", address, port, peer_listening_port);
-        
-        if (mxd_dht_add_peer(address, peer_listening_port) == 0) {
+
+        if (mxd_dht_add_peer(address, peer_listening_port, NULL) == 0) {
             MXD_LOG_INFO("p2p", "Added requesting peer %s:%d to DHT", address, peer_listening_port);
         }
     } else {
         MXD_LOG_WARN("p2p", "GET_PEERS message from %s:%d missing listening port", address, port);
     }
-    
+
     mxd_dht_node_t peers[MXD_MAX_PEERS];
     size_t peer_count = MXD_MAX_PEERS;
-    
+
     if (mxd_dht_get_peers(peers, &peer_count) != 0) {
         MXD_LOG_WARN("p2p", "Failed to get peers for GET_PEERS request from %s:%d", address, port);
         return;
     }
-    
+
     size_t active_count = 0;
     for (size_t i = 0; i < peer_count; i++) {
         if (peers[i].active) {
             active_count++;
         }
     }
-    
+
     MXD_LOG_DEBUG("p2p", "GET_PEERS: total peers=%zu, active peers=%zu", peer_count, active_count);
-    
-    size_t payload_size = sizeof(uint32_t) + (active_count * (256 + sizeof(uint16_t)));
+
+    // New format: [count:4][address:256 + port:2 + network_type_len:1 + network_type:N]...
+    // Max size per peer: 256 + 2 + 1 + 32 = 291
+    size_t payload_size = sizeof(uint32_t) + (active_count * (256 + sizeof(uint16_t) + 1 + 32));
     uint8_t *response = malloc(payload_size);
     if (!response) {
         MXD_LOG_ERROR("p2p", "Failed to allocate memory for PEERS response");
         return;
     }
-    
+
     uint32_t count = (uint32_t)active_count;
     memcpy(response, &count, sizeof(uint32_t));
-    
+
     size_t offset = sizeof(uint32_t);
     size_t serialized_count = 0;
     for (size_t i = 0; i < peer_count; i++) {
@@ -656,64 +659,74 @@ static void handle_get_peers_message(const char *address, uint16_t port, const v
             offset += 256;
             memcpy(response + offset, &peers[i].port, sizeof(uint16_t));
             offset += sizeof(uint16_t);
+            // Add network_type (length byte + string)
+            uint8_t network_type_len = (uint8_t)strlen(peers[i].network_type);
+            response[offset] = network_type_len;
+            offset += 1;
+            if (network_type_len > 0) {
+                memcpy(response + offset, peers[i].network_type, network_type_len);
+                offset += network_type_len;
+            }
             serialized_count++;
-            MXD_LOG_DEBUG("p2p", "Serializing peer %zu: %s:%d", serialized_count, peers[i].address, peers[i].port);
+            MXD_LOG_DEBUG("p2p", "Serializing peer %zu: %s:%d (network: %s)", serialized_count, peers[i].address, peers[i].port, peers[i].network_type);
         }
     }
-    
-    MXD_LOG_DEBUG("p2p", "PEERS response: count=%u, serialized=%zu, payload_size=%zu, actual_offset=%zu", 
+
+    MXD_LOG_DEBUG("p2p", "PEERS response: count=%u, serialized=%zu, payload_size=%zu, actual_offset=%zu",
                  count, serialized_count, payload_size, offset);
-    
+
     if (mxd_send_message(address, peer_listening_port, MXD_MSG_PEERS, response, offset) != 0) {
         MXD_LOG_WARN("p2p", "Failed to send PEERS response to %s:%d", address, peer_listening_port);
     } else {
         MXD_LOG_INFO("p2p", "Sent %u active peers to %s:%d (payload: %zu bytes)", count, address, peer_listening_port, offset);
     }
-    
+
     free(response);
 }
 
 static void handle_get_peers_on_socket(int sock, const char *address, uint16_t port, const void *payload, size_t length) {
     uint16_t peer_listening_port = port;
-    
+
     if (length >= sizeof(uint16_t)) {
         memcpy(&peer_listening_port, payload, sizeof(uint16_t));
         MXD_LOG_INFO("p2p", "GET_PEERS from %s:%d (listening on port %d) on persistent connection", address, port, peer_listening_port);
-        
-        if (mxd_dht_add_peer(address, peer_listening_port) == 0) {
+
+        if (mxd_dht_add_peer(address, peer_listening_port, NULL) == 0) {
             MXD_LOG_INFO("p2p", "Added requesting peer %s:%d to DHT", address, peer_listening_port);
         }
     } else {
         MXD_LOG_WARN("p2p", "GET_PEERS message from %s:%d missing listening port", address, port);
     }
-    
+
     mxd_dht_node_t peers[MXD_MAX_PEERS];
     size_t peer_count = MXD_MAX_PEERS;
-    
+
     if (mxd_dht_get_peers(peers, &peer_count) != 0) {
         MXD_LOG_WARN("p2p", "Failed to get peers for GET_PEERS request from %s:%d", address, port);
         return;
     }
-    
+
     size_t active_count = 0;
     for (size_t i = 0; i < peer_count; i++) {
         if (peers[i].active) {
             active_count++;
         }
     }
-    
+
     MXD_LOG_DEBUG("p2p", "GET_PEERS (socket): total peers=%zu, active peers=%zu", peer_count, active_count);
-    
-    size_t payload_size = sizeof(uint32_t) + (active_count * (256 + sizeof(uint16_t)));
+
+    // New format: [count:4][address:256 + port:2 + network_type_len:1 + network_type:N]...
+    // Max size per peer: 256 + 2 + 1 + 32 = 291
+    size_t payload_size = sizeof(uint32_t) + (active_count * (256 + sizeof(uint16_t) + 1 + 32));
     uint8_t *response = malloc(payload_size);
     if (!response) {
         MXD_LOG_ERROR("p2p", "Failed to allocate memory for PEERS response");
         return;
     }
-    
+
     uint32_t count = (uint32_t)active_count;
     memcpy(response, &count, sizeof(uint32_t));
-    
+
     size_t offset = sizeof(uint32_t);
     size_t serialized_count = 0;
     for (size_t i = 0; i < peer_count; i++) {
@@ -722,14 +735,22 @@ static void handle_get_peers_on_socket(int sock, const char *address, uint16_t p
             offset += 256;
             memcpy(response + offset, &peers[i].port, sizeof(uint16_t));
             offset += sizeof(uint16_t);
+            // Add network_type (length byte + string)
+            uint8_t network_type_len = (uint8_t)strlen(peers[i].network_type);
+            response[offset] = network_type_len;
+            offset += 1;
+            if (network_type_len > 0) {
+                memcpy(response + offset, peers[i].network_type, network_type_len);
+                offset += network_type_len;
+            }
             serialized_count++;
-            MXD_LOG_DEBUG("p2p", "Serializing peer %zu (socket): %s:%d", serialized_count, peers[i].address, peers[i].port);
+            MXD_LOG_DEBUG("p2p", "Serializing peer %zu (socket): %s:%d (network: %s)", serialized_count, peers[i].address, peers[i].port, peers[i].network_type);
         }
     }
-    
-    MXD_LOG_DEBUG("p2p", "PEERS response (socket): count=%u, serialized=%zu, payload_size=%zu, actual_offset=%zu", 
+
+    MXD_LOG_DEBUG("p2p", "PEERS response (socket): count=%u, serialized=%zu, payload_size=%zu, actual_offset=%zu",
                  count, serialized_count, payload_size, offset);
-    
+
     peer_connection_t *conn = find_connection_by_socket(sock);
     if (conn) {
         if (send_on_connection(conn, MXD_MSG_PEERS, response, offset) != 0) {
@@ -744,71 +765,100 @@ static void handle_get_peers_on_socket(int sock, const char *address, uint16_t p
             MXD_LOG_INFO("p2p", "Sent %u active peers to %s:%d (payload: %zu bytes)", count, address, peer_listening_port, offset);
         }
     }
-    
+
     free(response);
 }
 
 static void handle_peers_message(const char *address, uint16_t port, const void *payload, size_t length) {
     if (length < sizeof(uint32_t)) {
-        MXD_LOG_WARN("p2p", "Invalid PEERS message from %s:%d (length=%zu, min=%zu)", 
+        MXD_LOG_WARN("p2p", "Invalid PEERS message from %s:%d (length=%zu, min=%zu)",
                     address, port, length, sizeof(uint32_t));
         return;
     }
-    
+
     uint32_t peer_count;
     memcpy(&peer_count, payload, sizeof(uint32_t));
-    
-    size_t available_entries = (length - sizeof(uint32_t)) / (256 + sizeof(uint16_t));
-    size_t expected_size = sizeof(uint32_t) + (peer_count * (256 + sizeof(uint16_t)));
-    
-    MXD_LOG_DEBUG("p2p", "PEERS message from %s:%d: count=%u, length=%zu, expected=%zu, available=%zu", 
-                 address, port, peer_count, length, expected_size, available_entries);
-    
-    if (available_entries == 0) {
-        MXD_LOG_WARN("p2p", "PEERS message from %s:%d has no peer data (length=%zu)", 
-                    address, port, length);
+
+    MXD_LOG_DEBUG("p2p", "PEERS message from %s:%d: count=%u, length=%zu",
+                 address, port, peer_count, length);
+
+    if (peer_count == 0) {
+        MXD_LOG_DEBUG("p2p", "PEERS message from %s:%d has no peers", address, port);
         return;
     }
-    
-    if (peer_count > available_entries) {
-        MXD_LOG_WARN("p2p", "PEERS message from %s:%d: count=%u exceeds available=%zu (possible mixed version), using available count", 
-                    address, port, peer_count, available_entries);
-        peer_count = available_entries;
+
+    if (peer_count > MXD_MAX_PEERS) {
+        MXD_LOG_WARN("p2p", "PEERS message from %s:%d: count=%u exceeds max=%d, capping",
+                    address, port, peer_count, MXD_MAX_PEERS);
+        peer_count = MXD_MAX_PEERS;
     }
-    
+
     MXD_LOG_INFO("p2p", "Processing %u peers from %s:%d", peer_count, address, port);
-    
+
+    // New format: [count:4][address:256 + port:2 + network_type_len:1 + network_type:N]...
     size_t offset = sizeof(uint32_t);
     size_t peers_added = 0;
-    for (uint32_t i = 0; i < peer_count && i < MXD_MAX_PEERS; i++) {
+    for (uint32_t i = 0; i < peer_count; i++) {
+        // Check if we have enough data for address + port + network_type_len
+        if (offset + 256 + sizeof(uint16_t) + 1 > length) {
+            MXD_LOG_WARN("p2p", "PEERS message truncated at peer %u (offset=%zu, length=%zu)", i, offset, length);
+            break;
+        }
+
         char peer_addr[257];
         uint16_t peer_port;
-        
+        char peer_network_type[32] = {0};
+
         memcpy(peer_addr, (uint8_t*)payload + offset, 256);
         peer_addr[256] = '\0';
         offset += 256;
         memcpy(&peer_port, (uint8_t*)payload + offset, sizeof(uint16_t));
         offset += sizeof(uint16_t);
-        
+
+        // Read network_type (length byte + string)
+        uint8_t network_type_len = ((uint8_t*)payload)[offset];
+        offset += 1;
+        if (network_type_len > 31) {
+            MXD_LOG_WARN("p2p", "PEERS message: peer %u has invalid network_type_len=%u, skipping", i, network_type_len);
+            continue;
+        }
+        if (offset + network_type_len > length) {
+            MXD_LOG_WARN("p2p", "PEERS message truncated in network_type at peer %u", i);
+            break;
+        }
+        if (network_type_len > 0) {
+            memcpy(peer_network_type, (uint8_t*)payload + offset, network_type_len);
+            offset += network_type_len;
+        }
+        peer_network_type[31] = '\0';
+
         int is_localhost = (strcmp(peer_addr, "127.0.0.1") == 0 || strcmp(peer_addr, "localhost") == 0);
         int is_self_port = (peer_port == p2p_port);
-        
+
         if (is_localhost && is_self_port) {
             MXD_LOG_DEBUG("p2p", "Skipping self-peer (localhost:%d)", peer_port);
             continue;
         }
-        
-        if (mxd_dht_add_peer(peer_addr, peer_port) == 0) {
-            peers_added++;
-            MXD_LOG_INFO("p2p", "Learned new peer from %s:%d -> %s:%d", address, port, peer_addr, peer_port);
-        } else {
-            MXD_LOG_DEBUG("p2p", "Peer %s:%d already known or failed to add", peer_addr, peer_port);
+
+        // Skip peers with empty network_type when we have filtering enabled
+        if (node_config.network_type[0] != '\0' && peer_network_type[0] == '\0') {
+            MXD_LOG_DEBUG("p2p", "Skipping peer %s:%d with empty network_type (local requires: %s)",
+                          peer_addr, peer_port, node_config.network_type);
+            continue;
         }
-        
+
+        // mxd_dht_add_peer will filter by network_type
+        if (mxd_dht_add_peer(peer_addr, peer_port, peer_network_type) == 0) {
+            peers_added++;
+            MXD_LOG_INFO("p2p", "Learned new peer from %s:%d -> %s:%d (network: %s)", address, port, peer_addr, peer_port, peer_network_type);
+        } else {
+            MXD_LOG_DEBUG("p2p", "Peer %s:%d already known, filtered, or failed to add", peer_addr, peer_port);
+        }
+
         pthread_mutex_lock(&peer_mutex);
         int already_connected = 0;
         for (size_t j = 0; j < MXD_MAX_PEERS; j++) {
-            if (active_connections[j].active && 
+            if (active_connections[j].active &&
                 strcmp(active_connections[j].address, peer_addr) == 0 &&
                 active_connections[j].port == peer_port) {
                 already_connected = 1;
@@ -816,7 +866,7 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
             }
         }
         pthread_mutex_unlock(&peer_mutex);
-        
+
         if (!already_connected) {
             MXD_LOG_INFO("p2p", "Attempting persistent connection to new peer %s:%d", peer_addr, peer_port);
             if (try_establish_persistent_connection(peer_addr, peer_port) == 0) {
@@ -826,7 +876,7 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
             }
         }
     }
-    
+
     MXD_LOG_INFO("p2p", "Completed processing PEERS message from %s:%d: %zu peers added to DHT", 
                 address, port, peers_added);
 }
@@ -867,10 +917,12 @@ static void handle_pong_message(const char *address, uint16_t port) {
 }
 
 static inline size_t handshake_wire_size(const mxd_handshake_payload_t *handshake) {
+    // Base size: node_id(256) + proto_ver(4) + port(2) + algo(1) + pubkey_len(2) + challenge(32) + timestamp(8) + sig_len(2) + network_type_len(1)
     if (!handshake) {
-        return 256 + 4 + 2 + 1 + 2 + MXD_PUBKEY_MAX_LEN + 32 + 8 + 2 + MXD_SIG_MAX_LEN;
+        return 256 + 4 + 2 + 1 + 2 + MXD_PUBKEY_MAX_LEN + 32 + 8 + 2 + MXD_SIG_MAX_LEN + 1 + 32;
     }
-    return 256 + 4 + 2 + 1 + 2 + handshake->public_key_length + 32 + 8 + 2 + handshake->signature_length;
+    size_t network_type_len = strlen(handshake->network_type);
+    return 256 + 4 + 2 + 1 + 2 + handshake->public_key_length + 32 + 8 + 2 + handshake->signature_length + 1 + network_type_len;
 }
 
 static size_t handshake_to_wire(const mxd_handshake_payload_t *handshake, uint8_t *buf, size_t buf_len) {
@@ -927,7 +979,17 @@ static size_t handshake_to_wire(const mxd_handshake_payload_t *handshake, uint8_
     if (offset + handshake->signature_length > buf_len) return 0;
     memcpy(buf + offset, handshake->signature, handshake->signature_length);
     offset += handshake->signature_length;
-    
+
+    // network_type (1 byte length + string)
+    uint8_t network_type_len = (uint8_t)strlen(handshake->network_type);
+    if (offset + 1 + network_type_len > buf_len) return 0;
+    buf[offset] = network_type_len;
+    offset += 1;
+    if (network_type_len > 0) {
+        memcpy(buf + offset, handshake->network_type, network_type_len);
+        offset += network_type_len;
+    }
+
     return offset;
 }
 
@@ -992,18 +1054,35 @@ static int wire_to_handshake(const uint8_t *buf, size_t buf_len, mxd_handshake_p
     if (offset + handshake->signature_length > buf_len) return -1;
     memcpy(handshake->signature, buf + offset, handshake->signature_length);
     offset += handshake->signature_length;
-    
+
+    // network_type (1 byte length + string)
+    if (offset + 1 > buf_len) return -1;
+    uint8_t network_type_len = buf[offset];
+    offset += 1;
+    if (network_type_len > 31) return -1;  // Max 31 chars + null terminator
+    if (offset + network_type_len > buf_len) return -1;
+    memset(handshake->network_type, 0, sizeof(handshake->network_type));
+    if (network_type_len > 0) {
+        memcpy(handshake->network_type, buf + offset, network_type_len);
+        offset += network_type_len;
+    }
+    handshake->network_type[31] = '\0';
+
     return 0;
 }
 
 static int create_signed_handshake(mxd_handshake_payload_t *handshake, const uint8_t *challenge, size_t challenge_len) {
     memset(handshake, 0, sizeof(mxd_handshake_payload_t));
-    
+
     strncpy(handshake->node_id, node_config.node_id, sizeof(handshake->node_id) - 1);
     handshake->node_id[sizeof(handshake->node_id) - 1] = '\0';
-    handshake->protocol_version = 3;
+    handshake->protocol_version = 4;
     handshake->listen_port = p2p_port;
     handshake->timestamp = (uint64_t)time(NULL);
+
+    // Set network_type from config
+    strncpy(handshake->network_type, node_config.network_type, sizeof(handshake->network_type) - 1);
+    handshake->network_type[sizeof(handshake->network_type) - 1] = '\0';
     
     handshake->algo_id = node_algo_id;
     size_t pubkey_len = mxd_sig_pubkey_len(node_algo_id);
@@ -1116,12 +1195,27 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    if (handshake.protocol_version != 3) {
-        MXD_LOG_WARN("p2p", "Incompatible protocol version %u from %s:%d (expected v3)", 
+    if (handshake.protocol_version != 4) {
+        MXD_LOG_WARN("p2p", "Incompatible protocol version %u from %s:%d (expected v4)",
                    handshake.protocol_version, address, port);
         return -1;
     }
-    
+
+    // Check network_type match - require matching network_type for v4 protocol
+    if (node_config.network_type[0] != '\0') {
+        // Local node has a network_type configured - require match
+        if (handshake.network_type[0] == '\0') {
+            MXD_LOG_INFO("p2p", "Rejecting peer %s:%d with empty network_type (local: %s)",
+                        address, port, node_config.network_type);
+            return -1;
+        }
+        if (strcmp(handshake.network_type, node_config.network_type) != 0) {
+            MXD_LOG_INFO("p2p", "Rejecting peer %s:%d with mismatched network_type: %s (local: %s)",
+                        address, port, handshake.network_type, node_config.network_type);
+            return -1;
+        }
+    }
+
     if (mxd_replay_check(handshake.challenge, handshake.timestamp) != 0) {
         MXD_LOG_WARN("p2p", "Replay attack detected or timestamp invalid from %s:%d", address, port);
         return -1;
@@ -1186,9 +1280,9 @@ static int handle_handshake_message(const char *address, uint16_t port,
         return -1;
     }
     
-    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u, algo: %s) - signature verified", 
-               address, port, handshake.node_id, handshake.protocol_version, 
-               handshake.listen_port, mxd_sig_alg_name(handshake.algo_id));
+    MXD_LOG_INFO("p2p", "HANDSHAKE from %s:%d (node_id: %s, protocol: %u, listen_port: %u, algo: %s, network: %s) - signature verified",
+               address, port, handshake.node_id, handshake.protocol_version,
+               handshake.listen_port, mxd_sig_alg_name(handshake.algo_id), handshake.network_type);
     
     mxd_replay_record(handshake.challenge, handshake.timestamp);
     
@@ -1241,9 +1335,9 @@ static int handle_handshake_message(const char *address, uint16_t port,
         }
     }
     
-    if (mxd_dht_add_peer(address, handshake.listen_port) == 0) {
-        MXD_LOG_INFO("p2p", "Added peer %s:%d to DHT after handshake", 
-                   address, handshake.listen_port);
+    if (mxd_dht_add_peer(address, handshake.listen_port, handshake.network_type) == 0) {
+        MXD_LOG_INFO("p2p", "Added peer %s:%d to DHT after handshake (network: %s)",
+                   address, handshake.listen_port, handshake.network_type);
     }
     
     update_unified_peer_algo(address, handshake.listen_port, handshake.algo_id);
@@ -2171,9 +2265,9 @@ int mxd_add_peer(const char* address, uint16_t port) {
     manual_peer_count++;
     
     pthread_mutex_unlock(&manual_peer_mutex);
-    
-    mxd_dht_add_peer(address, port);
-    
+
+    mxd_dht_add_peer(address, port, NULL);
+
     MXD_LOG_INFO("p2p", "Added peer %s:%d (total manual peers: %zu)", address, port, manual_peer_count);
     
     const char* enable_peer_connector = getenv("MXD_ENABLE_PEER_CONNECTOR");

@@ -128,7 +128,7 @@ int mxd_init_node(const void* config) {
                 }
                 
                 MXD_LOG_INFO("dht", "Adding bootstrap node %s:%d to peer list", host, port);
-                mxd_dht_add_peer(host, port);
+                mxd_dht_add_peer(host, port, NULL);
             }
         }
     }
@@ -392,7 +392,7 @@ static void* bootstrap_refresh_thread_func(void* arg) {
                 char host[256];
                 int port;
                 if (sscanf(config->bootstrap_nodes[i], "%255[^:]:%d", host, &port) == 2) {
-                    mxd_dht_add_peer(host, port);
+                    mxd_dht_add_peer(host, port, NULL);
                 }
             }
             
@@ -899,24 +899,45 @@ uint64_t mxd_get_network_latency(void) {
     return connected_peers > 0 ? (diff_ms > 3000 ? 3000 : diff_ms) : 3000;
 }
 
-int mxd_dht_add_peer(const char* address, uint16_t port) {
+int mxd_dht_add_peer(const char* address, uint16_t port, const char* network_type) {
     if (!dht_initialized || !address) {
         return -1;
     }
-    
+
     if (port == dht_port && strcmp(address, "127.0.0.1") == 0) {
         return 0;
     }
-    
+
+    // Get local config network type for filtering
+    const char* local_network = global_config ? global_config->network_type : "mainnet";
+
+    // Filter by network_type - if local has network_type, require match
+    if (local_network && local_network[0] != '\0') {
+        if (network_type && network_type[0] != '\0') {
+            if (strcmp(network_type, local_network) != 0) {
+                MXD_LOG_INFO("dht", "Rejecting peer %s:%d with mismatched network_type: %s (local: %s)",
+                            address, port, network_type, local_network);
+                return -1;
+            }
+        }
+        // Note: If network_type is NULL/empty, we allow it (bootstrap nodes, manual peers)
+        // The handshake will enforce network_type match for actual connections
+    }
+
     // First check for exact match (same address and port)
     for (size_t i = 0; i < peer_count; i++) {
         if (peer_list[i].port == port && strcmp(peer_list[i].address, address) == 0) {
             peer_list[i].active = 1;
+            // Update network_type if provided
+            if (network_type && network_type[0] != '\0') {
+                strncpy(peer_list[i].network_type, network_type, 31);
+                peer_list[i].network_type[31] = '\0';
+            }
             MXD_LOG_DEBUG("dht", "Peer %s:%d already exists, marked active", address, port);
             return 0;
         }
     }
-    
+
     // Check if we have an entry for this address with a different port
     // If so, update the port (prefer the new port which is likely from handshake)
     for (size_t i = 0; i < peer_count; i++) {
@@ -924,33 +945,43 @@ int mxd_dht_add_peer(const char* address, uint16_t port) {
             uint16_t old_port = peer_list[i].port;
             peer_list[i].port = port;
             peer_list[i].active = 1;
-            MXD_LOG_INFO("dht", "Updated peer %s port from %d to %d (likely ephemeral->listen)", 
+            // Update network_type if provided
+            if (network_type && network_type[0] != '\0') {
+                strncpy(peer_list[i].network_type, network_type, 31);
+                peer_list[i].network_type[31] = '\0';
+            }
+            MXD_LOG_INFO("dht", "Updated peer %s port from %d to %d (likely ephemeral->listen)",
                         address, old_port, port);
             return 0;
         }
     }
-    
+
     if (peer_count >= MXD_MAX_PEERS) {
         MXD_LOG_WARN("dht", "Peer list full, cannot add %s:%d", address, port);
         return -1;
     }
-    
+
     mxd_dht_node_t* new_peer = &peer_list[peer_count];
     strncpy(new_peer->address, address, sizeof(new_peer->address) - 1);
     new_peer->address[sizeof(new_peer->address) - 1] = '\0';
     new_peer->port = port;
     new_peer->active = 1;
+
+    // Store network_type in the new peer
+    strncpy(new_peer->network_type, network_type ? network_type : local_network, 31);
+    new_peer->network_type[31] = '\0';
+
     peer_count++;
-    
+
     size_t active_count = 0;
     for (size_t i = 0; i < peer_count; i++) {
         if (peer_list[i].active) active_count++;
     }
     connected_peers = active_count;
-    
-    MXD_LOG_INFO("dht", "Added peer %s:%d (total peers: %zu, active: %zu)", 
-                address, port, peer_count, active_count);
-    
+
+    MXD_LOG_INFO("dht", "Added peer %s:%d (total peers: %zu, active: %zu, network: %s)",
+                address, port, peer_count, active_count, new_peer->network_type);
+
     return 0;
 }
 
