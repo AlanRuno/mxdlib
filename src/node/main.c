@@ -261,8 +261,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     MXD_LOG_INFO("node", "Configuration loaded successfully");
+
+    // Set global config pointer so mxd_get_config() works for genesis creation
+    mxd_set_global_config(&current_config);
+
     log_memory_usage("after_config");
-    
+
     memset(&node_stake, 0, sizeof(node_stake));
     strncpy(node_stake.node_id, current_config.node_id, sizeof(node_stake.node_id) - 1);
     node_stake.stake_amount = current_config.initial_stake;

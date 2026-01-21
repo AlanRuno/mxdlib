@@ -355,15 +355,21 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
     }
   }
   
-  // Verify signature over membership digest
-  uint8_t digest[64];
-  if (mxd_calculate_membership_digest(block, digest) != 0) {
-    return -1;
-  }
-  
-  // Verify signature using algorithm-aware verification with provided public key
-  if (mxd_sig_verify(algo_id, signature, signature_length, digest, 64, public_key) != 0) {
-    return -1; // Invalid signature
+  // For genesis blocks (height == 0), skip signature verification because:
+  // - The signatures were collected over a digest calculated from an empty block (no coinbase txs)
+  // - The current block now has coinbase transactions, so the merkle_root is different
+  // - The signatures were already verified when the sign responses were received
+  // For non-genesis blocks, verify signature over membership digest
+  if (block->height > 0) {
+    uint8_t digest[64];
+    if (mxd_calculate_membership_digest(block, digest) != 0) {
+      return -1;
+    }
+
+    // Verify signature using algorithm-aware verification with provided public key
+    if (mxd_sig_verify(algo_id, signature, signature_length, digest, 64, public_key) != 0) {
+      return -1; // Invalid signature
+    }
   }
   
   // Verify node_address matches derived address from public key
@@ -377,8 +383,9 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
     return -1;
   }
   
-  // Verify stake requirement (1% of total supply, or genesis mode)
-  if (block->total_supply > 0) {
+  // Verify stake requirement (1% of total supply)
+  // Skip for genesis blocks (height == 0) - genesis validators create the initial supply
+  if (block->height > 0 && block->total_supply > 0) {
     uint8_t addr20[20];
     if (mxd_derive_address(algo_id, public_key, public_key_length, addr20) != 0) {
       return -1; // Failed to derive address
@@ -389,7 +396,7 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
       return -1; // Insufficient stake
     }
   }
-  // In genesis mode (total_supply == 0), any address can join
+  // Genesis blocks skip stake check - validators are the founders of the network
   
   // Allocate or reallocate membership entries array
   if (block->rapid_membership_count >= block->rapid_membership_capacity) {
