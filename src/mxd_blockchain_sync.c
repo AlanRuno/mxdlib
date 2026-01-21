@@ -157,6 +157,11 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
             return;
         }
         
+        // Apply transactions to create UTXOs (critical for genesis block)
+        if (mxd_apply_block_transactions(&block) != 0) {
+            MXD_LOG_WARN("sync", "Failed to apply transactions for unsolicited block at height %u", block.height);
+        }
+
         // Store the block
         if (mxd_store_block(&block) == 0) {
             MXD_LOG_INFO("sync", "Stored unsolicited block at height %u", block.height);
