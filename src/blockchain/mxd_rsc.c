@@ -1205,6 +1205,8 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
             table->nodes[table->count]->node_id[40] = '\0';
             // Also copy the binary address for direct comparisons
             memcpy(table->nodes[table->count]->node_address, entry->node_address, 20);
+            // Get stake amount from UTXO balance
+            table->nodes[table->count]->stake_amount = mxd_get_balance(entry->node_address);
             table->nodes[table->count]->active = 1;
             // IMPORTANT: Call mxd_init_node_metrics BEFORE setting last_update
             // because mxd_init_node_metrics resets last_update to 0
@@ -1798,7 +1800,8 @@ int mxd_sync_pending_genesis_to_rapid_table(mxd_rapid_table_t *table, const char
             memset(node, 0, sizeof(mxd_node_stake_t));
             strncpy(node->node_id, node_id_hex, sizeof(node->node_id) - 1);
             memcpy(node->node_address, member->node_address, 20);
-            node->stake_amount = 0.0;
+            // Get stake amount from UTXO balance
+            node->stake_amount = mxd_get_balance(member->node_address);
             node->active = 1;
             node->in_rapid_table = 1;
             
