@@ -2329,8 +2329,8 @@ int mxd_try_coordinate_genesis_block(void) {
                             MXD_LOG_INFO("rsc", "Added genesis coinbase tx for validator %zu: %llu base units (UTXO created)",
                                         i, (unsigned long long)initial_stake);
                         } else {
-                            MXD_LOG_WARN("rsc", "Failed to create UTXO for genesis validator %zu", i);
-                            total_minted += initial_stake;  // Still count as minted even if UTXO creation failed
+                            MXD_LOG_ERROR("rsc", "CRITICAL: Failed to create UTXO for genesis validator %zu - tokens NOT minted", i);
+                            // Do NOT count as minted - the tokens don't exist without a UTXO
                         }
                     } else {
                         MXD_LOG_WARN("rsc", "Failed to add coinbase tx to genesis block for validator %zu", i);
@@ -2346,10 +2346,12 @@ int mxd_try_coordinate_genesis_block(void) {
         }
     }
     
-    // Set total supply to the amount minted for genesis validators
+    // Set total supply to the amount actually minted (only successful UTXO creations)
     genesis_block.total_supply = total_minted;
-    MXD_LOG_INFO("rsc", "Genesis block total_supply set to %llu base units (%zu validators * %llu each)",
-                (unsigned long long)total_minted, 
+    size_t successful_mints = initial_stake > 0 ? (size_t)(total_minted / initial_stake) : 0;
+    MXD_LOG_INFO("rsc", "Genesis block total_supply set to %llu base units (%zu of %zu validators received %llu each)",
+                (unsigned long long)total_minted,
+                successful_mints,
                 genesis_validator_count,
                 (unsigned long long)initial_stake);
     
