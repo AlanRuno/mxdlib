@@ -1326,6 +1326,27 @@ static uint8_t local_genesis_algo_id = MXD_SIGALG_ED25519;
 static uint8_t local_genesis_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
 static uint8_t local_genesis_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
 static int genesis_coordination_initialized = 0;
+
+// Accessor functions for local node identity (for testing/API)
+int mxd_get_local_node_identity(uint8_t *address, uint8_t *pubkey, size_t *pubkey_len,
+                                 uint8_t *privkey, size_t *privkey_len, uint8_t *algo_id) {
+    if (!genesis_coordination_initialized) {
+        return -1;
+    }
+    if (address) memcpy(address, local_genesis_address, 20);
+    if (pubkey && pubkey_len) {
+        size_t len = mxd_sig_pubkey_len(local_genesis_algo_id);
+        memcpy(pubkey, local_genesis_pubkey, len);
+        *pubkey_len = len;
+    }
+    if (privkey && privkey_len) {
+        size_t len = mxd_sig_privkey_len(local_genesis_algo_id);
+        memcpy(privkey, local_genesis_privkey, len);
+        *privkey_len = len;
+    }
+    if (algo_id) *algo_id = local_genesis_algo_id;
+    return 0;
+}
 static mxd_genesis_signature_t collected_signatures[10];
 static size_t collected_signature_count = 0;
 static uint8_t pending_genesis_digest[64] = {0};

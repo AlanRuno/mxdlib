@@ -326,6 +326,65 @@ static char* handle_validators(int *status_code) {
     return response;
 }
 
+// Handle GET /node/identity endpoint - get local node's identity for testing
+static char* handle_node_identity(int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    uint8_t address[20];
+    uint8_t pubkey[2592];
+    uint8_t privkey[4864];
+    size_t pubkey_len = 0, privkey_len = 0;
+    uint8_t algo_id = 0;
+
+    if (mxd_get_local_node_identity(address, pubkey, &pubkey_len, privkey, &privkey_len, &algo_id) != 0) {
+        *status_code = MHD_HTTP_SERVICE_UNAVAILABLE;
+        return strdup("{\"error\":\"Node identity not initialized\"}");
+    }
+
+    // Convert to hex strings
+    char addr_hex[41] = {0};
+    for (int i = 0; i < 20; i++) {
+        snprintf(addr_hex + i*2, 3, "%02x", address[i]);
+    }
+
+    char *pubkey_hex = malloc(pubkey_len * 2 + 1);
+    char *privkey_hex = malloc(privkey_len * 2 + 1);
+    if (!pubkey_hex || !privkey_hex) {
+        free(pubkey_hex);
+        free(privkey_hex);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Memory allocation failed\"}");
+    }
+
+    for (size_t i = 0; i < pubkey_len; i++) {
+        snprintf(pubkey_hex + i*2, 3, "%02x", pubkey[i]);
+    }
+    pubkey_hex[pubkey_len * 2] = '\0';
+
+    for (size_t i = 0; i < privkey_len; i++) {
+        snprintf(privkey_hex + i*2, 3, "%02x", privkey[i]);
+    }
+    privkey_hex[privkey_len * 2] = '\0';
+
+    // Build response
+    size_t response_size = 256 + pubkey_len * 2 + privkey_len * 2;
+    char *response = malloc(response_size);
+    if (!response) {
+        free(pubkey_hex);
+        free(privkey_hex);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Memory allocation failed\"}");
+    }
+
+    snprintf(response, response_size,
+        "{\"address\":\"%s\",\"public_key\":\"%s\",\"private_key\":\"%s\",\"algo_id\":%u}",
+        addr_hex, pubkey_hex, privkey_hex, algo_id);
+
+    free(pubkey_hex);
+    free(privkey_hex);
+    return response;
+}
+
 // Handle GET /rsc endpoint - get full rapid stake table
 static char* handle_rsc(int *status_code) {
     *status_code = MHD_HTTP_OK;
@@ -655,6 +714,10 @@ static enum MHD_Result handle_request(void *cls,
     // Handle /rsc endpoint - full rapid stake table
     else if (strcmp(url, "/rsc") == 0) {
         json_response = handle_rsc(&status_code);
+    }
+    // Handle /node/identity endpoint - for testing transactions
+    else if (strcmp(url, "/node/identity") == 0) {
+        json_response = handle_node_identity(&status_code);
     }
     // Handle /blocks/latest endpoint
     else if (strcmp(url, "/blocks/latest") == 0) {

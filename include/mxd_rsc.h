@@ -28,6 +28,10 @@ typedef struct {
 // Accessor for the global rapid table (defined in node/main.c)
 const mxd_rapid_table_t* mxd_get_rapid_table(void);
 
+// Get local node's identity (address, keys) for testing
+int mxd_get_local_node_identity(uint8_t *address, uint8_t *pubkey, size_t *pubkey_len,
+                                 uint8_t *privkey, size_t *privkey_len, uint8_t *algo_id);
+
 typedef enum {
     MXD_VALIDATION_PENDING = 0,
     MXD_VALIDATION_IN_PROGRESS,
