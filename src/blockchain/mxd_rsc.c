@@ -2530,12 +2530,13 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
     // Get current blockchain height
     uint32_t current_height = 0;
     if (mxd_get_blockchain_height(&current_height) != 0) {
-        return -1;
-    }
-    
-    // Only run after genesis (height > 0)
-    if (current_height == 0) {
-        return 0;
+        // No height stored - check if genesis exists
+        mxd_block_t genesis_check;
+        if (mxd_retrieve_block_by_height(0, &genesis_check) != 0) {
+            return 0; // No genesis, nothing to do
+        }
+        mxd_free_block(&genesis_check);
+        current_height = 0; // Genesis exists at height 0
     }
     
     // Initialize consensus state if needed
