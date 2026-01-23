@@ -278,6 +278,53 @@ static char* handle_transaction_submit(const char *post_data, int *status_code) 
     return response;
 }
 
+// Handle GET /validators endpoint - list RSC members from genesis
+static char* handle_validators(int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    mxd_block_t genesis;
+    if (mxd_retrieve_block_by_height(0, &genesis) != 0) {
+        *status_code = MHD_HTTP_NOT_FOUND;
+        return strdup("{\"error\":\"Genesis block not found\"}");
+    }
+
+    // Build JSON response
+    size_t buf_size = 256 + genesis.rapid_membership_count * 256;
+    char *response = malloc(buf_size);
+    if (!response) {
+        mxd_free_block(&genesis);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Memory allocation failed\"}");
+    }
+
+    int offset = snprintf(response, buf_size, "{\"count\":%u,\"validators\":[", genesis.rapid_membership_count);
+
+    for (uint32_t i = 0; i < genesis.rapid_membership_count; i++) {
+        mxd_rapid_membership_entry_t *entry = &genesis.rapid_membership_entries[i];
+
+        // Convert address to hex
+        char addr_hex[41] = {0};
+        for (int j = 0; j < 20; j++) {
+            snprintf(addr_hex + j*2, 3, "%02x", entry->node_address[j]);
+        }
+
+        // Convert public key to hex (first 32 bytes for display)
+        char pk_hex[65] = {0};
+        int pk_display_len = entry->public_key_length < 32 ? entry->public_key_length : 32;
+        for (int j = 0; j < pk_display_len; j++) {
+            snprintf(pk_hex + j*2, 3, "%02x", entry->public_key[j]);
+        }
+
+        offset += snprintf(response + offset, buf_size - offset,
+            "%s{\"index\":%u,\"address\":\"%s\",\"algo_id\":%u,\"public_key\":\"%s\",\"timestamp\":%lu}",
+            i > 0 ? "," : "", i, addr_hex, entry->algo_id, pk_hex, (unsigned long)entry->timestamp);
+    }
+
+    snprintf(response + offset, buf_size - offset, "]}");
+    mxd_free_block(&genesis);
+    return response;
+}
+
 // Handle GET /wallet/generate endpoint - generate new wallet
 static char* handle_wallet_generate(int *status_code) {
     *status_code = MHD_HTTP_OK;
@@ -513,6 +560,10 @@ static enum MHD_Result handle_request(void *cls,
     // Handle /wallet/generate endpoint
     else if (strcmp(url, "/wallet/generate") == 0) {
         json_response = handle_wallet_generate(&status_code);
+    }
+    // Handle /validators endpoint
+    else if (strcmp(url, "/validators") == 0) {
+        json_response = handle_validators(&status_code);
     }
     // Handle /blocks/latest endpoint
     else if (strcmp(url, "/blocks/latest") == 0) {
