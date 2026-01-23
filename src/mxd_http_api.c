@@ -8,6 +8,7 @@
 #include "../include/mxd_address.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_p2p.h"
+#include "../include/mxd_rsc.h"
 #include <microhttpd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -325,6 +326,92 @@ static char* handle_validators(int *status_code) {
     return response;
 }
 
+// Handle GET /rsc endpoint - get full rapid stake table
+static char* handle_rsc(int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    const mxd_rapid_table_t *table = mxd_get_rapid_table();
+    if (!table) {
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Rapid table not available\"}");
+    }
+
+    // Build JSON response with full RSC data
+    size_t buf_size = 512 + table->count * 1024;
+    char *response = malloc(buf_size);
+    if (!response) {
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Memory allocation failed\"}");
+    }
+
+    int offset = snprintf(response, buf_size,
+        "{\"count\":%zu,\"last_update\":%lu,\"nodes\":[",
+        table->count, (unsigned long)table->last_update);
+
+    for (size_t i = 0; i < table->count; i++) {
+        mxd_node_stake_t *node = table->nodes[i];
+        if (!node) continue;
+
+        // Convert address to hex
+        char addr_hex[41] = {0};
+        for (int j = 0; j < 20; j++) {
+            snprintf(addr_hex + j*2, 3, "%02x", node->node_address[j]);
+        }
+
+        // Calculate stake in MXD
+        double stake_mxd = (double)node->stake_amount / 100000000.0;
+
+        offset += snprintf(response + offset, buf_size - offset,
+            "%s{"
+            "\"index\":%zu,"
+            "\"node_id\":\"%s\","
+            "\"address\":\"%s\","
+            "\"stake\":%llu,"
+            "\"stake_mxd\":%.8f,"
+            "\"rank\":%u,"
+            "\"active\":%d,"
+            "\"in_rapid_table\":%d,"
+            "\"rapid_table_position\":%u,"
+            "\"metrics\":{"
+            "\"avg_response_time\":%llu,"
+            "\"min_response_time\":%llu,"
+            "\"max_response_time\":%llu,"
+            "\"response_count\":%u,"
+            "\"message_success\":%u,"
+            "\"message_total\":%u,"
+            "\"reliability_score\":%.6f,"
+            "\"performance_score\":%.6f,"
+            "\"last_update\":%llu,"
+            "\"tip_share\":%llu,"
+            "\"peer_count\":%zu"
+            "}}",
+            i > 0 ? "," : "",
+            i,
+            node->node_id,
+            addr_hex,
+            (unsigned long long)node->stake_amount,
+            stake_mxd,
+            node->rank,
+            node->active,
+            node->in_rapid_table,
+            node->rapid_table_position,
+            (unsigned long long)node->metrics.avg_response_time,
+            (unsigned long long)node->metrics.min_response_time,
+            (unsigned long long)node->metrics.max_response_time,
+            node->metrics.response_count,
+            node->metrics.message_success,
+            node->metrics.message_total,
+            node->metrics.reliability_score,
+            node->metrics.performance_score,
+            (unsigned long long)node->metrics.last_update,
+            (unsigned long long)node->metrics.tip_share,
+            node->metrics.peer_count);
+    }
+
+    snprintf(response + offset, buf_size - offset, "]}");
+    return response;
+}
+
 // Handle GET /wallet/generate endpoint - generate new wallet
 static char* handle_wallet_generate(int *status_code) {
     *status_code = MHD_HTTP_OK;
@@ -564,6 +651,10 @@ static enum MHD_Result handle_request(void *cls,
     // Handle /validators endpoint
     else if (strcmp(url, "/validators") == 0) {
         json_response = handle_validators(&status_code);
+    }
+    // Handle /rsc endpoint - full rapid stake table
+    else if (strcmp(url, "/rsc") == 0) {
+        json_response = handle_rsc(&status_code);
     }
     // Handle /blocks/latest endpoint
     else if (strcmp(url, "/blocks/latest") == 0) {

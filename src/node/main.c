@@ -71,6 +71,11 @@ static mxd_node_metrics_t node_metrics;
 static mxd_node_stake_t node_stake;
 static mxd_rapid_table_t rapid_table;
 static pthread_mutex_t metrics_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Accessor function for rapid table (used by HTTP API)
+const mxd_rapid_table_t* mxd_get_rapid_table(void) {
+    return &rapid_table;
+}
 static int genesis_initialized = 0;
 static uint64_t last_genesis_announce = 0;
 
