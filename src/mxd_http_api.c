@@ -278,6 +278,76 @@ static char* handle_transaction_submit(const char *post_data, int *status_code) 
     return response;
 }
 
+// Handle GET /wallet/generate endpoint - generate new wallet
+static char* handle_wallet_generate(int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    // Generate passphrase
+    char passphrase[256] = {0};
+    if (mxd_generate_passphrase(passphrase, sizeof(passphrase)) != 0) {
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Failed to generate passphrase\"}");
+    }
+
+    // Generate keypair using Ed25519
+    uint8_t public_key[32];
+    uint8_t private_key[64];
+    if (mxd_sig_keygen(MXD_SIGALG_ED25519, public_key, private_key) != 0) {
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Failed to generate keypair\"}");
+    }
+
+    // Generate address from public key
+    char address[64] = {0};
+    if (mxd_address_to_string_v2(MXD_SIGALG_ED25519, public_key, 32, address, sizeof(address)) != 0) {
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Failed to generate address\"}");
+    }
+
+    // Derive address20 for balance lookups
+    uint8_t addr20[20];
+    if (mxd_derive_address(MXD_SIGALG_ED25519, public_key, 32, addr20) != 0) {
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Failed to derive address20\"}");
+    }
+
+    // Convert keys to hex
+    char pubkey_hex[65] = {0};
+    char privkey_hex[129] = {0};
+    char addr20_hex[41] = {0};
+    for (int i = 0; i < 32; i++) {
+        snprintf(pubkey_hex + i*2, 3, "%02x", public_key[i]);
+    }
+    for (int i = 0; i < 64; i++) {
+        snprintf(privkey_hex + i*2, 3, "%02x", private_key[i]);
+    }
+    for (int i = 0; i < 20; i++) {
+        snprintf(addr20_hex + i*2, 3, "%02x", addr20[i]);
+    }
+
+    // Build response
+    char *response = malloc(1024);
+    if (!response) {
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Memory allocation failed\"}");
+    }
+
+    snprintf(response, 1024,
+        "{"
+        "\"passphrase\":\"%s\","
+        "\"address\":\"mx%s\","
+        "\"address20\":\"%s\","
+        "\"public_key\":\"%s\","
+        "\"private_key\":\"%s\","
+        "\"algo\":\"ed25519\","
+        "\"algo_id\":1"
+        "}",
+        passphrase, address, addr20_hex, pubkey_hex, privkey_hex);
+
+    MXD_LOG_INFO("http_api", "Generated new wallet: mx%s", address);
+    return response;
+}
+
 // Handle GET /balance/{address} endpoint
 static char* handle_balance(const char *address_hex, int *status_code) {
     *status_code = MHD_HTTP_OK;
@@ -439,6 +509,10 @@ static enum MHD_Result handle_request(void *cls,
     else if (strncmp(url, "/balance/", 9) == 0) {
         const char *address_hex = url + 9;
         json_response = handle_balance(address_hex, &status_code);
+    }
+    // Handle /wallet/generate endpoint
+    else if (strcmp(url, "/wallet/generate") == 0) {
+        json_response = handle_wallet_generate(&status_code);
     }
     // Handle /blocks/latest endpoint
     else if (strcmp(url, "/blocks/latest") == 0) {
