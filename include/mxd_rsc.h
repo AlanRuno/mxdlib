@@ -15,9 +15,6 @@ extern "C" {
 
 int mxd_get_validator_public_key(const uint8_t validator_id[20], uint8_t *out_key, size_t out_capacity, size_t *out_len);
 int mxd_get_validator_algo_id(const uint8_t validator_id[20], uint8_t *out_algo_id);
-
-// Accessor for the global rapid table (defined in node/main.c)
-const mxd_rapid_table_t* mxd_get_rapid_table(void);
 int mxd_test_register_validator_pubkey(const uint8_t validator_id[20], const uint8_t *pub, size_t pub_len);
 void mxd_test_clear_validator_pubkeys(void);
 
@@ -27,6 +24,9 @@ typedef struct {
     size_t capacity;
     uint64_t last_update;
 } mxd_rapid_table_t;
+
+// Accessor for the global rapid table (defined in node/main.c)
+const mxd_rapid_table_t* mxd_get_rapid_table(void);
 
 typedef enum {
     MXD_VALIDATION_PENDING = 0,
