@@ -188,17 +188,22 @@ int mxd_should_close_block(void) {
         last_status_log = current_time;
     }
 
-    // For empty blocks (no transactions), use a longer timeout to allow chain progress
-    // This ensures the blockchain can advance even without transaction activity
+    // Empty blocks (no transactions and no membership changes) should never close
+    // Only produce blocks when there is actual content to include
     int is_empty = (proposer_state.current_block->transaction_count == 0 &&
                     proposer_state.current_block->rapid_membership_count == 0);
 
-    uint64_t close_timeout = is_empty ? (MXD_BLOCK_CLOSE_TIMEOUT_MS * 2) : MXD_BLOCK_CLOSE_TIMEOUT_MS;
+    if (is_empty) {
+        // Don't close empty blocks - wait for transactions
+        return 0;
+    }
 
-    if (elapsed >= close_timeout) {
-        MXD_LOG_INFO("proposer", "Block timeout reached (%llu ms elapsed, timeout=%llu ms, %u txs, empty=%d), closing block",
-                     (unsigned long long)elapsed, (unsigned long long)close_timeout,
-                     proposer_state.current_block->transaction_count, is_empty);
+    // Block has content, close after timeout
+    if (elapsed >= MXD_BLOCK_CLOSE_TIMEOUT_MS) {
+        MXD_LOG_INFO("proposer", "Block timeout reached (%llu ms elapsed, %u txs, %u membership), closing block",
+                     (unsigned long long)elapsed,
+                     proposer_state.current_block->transaction_count,
+                     proposer_state.current_block->rapid_membership_count);
         return 1;
     }
 
