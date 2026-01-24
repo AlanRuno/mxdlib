@@ -2504,9 +2504,23 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
     }
     
     // Use membership entries from the latest block as canonical validator list
+    // If latest block has no membership (e.g., empty blocks), fall back to genesis
     if (latest_block.rapid_membership_count == 0) {
         mxd_free_block(&latest_block);
-        return 0;
+
+        // Fall back to genesis block for membership
+        if (mxd_retrieve_block_by_height(0, &latest_block) != 0) {
+            MXD_LOG_DEBUG("rsc", "Failed to retrieve genesis block for proposer check fallback");
+            return 0;
+        }
+
+        if (latest_block.rapid_membership_count == 0) {
+            MXD_LOG_WARN("rsc", "Genesis block has no rapid membership entries");
+            mxd_free_block(&latest_block);
+            return 0;
+        }
+
+        MXD_LOG_DEBUG("rsc", "Using genesis block membership for proposer check (latest block had no entries)");
     }
     
     // Sort validators by address (already sorted in block, but verify)
