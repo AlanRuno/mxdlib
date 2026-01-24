@@ -899,9 +899,12 @@ const char* mxd_handle_faucet(const char* address, const char* amount) {
 
     mxd_free_transaction(&faucet_tx);
 
+    // Get mempool size for debugging
+    size_t current_mempool_size = mxd_get_mempool_size();
+
     snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
-        "{\"success\":true,\"txid\":\"%s\",\"amount\":%.8f,\"message\":\"Funds will be available after next block\"}",
-        tx_hash_hex, amount_value);
+        "{\"success\":true,\"txid\":\"%s\",\"amount\":%.8f,\"mempool_size\":%zu,\"message\":\"Funds will be available after next block\"}",
+        tx_hash_hex, amount_value, current_mempool_size);
     return wallet_response_buffer;
 }
 
