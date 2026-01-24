@@ -242,21 +242,15 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             }
             
             const uint8_t *data = (const uint8_t *)payload;
-            
-            // Check if this is a height response (8 bytes: start_height + current_height)
-            if (payload_length == 8) {
-                // This is a height info response
-                const uint8_t *ptr = data;
-                uint32_t start_height = mxd_read_u32_be(&ptr);
-                uint32_t current_height = mxd_read_u32_be(&ptr);
-                MXD_LOG_INFO("validation", "Received height info: start=%u, current=%u", 
-                             start_height, current_height);
-                // Notify the sync module about peer height
+
+            // Check if this is a height response (4 bytes: current_height)
+            if (payload_length == 4) {
+                // This is a height info response - route to sync module
                 extern void mxd_handle_peer_height_response(const uint8_t *data, size_t data_len);
-                uint8_t height_data[4];
-                uint8_t *hp = height_data;
-                mxd_write_u32_be(&hp, current_height);
-                mxd_handle_peer_height_response(height_data, 4);
+                const uint8_t *ptr = data;
+                uint32_t current_height = mxd_read_u32_be(&ptr);
+                MXD_LOG_INFO("validation", "Received height response: %u", current_height);
+                mxd_handle_peer_height_response(data, payload_length);
                 return;
             }
             
