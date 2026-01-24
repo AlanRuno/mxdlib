@@ -28,24 +28,50 @@ static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height);
 static uint32_t mxd_discover_network_height(void) {
     mxd_peer_t peers[MXD_MAX_PEERS];
     size_t peer_count = MXD_MAX_PEERS;
-    
+
     if (mxd_get_peers(peers, &peer_count) != 0 || peer_count == 0) {
         MXD_LOG_WARN("sync", "No peers available to discover network height");
         return 0;
     }
-    
-    uint32_t max_height = 0;
+
+    MXD_LOG_INFO("sync", "Discovering network height from %zu peers", peer_count);
+
+    // Count peers by state for debugging
+    int connected_count = 0;
+    int other_count = 0;
     for (size_t i = 0; i < peer_count; i++) {
         if (peers[i].state == MXD_PEER_CONNECTED) {
-            uint32_t peer_height = 0;
-            if (mxd_request_peer_height(peers[i].address, peers[i].port, &peer_height) == 0) {
-                if (peer_height > max_height) {
-                    max_height = peer_height;
-                }
+            connected_count++;
+        } else {
+            other_count++;
+            // Log first few non-connected peers for debugging
+            if (other_count <= 3) {
+                MXD_LOG_INFO("sync", "Peer %s:%u has state=%d (not CONNECTED=%d)",
+                             peers[i].address, peers[i].port, peers[i].state, MXD_PEER_CONNECTED);
             }
         }
     }
-    
+    MXD_LOG_INFO("sync", "Peer states: %d connected, %d other", connected_count, other_count);
+
+    uint32_t max_height = 0;
+    int queried = 0;
+    for (size_t i = 0; i < peer_count; i++) {
+        if (peers[i].state == MXD_PEER_CONNECTED) {
+            uint32_t peer_height = 0;
+            MXD_LOG_INFO("sync", "Querying peer %s:%u for height", peers[i].address, peers[i].port);
+            if (mxd_request_peer_height(peers[i].address, peers[i].port, &peer_height) == 0) {
+                MXD_LOG_INFO("sync", "Peer %s:%u reports height=%u", peers[i].address, peers[i].port, peer_height);
+                queried++;
+                if (peer_height > max_height) {
+                    max_height = peer_height;
+                }
+            } else {
+                MXD_LOG_WARN("sync", "Failed to get height from peer %s:%u", peers[i].address, peers[i].port);
+            }
+        }
+    }
+
+    MXD_LOG_INFO("sync", "Network height discovery complete: queried=%d, max_height=%u", queried, max_height);
     return max_height;
 }
 
