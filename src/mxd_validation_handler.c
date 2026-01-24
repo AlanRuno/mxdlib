@@ -283,31 +283,33 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             if (start_height == 0 && end_height == 0) {
                 uint32_t current_height = 0;
                 mxd_get_blockchain_height(&current_height);
-                
-                // Send height response
-                uint8_t response[8];
+
+                // Send height response - height must be in first 4 bytes for sync code to read it
+                uint8_t response[4];
                 uint8_t *rp = response;
-                mxd_write_u32_be(&rp, 0);  // start_height
-                mxd_write_u32_be(&rp, current_height);  // current_height
-                
+                mxd_write_u32_be(&rp, current_height);  // current_height (first 4 bytes)
+
                 mxd_send_message(address, port, MXD_MSG_BLOCKS, response, sizeof(response));
                 MXD_LOG_INFO("validation", "Sent height response: %u", current_height);
                 return;
             }
             
-            // Otherwise, send requested blocks
+            // Otherwise, send requested blocks with full serialization
             for (uint32_t h = start_height; h <= end_height && h - start_height < 100; h++) {
                 mxd_block_t block;
                 memset(&block, 0, sizeof(block));
                 if (mxd_retrieve_block_by_height(h, &block) == 0) {
-                    // Serialize and send block
-                    // For now, send a simplified response with block hash and height
-                    uint8_t block_response[64 + 4];
-                    memcpy(block_response, block.block_hash, 64);
-                    uint8_t *bp = block_response + 64;
-                    mxd_write_u32_be(&bp, block.height);
-                    
-                    mxd_send_message(address, port, MXD_MSG_BLOCKS, block_response, sizeof(block_response));
+                    // Serialize full block for network transmission
+                    uint8_t *block_data = NULL;
+                    size_t block_data_len = 0;
+
+                    if (mxd_serialize_block_for_network(&block, &block_data, &block_data_len) == 0 && block_data) {
+                        mxd_send_message(address, port, MXD_MSG_BLOCKS, block_data, block_data_len);
+                        MXD_LOG_INFO("validation", "Sent block at height %u (size=%zu bytes)", h, block_data_len);
+                        free(block_data);
+                    } else {
+                        MXD_LOG_ERROR("validation", "Failed to serialize block at height %u", h);
+                    }
                     mxd_free_block(&block);
                 }
             }

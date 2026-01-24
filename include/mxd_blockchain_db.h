@@ -49,6 +49,8 @@ int mxd_broadcast_block(const mxd_block_t *block);
 
 int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_len, mxd_block_t *block);
 
+int mxd_serialize_block_for_network(const mxd_block_t *block, uint8_t **data, size_t *data_len);
+
 #ifdef __cplusplus
 }
 #endif

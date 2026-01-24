@@ -1109,3 +1109,10 @@ int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_len, mxd
     }
     return deserialize_block(data, data_len, block);
 }
+
+int mxd_serialize_block_for_network(const mxd_block_t *block, uint8_t **data, size_t *data_len) {
+    if (!block || !data || !data_len) {
+        return -1;
+    }
+    return serialize_block(block, data, data_len);
+}

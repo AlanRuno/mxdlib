@@ -112,7 +112,14 @@ extern int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_l
 // Called by P2P layer when block data is received
 void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t block_index) {
     if (!data || data_len == 0) return;
-    
+
+    // Check if this is a 4-byte height response
+    if (data_len == 4) {
+        // This is a height response from a peer - route to height handler
+        mxd_handle_peer_height_response(data, data_len);
+        return;
+    }
+
     // Handle unsolicited blocks (e.g., genesis block broadcast)
     if (!pending_blocks) {
         MXD_LOG_INFO("sync", "Received unsolicited block data (len=%zu), attempting to process", data_len);
@@ -150,7 +157,9 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
             }
             // Don't have genesis block yet, proceed to store it
             MXD_LOG_INFO("sync", "Received genesis block, will store it");
-        } else if (block.height <= current_height) {
+        } else if (block.height < current_height) {
+            // current_height = number of blocks stored (heights 0 to current_height-1)
+            // So we only skip if block.height < current_height (we already have it)
             MXD_LOG_DEBUG("sync", "Already have block at height %u (current=%u), ignoring",
                          block.height, current_height);
             mxd_free_block(&block);
@@ -471,12 +480,15 @@ int mxd_sync_blockchain(void) {
         return 0;
     }
     
-    MXD_LOG_INFO("sync", "Syncing from height %u to %u", local_height + 1, network_height);
-    
+    // local_height = number of blocks stored (blocks at heights 0 to local_height-1)
+    // network_height = number of blocks on network
+    // We need to sync blocks from height local_height to network_height-1
+    MXD_LOG_INFO("sync", "Syncing from height %u to %u", local_height, network_height - 1);
+
     const uint32_t CHUNK_SIZE = 500;
-    for (uint32_t start = local_height + 1; start <= network_height; start += CHUNK_SIZE) {
-        uint32_t end = (start + CHUNK_SIZE - 1 < network_height) ? 
-                       start + CHUNK_SIZE - 1 : network_height;
+    for (uint32_t start = local_height; start < network_height; start += CHUNK_SIZE) {
+        uint32_t end = (start + CHUNK_SIZE < network_height) ?
+                       start + CHUNK_SIZE - 1 : network_height - 1;
         
         if (mxd_sync_block_range(start, end) != 0) {
             MXD_LOG_ERROR("sync", "Failed to sync blocks %u-%u", start, end);
