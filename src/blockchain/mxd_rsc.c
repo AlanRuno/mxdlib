@@ -2492,8 +2492,11 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
     if (mxd_get_blockchain_height(&current_height) != 0 || current_height == 0) {
         return 0;
     }
-    
-    if (mxd_retrieve_block_by_height(current_height, &latest_block) != 0) {
+
+    // current_height is "next block height" (number of blocks), so latest block is at current_height - 1
+    uint32_t latest_height = current_height - 1;
+    if (mxd_retrieve_block_by_height(latest_height, &latest_block) != 0) {
+        MXD_LOG_DEBUG("rsc", "Failed to retrieve latest block at height %u for proposer check", latest_height);
         return 0;
     }
     
@@ -2506,11 +2509,20 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
     // Sort validators by address (already sorted in block, but verify)
     // For simplicity, use round-robin based on membership order
     uint32_t proposer_index = height % latest_block.rapid_membership_count;
-    
-    int is_proposer = (memcmp(local_address, 
-                              latest_block.rapid_membership_entries[proposer_index].node_address, 
+
+    // Debug: log both addresses for comparison
+    char local_hex[41], proposer_hex[41];
+    for (int i = 0; i < 20; i++) {
+        sprintf(&local_hex[i*2], "%02x", local_address[i]);
+        sprintf(&proposer_hex[i*2], "%02x", latest_block.rapid_membership_entries[proposer_index].node_address[i]);
+    }
+    MXD_LOG_INFO("rsc", "Proposer check for height %u: index=%u, local=%s, expected=%s",
+                 height, proposer_index, local_hex, proposer_hex);
+
+    int is_proposer = (memcmp(local_address,
+                              latest_block.rapid_membership_entries[proposer_index].node_address,
                               20) == 0);
-    
+
     if (is_proposer) {
         MXD_LOG_INFO("rsc", "This node is proposer for height %u (index %u of %u validators)",
                      height, proposer_index, latest_block.rapid_membership_count);
@@ -2528,48 +2540,60 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
     }
     
     // Get current blockchain height
-    uint32_t current_height = 0;
-    if (mxd_get_blockchain_height(&current_height) != 0) {
+    // Note: mxd_get_blockchain_height returns "number of blocks" (not "highest height")
+    // So after genesis (height 0), it returns 1. The next block to produce is at that height.
+    uint32_t block_count = 0;
+    if (mxd_get_blockchain_height(&block_count) != 0) {
         // No height stored - check if genesis exists
         mxd_block_t genesis_check;
         if (mxd_retrieve_block_by_height(0, &genesis_check) != 0) {
             return 0; // No genesis, nothing to do
         }
         mxd_free_block(&genesis_check);
-        current_height = 0; // Genesis exists at height 0
+        block_count = 1; // Genesis exists, so we have 1 block
     }
-    
+
     // Initialize consensus state if needed
     if (!consensus_initialized) {
         memcpy(consensus_local_address, local_address, 20);
         memcpy(consensus_local_pubkey, local_pubkey, mxd_sig_pubkey_len(algo_id));
         memcpy(consensus_local_privkey, local_privkey, mxd_sig_privkey_len(algo_id));
         consensus_algo_id = algo_id;
-        
+
         if (mxd_init_block_proposer(local_address) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to initialize block proposer");
             return -1;
         }
-        
+
         consensus_initialized = 1;
         MXD_LOG_INFO("rsc", "Consensus tick initialized for post-genesis operation");
     }
-    
-    uint32_t next_height = current_height + 1;
+
+    // next_height is the height of the block we want to produce
+    // block_count = number of existing blocks, so next_height = block_count
+    uint32_t next_height = block_count;
+    uint32_t latest_height = block_count - 1;  // Height of the most recent block
     
     // Check if we're the proposer for the next block
     int is_proposer = mxd_is_proposer_for_height(table, local_address, next_height);
-    
+
     // Get current block being proposed (if any)
     mxd_block_t *current_block = (mxd_block_t *)mxd_get_current_block();
-    
+
+    // Log proposal conditions
+    if (is_proposer) {
+        MXD_LOG_INFO("rsc", "Proposer check: current_block=%p, next_height=%u, last_proposed=%u, will_propose=%s",
+                     (void*)current_block, next_height, last_proposed_height,
+                     (!current_block && next_height > last_proposed_height) ? "YES" : "NO");
+    }
+
     if (is_proposer && !current_block && next_height > last_proposed_height) {
         // Start a new block proposal
         mxd_block_t latest_block;
         memset(&latest_block, 0, sizeof(latest_block));
         
-        if (mxd_retrieve_block_by_height(current_height, &latest_block) != 0) {
-            MXD_LOG_ERROR("rsc", "Failed to retrieve latest block for proposal");
+        if (mxd_retrieve_block_by_height(latest_height, &latest_block) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to retrieve latest block at height %u for proposal", latest_height);
             return -1;
         }
         
@@ -2591,10 +2615,23 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         size_t mempool_size = mxd_get_mempool_size();
         if (mempool_size > 0) {
             // Add up to 100 transactions per tick
-            size_t tx_count = mempool_size < 100 ? mempool_size : 100;
-            // Note: We would need to allocate transaction array and call mxd_get_priority_transactions
-            // For now, just log that we have pending transactions
-            MXD_LOG_DEBUG("rsc", "Mempool has %zu pending transactions", mempool_size);
+            size_t max_txs = mempool_size < 100 ? mempool_size : 100;
+            mxd_transaction_t *pending_txs = calloc(max_txs, sizeof(mxd_transaction_t));
+            if (pending_txs) {
+                size_t tx_count = max_txs;
+                if (mxd_get_priority_transactions(pending_txs, &tx_count, 0) == 0 && tx_count > 0) {
+                    MXD_LOG_INFO("rsc", "Adding %zu transactions from mempool to block", tx_count);
+                    for (size_t i = 0; i < tx_count; i++) {
+                        if (mxd_add_transaction_to_block(&pending_txs[i]) == 0) {
+                            MXD_LOG_DEBUG("rsc", "Added transaction %zu to block", i);
+                        } else {
+                            MXD_LOG_WARN("rsc", "Failed to add transaction %zu to block", i);
+                        }
+                        mxd_free_transaction(&pending_txs[i]);
+                    }
+                }
+                free(pending_txs);
+            }
         }
     }
     
