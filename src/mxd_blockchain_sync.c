@@ -719,8 +719,90 @@ int mxd_prune_expired_validation_chains(uint32_t current_height) {
     if (current_height < MXD_VALIDATION_EXPIRY_BLOCKS) {
         return 0; // Nothing to prune yet
     }
-    
+
     uint32_t prune_height = current_height - MXD_VALIDATION_EXPIRY_BLOCKS;
-    
+
     return mxd_prune_expired_signatures(prune_height);
+}
+
+// Pull-based sync fallback - actively request missing blocks from peers
+// This is called periodically to catch blocks that failed to broadcast
+int mxd_pull_missing_blocks(void) {
+    uint32_t local_height = 0;
+    if (mxd_get_blockchain_height(&local_height) != 0) {
+        local_height = 0;
+    }
+
+    // Get peers and check their heights
+    mxd_peer_t peers[MXD_MAX_PEERS];
+    size_t peer_count = MXD_MAX_PEERS;
+    if (mxd_get_peers(peers, &peer_count) != 0 || peer_count == 0) {
+        return 0;  // No peers, nothing to do
+    }
+
+    // Find the maximum height among all peers
+    uint32_t max_peer_height = local_height;
+    int peers_queried = 0;
+
+    for (size_t i = 0; i < peer_count && peers_queried < 5; i++) {
+        if (peers[i].state == MXD_PEER_CONNECTED) {
+            uint32_t peer_height = 0;
+            if (mxd_request_peer_height(peers[i].address, peers[i].port, &peer_height) == 0) {
+                peers_queried++;
+                if (peer_height > max_peer_height) {
+                    max_peer_height = peer_height;
+                    MXD_LOG_INFO("sync", "Peer %s:%u has higher height: %u (local: %u)",
+                                 peers[i].address, peers[i].port, peer_height, local_height);
+                }
+            }
+        }
+    }
+
+    // If any peer has blocks we don't have, request them
+    if (max_peer_height > local_height) {
+        MXD_LOG_INFO("sync", "Pull sync: fetching missing blocks %u to %u",
+                     local_height, max_peer_height - 1);
+
+        // Request blocks one at a time for reliability
+        for (uint32_t height = local_height; height < max_peer_height; height++) {
+            int block_received = 0;
+
+            // Try multiple peers for each block
+            for (size_t i = 0; i < peer_count && !block_received; i++) {
+                if (peers[i].state != MXD_PEER_CONNECTED) continue;
+
+                // Send GET_BLOCKS request for this specific block
+                uint8_t request[8];
+                uint8_t *ptr = request;
+                mxd_write_u32_be(&ptr, height);      // start_height
+                mxd_write_u32_be(&ptr, height);      // end_height (same = single block)
+
+                if (mxd_send_message_with_retry(peers[i].address, peers[i].port,
+                                                MXD_MSG_GET_BLOCKS, request, sizeof(request), 3) == 0) {
+                    MXD_LOG_DEBUG("sync", "Requested block %u from %s:%u",
+                                  height, peers[i].address, peers[i].port);
+
+                    // Wait briefly for the block to arrive (it will be handled by mxd_handle_blocks_response)
+                    struct timespec ts = {0, 500000000};  // 500ms
+                    nanosleep(&ts, NULL);
+
+                    // Check if we now have the block
+                    uint32_t new_height = 0;
+                    if (mxd_get_blockchain_height(&new_height) == 0 && new_height > height) {
+                        block_received = 1;
+                        MXD_LOG_INFO("sync", "Pull sync: received block at height %u", height);
+                    }
+                }
+            }
+
+            if (!block_received) {
+                MXD_LOG_WARN("sync", "Pull sync: failed to fetch block at height %u", height);
+                break;  // Stop trying if we can't get a block
+            }
+        }
+
+        return 1;  // Indicate we did some sync work
+    }
+
+    return 0;  // No sync needed
 }

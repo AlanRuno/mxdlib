@@ -37,6 +37,10 @@ int mxd_handle_validation_chain_conflict(const uint8_t block_hash1[64],
 
 int mxd_prune_expired_validation_chains(uint32_t current_height);
 
+// Pull-based sync fallback - actively request missing blocks from peers
+// Call this periodically to catch blocks that failed to broadcast
+int mxd_pull_missing_blocks(void);
+
 #ifdef __cplusplus
 }
 #endif

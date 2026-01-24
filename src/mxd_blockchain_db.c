@@ -9,6 +9,7 @@
 #include <rocksdb/c.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static rocksdb_options_t *options = NULL;
 static char *db_path_global = NULL;
@@ -1082,23 +1083,40 @@ int mxd_broadcast_block(const mxd_block_t *block) {
     if (!block) {
         return -1;
     }
-    
+
     uint8_t *data = NULL;
     size_t data_len = 0;
-    
+
     if (serialize_block(block, &data, &data_len) != 0) {
         MXD_LOG_ERROR("db", "Failed to serialize block for broadcast");
         return -1;
     }
-    
-    int result = mxd_broadcast_message(MXD_MSG_BLOCKS, data, data_len);
-    
-    if (result == 0) {
-        MXD_LOG_INFO("db", "Broadcast block at height %u to network", block->height);
-    } else {
-        MXD_LOG_WARN("db", "Failed to broadcast block at height %u", block->height);
+
+    // Retry logic with exponential backoff
+    const int max_retries = 3;
+    int retry_delay_ms = 500;  // Start with 500ms
+    int result = -1;
+
+    for (int attempt = 1; attempt <= max_retries; attempt++) {
+        result = mxd_broadcast_message(MXD_MSG_BLOCKS, data, data_len);
+
+        if (result == 0) {
+            MXD_LOG_INFO("db", "Broadcast block at height %u to network (attempt %d/%d)",
+                         block->height, attempt, max_retries);
+            break;
+        }
+
+        if (attempt < max_retries) {
+            MXD_LOG_WARN("db", "Block broadcast attempt %d/%d failed for height %u, retrying in %d ms",
+                         attempt, max_retries, block->height, retry_delay_ms);
+            usleep(retry_delay_ms * 1000);  // Convert ms to us
+            retry_delay_ms *= 2;  // Exponential backoff
+        } else {
+            MXD_LOG_ERROR("db", "Failed to broadcast block at height %u after %d attempts",
+                          block->height, max_retries);
+        }
     }
-    
+
     free(data);
     return result;
 }

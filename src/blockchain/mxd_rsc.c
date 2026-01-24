@@ -1,6 +1,7 @@
 #include "../../include/mxd_rsc.h"
 #include "../../include/mxd_ntp.h"
 #include "../../include/mxd_blockchain_db.h"
+#include "../../include/mxd_blockchain_sync.h"
 #include "../../include/mxd_logging.h"
 #include "../../include/mxd_utxo.h"
 #include "../../include/mxd_crypto.h"
@@ -2475,6 +2476,8 @@ static uint8_t consensus_local_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
 static uint8_t consensus_local_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
 static uint8_t consensus_algo_id = 0;
 static uint32_t last_proposed_height = 0;
+static uint64_t last_pull_sync_time = 0;
+#define MXD_PULL_SYNC_INTERVAL_MS 10000  // Pull sync every 10 seconds
 
 // Check if this node is the proposer for the given height
 // Uses deterministic selection: proposer = validators[height % validator_count]
@@ -2682,9 +2685,19 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         
         // Stop the proposal (block is now finalized)
         mxd_stop_block_proposal();
-        
+
         return 1;  // Block was finalized
     }
-    
+
+    // Periodically try pull-based sync to catch any missed blocks
+    // This is a fallback mechanism in case push-based broadcast failed
+    uint64_t now = mxd_now_ms();
+    if (now - last_pull_sync_time >= MXD_PULL_SYNC_INTERVAL_MS) {
+        last_pull_sync_time = now;
+        if (mxd_pull_missing_blocks() > 0) {
+            MXD_LOG_INFO("rsc", "Pull sync found and fetched missing blocks");
+        }
+    }
+
     return 0;
 }
