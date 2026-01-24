@@ -165,7 +165,7 @@ int mxd_should_close_block(void) {
     if (!proposer_state.is_proposing || !proposer_state.current_block) {
         return 0;
     }
-    
+
     // Block should close if:
     // 1. Already frozen (ready for validation)
     // 2. Has transactions and timeout reached
@@ -173,22 +173,35 @@ int mxd_should_close_block(void) {
     if (proposer_state.current_block->transaction_set_frozen) {
         return 0;  // Already closed
     }
-    
-    // Don't close empty blocks (no transactions and no membership entries)
-    if (proposer_state.current_block->transaction_count == 0 &&
-        proposer_state.current_block->rapid_membership_count == 0) {
-        return 0;
-    }
-    
+
     uint64_t current_time = get_current_time_ms();
     uint64_t elapsed = current_time - proposer_state.block_start_time;
-    
-    if (elapsed >= MXD_BLOCK_CLOSE_TIMEOUT_MS) {
-        MXD_LOG_INFO("proposer", "Block timeout reached (%llu ms elapsed, %u txs), should close block",
-                     (unsigned long long)elapsed, proposer_state.current_block->transaction_count);
+
+    // Log block status periodically (every 5 seconds)
+    static uint64_t last_status_log = 0;
+    if (current_time - last_status_log >= 5000) {
+        MXD_LOG_INFO("proposer", "Block status: height=%u, tx_count=%u, membership_count=%u, elapsed=%llu ms",
+                     proposer_state.current_block->height,
+                     proposer_state.current_block->transaction_count,
+                     proposer_state.current_block->rapid_membership_count,
+                     (unsigned long long)elapsed);
+        last_status_log = current_time;
+    }
+
+    // For empty blocks (no transactions), use a longer timeout to allow chain progress
+    // This ensures the blockchain can advance even without transaction activity
+    int is_empty = (proposer_state.current_block->transaction_count == 0 &&
+                    proposer_state.current_block->rapid_membership_count == 0);
+
+    uint64_t close_timeout = is_empty ? (MXD_BLOCK_CLOSE_TIMEOUT_MS * 2) : MXD_BLOCK_CLOSE_TIMEOUT_MS;
+
+    if (elapsed >= close_timeout) {
+        MXD_LOG_INFO("proposer", "Block timeout reached (%llu ms elapsed, timeout=%llu ms, %u txs, empty=%d), closing block",
+                     (unsigned long long)elapsed, (unsigned long long)close_timeout,
+                     proposer_state.current_block->transaction_count, is_empty);
         return 1;
     }
-    
+
     return 0;
 }
 
