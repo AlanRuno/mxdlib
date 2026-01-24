@@ -25,6 +25,7 @@
 #include "../include/mxd_ntp.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_mempool.h"
+#include "../include/mxd_blockchain_sync.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
 
@@ -613,6 +614,15 @@ int main(int argc, char** argv) {
         }
         
         // Post-genesis consensus tick - drives block production
+        // Debug: Log consensus tick eligibility every 10 seconds
+        static uint64_t last_consensus_debug = 0;
+        uint64_t now_debug = time(NULL);
+        if (now_debug - last_consensus_debug >= 10) {
+            MXD_LOG_INFO("node", "Consensus tick check: genesis_initialized=%d, blockchain_height=%u, condition=%s",
+                         genesis_initialized, blockchain_height,
+                         (genesis_initialized && blockchain_height > 0) ? "MET" : "NOT MET");
+            last_consensus_debug = now_debug;
+        }
         if (genesis_initialized && blockchain_height > 0) {
             pthread_mutex_lock(&metrics_mutex);
             int tick_result = mxd_consensus_tick(&rapid_table, node_address, node_pubkey, node_privkey, node_algo_id);
@@ -625,7 +635,19 @@ int main(int argc, char** argv) {
         }
         
         last_blockchain_height = blockchain_height;
-        
+
+        // Periodic blockchain sync check - ensures we catch up if behind the network
+        static uint64_t last_sync_check = 0;
+        uint64_t now_sync = time(NULL);
+        if (genesis_initialized && blockchain_height > 0 && now_sync - last_sync_check >= 30) {
+            last_sync_check = now_sync;
+            MXD_LOG_INFO("node", "Checking blockchain sync status...");
+            if (mxd_sync_blockchain() == 0) {
+                // Update height after sync
+                mxd_get_blockchain_height(&blockchain_height);
+            }
+        }
+
         pthread_mutex_lock(&metrics_mutex);
         
         snapshot_count = rapid_table.count < 100 ? rapid_table.count : 100;
