@@ -6,6 +6,7 @@
 #include "../include/mxd_crypto.h"
 #include "../include/mxd_config.h"
 #include "../include/mxd_rocksdb_globals.h"
+#include "../include/mxd_mempool.h"
 #include "metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -879,8 +880,8 @@ const char* mxd_handle_faucet(const char* address, const char* amount) {
         return wallet_response_buffer;
     }
 
-    // Add to mempool for inclusion in next block
-    if (mxd_add_transaction_to_mempool(&faucet_tx) != 0) {
+    // Add to mempool for inclusion in next block (high priority for faucet)
+    if (mxd_add_to_mempool(&faucet_tx, MXD_PRIORITY_HIGH) != 0) {
         mxd_free_transaction(&faucet_tx);
         snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
             "{\"success\":false,\"error\":\"Failed to add to mempool\"}");
