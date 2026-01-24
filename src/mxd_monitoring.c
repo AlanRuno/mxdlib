@@ -839,9 +839,68 @@ const char* mxd_handle_wallet_balance(const char* address) {
     }
     
     double balance = mxd_get_balance(addr20);
-    
+
     snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
         "{\"success\":true,\"balance\":%.8f}", balance);
+    return wallet_response_buffer;
+}
+
+// Testnet faucet - creates coinbase transaction to fund any address
+const char* mxd_handle_faucet(const char* address, const char* amount) {
+    if (!address || !amount) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Missing address or amount\"}");
+        return wallet_response_buffer;
+    }
+
+    double amount_value = strtod(amount, NULL);
+    if (amount_value <= 0 || amount_value > 1000.0) {  // Max 1000 MXD per faucet request
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Invalid amount (must be 0-1000 MXD)\"}");
+        return wallet_response_buffer;
+    }
+
+    // Parse the recipient address
+    uint8_t algo_id;
+    uint8_t addr20[20];
+    if (mxd_parse_address(address, &algo_id, addr20) != 0) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Invalid address format\"}");
+        return wallet_response_buffer;
+    }
+
+    // Create coinbase transaction for faucet
+    mxd_transaction_t faucet_tx;
+    mxd_amount_t amount_base = (mxd_amount_t)(amount_value * (double)MXD_AMOUNT_MULTIPLIER + 0.5);
+
+    if (mxd_create_coinbase_transaction(&faucet_tx, addr20, amount_base) != 0) {
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Failed to create faucet transaction\"}");
+        return wallet_response_buffer;
+    }
+
+    // Add to mempool for inclusion in next block
+    if (mxd_add_transaction_to_mempool(&faucet_tx) != 0) {
+        mxd_free_transaction(&faucet_tx);
+        snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+            "{\"success\":false,\"error\":\"Failed to add to mempool\"}");
+        return wallet_response_buffer;
+    }
+
+    // Get transaction hash for response
+    uint8_t tx_hash[64];
+    mxd_calculate_tx_hash(&faucet_tx, tx_hash);
+    char tx_hash_hex[129];
+    for (int i = 0; i < 64; i++) {
+        sprintf(&tx_hash_hex[i*2], "%02x", tx_hash[i]);
+    }
+    tx_hash_hex[128] = '\0';
+
+    mxd_free_transaction(&faucet_tx);
+
+    snprintf(wallet_response_buffer, sizeof(wallet_response_buffer),
+        "{\"success\":true,\"txid\":\"%s\",\"amount\":%.8f,\"message\":\"Funds will be available after next block\"}",
+        tx_hash_hex, amount_value);
     return wallet_response_buffer;
 }
 
@@ -1680,6 +1739,26 @@ static void handle_http_request(int client_socket) {
                 response_body = mxd_handle_wallet_generate_with_algo(algo_id);
                 content_type = "application/json";
                 status_code = 200;
+            }
+        } else if (strcmp(path, "/faucet") == 0) {
+            // Testnet faucet - no auth required for testnet
+            if (body_copy[0] != '\0') {
+                cJSON* json = cJSON_Parse(body_copy);
+                if (json) {
+                    cJSON* address = cJSON_GetObjectItem(json, "address");
+                    cJSON* amount = cJSON_GetObjectItem(json, "amount");
+                    if (address && amount && cJSON_IsString(address) && cJSON_IsString(amount)) {
+                        response_body = mxd_handle_faucet(address->valuestring, amount->valuestring);
+                        content_type = "application/json";
+                        status_code = 200;
+                    }
+                    cJSON_Delete(json);
+                }
+            }
+            if (!response_body) {
+                response_body = "{\"success\":false,\"error\":\"Invalid request: need address and amount\"}";
+                content_type = "application/json";
+                status_code = 400;
             }
         } else if (strcmp(path, "/wallet/send") == 0) {
             if (!check_wallet_access(auth_header, &response_body, &content_type, &status_code)) {

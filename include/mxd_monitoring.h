@@ -68,6 +68,9 @@ const char* mxd_handle_wallet_generate(void);
 const char* mxd_handle_wallet_balance(const char* address);
 const char* mxd_handle_wallet_send(const char* recipient, const char* amount);
 
+// Testnet faucet - creates coinbase transaction to fund wallet address
+const char* mxd_handle_faucet(const char* address, const char* amount);
+
 // Wallet persistence and export/import
 int mxd_save_wallet_to_file(const char* filepath);
 int mxd_load_wallet_from_file(const char* filepath);
