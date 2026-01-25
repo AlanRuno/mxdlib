@@ -2733,6 +2733,10 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
             MXD_LOG_INFO("rsc", "Block at height %u broadcast to network", current_block->height);
         }
         
+        // Update rapid table rankings after block finalization
+        // This ensures rankings reflect the latest metrics
+        mxd_update_rapid_table_rankings((mxd_rapid_table_t *)table);
+
         // Stop the proposal (block is now finalized)
         mxd_stop_block_proposal();
 
