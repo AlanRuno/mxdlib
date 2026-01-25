@@ -1300,12 +1300,36 @@ int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time) {
     return 0;
 }
 
-int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t from_height, 
+// Structure to preserve metrics during rebuild
+typedef struct {
+    uint8_t node_address[20];
+    mxd_node_metrics_t metrics;
+} preserved_metrics_t;
+
+int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t from_height,
                                             uint32_t to_height, const char *local_node_id) {
     if (!table) {
         return -1;
     }
-    
+
+    // Preserve metrics from existing nodes before rebuilding
+    size_t preserved_count = table->count;
+    preserved_metrics_t *preserved = NULL;
+    if (preserved_count > 0) {
+        preserved = malloc(preserved_count * sizeof(preserved_metrics_t));
+        if (preserved) {
+            for (size_t i = 0; i < preserved_count; i++) {
+                if (table->nodes[i]) {
+                    memcpy(preserved[i].node_address, table->nodes[i]->node_address, 20);
+                    preserved[i].metrics = table->nodes[i]->metrics;
+                } else {
+                    memset(&preserved[i], 0, sizeof(preserved_metrics_t));
+                }
+            }
+            MXD_LOG_INFO("rsc", "Preserved metrics for %zu nodes during rebuild", preserved_count);
+        }
+    }
+
     for (size_t i = 0; i < table->count; i++) {
         if (table->nodes[i]) {
             free(table->nodes[i]);
@@ -1338,14 +1362,28 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
     if (mxd_get_network_time(&current_time) == 0) {
         mxd_remove_expired_nodes(table, current_time);
     }
-    
+
+    // Restore preserved metrics to matching nodes
+    if (preserved) {
+        size_t restored_count = 0;
+        for (size_t i = 0; i < preserved_count; i++) {
+            mxd_node_stake_t *node = mxd_get_node_by_address(table, preserved[i].node_address);
+            if (node && preserved[i].metrics.response_count > 0) {
+                node->metrics = preserved[i].metrics;
+                restored_count++;
+            }
+        }
+        MXD_LOG_INFO("rsc", "Restored metrics for %zu of %zu nodes after rebuild", restored_count, preserved_count);
+        free(preserved);
+    }
+
     // Update rapid table rankings after rebuilding from blockchain
     mxd_update_rapid_table_rankings(table);
-    
+
     return 0;
 }
 
-typedef struct {
+typedef struct mxd_pending_node_data_s {
     uint8_t node_address[20];
     uint8_t algo_id;
     uint8_t public_key[MXD_PUBKEY_MAX_LEN];
@@ -2514,6 +2552,19 @@ static uint8_t consensus_algo_id = 0;
 static uint32_t last_proposed_height = 0;
 static uint64_t last_pull_sync_time = 0;
 #define MXD_PULL_SYNC_INTERVAL_MS 10000  // Pull sync every 10 seconds
+
+// Accessor functions for local validator credentials (used by sync module for signing)
+const uint8_t* mxd_get_local_address(void) {
+    return consensus_initialized ? consensus_local_address : NULL;
+}
+
+const uint8_t* mxd_get_local_privkey(void) {
+    return consensus_initialized ? consensus_local_privkey : NULL;
+}
+
+uint8_t mxd_get_local_algo_id(void) {
+    return consensus_algo_id;
+}
 
 // Check if this node is the proposer for the given height
 // Uses deterministic selection: proposer = validators[height % validator_count]

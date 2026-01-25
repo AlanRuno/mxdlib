@@ -7,6 +7,10 @@
 #include "../include/mxd_config.h"
 #include "../include/mxd_rocksdb_globals.h"
 #include "../include/mxd_mempool.h"
+#include "../include/mxd_blockchain.h"
+#include "../include/mxd_blockchain_db.h"
+#include "../include/mxd_blockchain_sync.h"
+#include "../include/mxd_rsc.h"
 #include "metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -350,6 +354,336 @@ const char* mxd_get_health_json(void) {
     );
     
     return health_buffer;
+}
+
+// Explorer API: Get network status
+static char status_buffer[4096];
+const char* mxd_get_status_json(void) {
+    uint32_t height = 0;
+    mxd_get_blockchain_height(&height);
+
+    // Get latest block hash and calculate statistics
+    char latest_hash_hex[129] = "";
+    uint64_t total_transactions = 0;
+    double avg_block_time = 0.0;
+    double current_tps = 0.0;
+    uint32_t validator_count = 0;
+    uint32_t difficulty = 1;
+    uint64_t total_supply = 0;
+
+    // Get validator count from rapid table
+    const mxd_rapid_table_t *table = mxd_get_rapid_table();
+    if (table) {
+        validator_count = (uint32_t)table->count;
+    }
+
+    if (height > 0) {
+        // Get latest block for hash and stats
+        mxd_block_t latest_block = {0};
+        if (mxd_get_block_by_height(height - 1, &latest_block) == 0) {
+            for (int i = 0; i < 64; i++) {
+                snprintf(latest_hash_hex + i*2, 3, "%02x", latest_block.block_hash[i]);
+            }
+            difficulty = latest_block.difficulty;
+            total_supply = latest_block.total_supply;
+            mxd_free_block(&latest_block);
+        }
+
+        // Calculate statistics from recent blocks (last 100 or all if less)
+        uint32_t sample_size = (height > 100) ? 100 : height;
+        uint64_t first_timestamp = 0;
+        uint64_t last_timestamp = 0;
+        uint64_t recent_tx_count = 0;
+
+        for (uint32_t i = 0; i < sample_size; i++) {
+            uint32_t block_height = height - 1 - i;
+            mxd_block_t block = {0};
+            if (mxd_get_block_by_height(block_height, &block) == 0) {
+                total_transactions += block.transaction_count;
+                recent_tx_count += block.transaction_count;
+
+                if (i == 0) {
+                    last_timestamp = block.timestamp;
+                }
+                if (i == sample_size - 1 || block_height == 0) {
+                    first_timestamp = block.timestamp;
+                }
+                mxd_free_block(&block);
+            }
+            if (block_height == 0) break;
+        }
+
+        // Calculate average block time (in seconds)
+        if (sample_size > 1 && last_timestamp > first_timestamp) {
+            avg_block_time = (double)(last_timestamp - first_timestamp) / (double)(sample_size - 1);
+        }
+
+        // Calculate TPS from recent blocks
+        if (last_timestamp > first_timestamp) {
+            uint64_t time_span = last_timestamp - first_timestamp;
+            if (time_span > 0) {
+                current_tps = (double)recent_tx_count / (double)time_span;
+            }
+        }
+
+        // Count total transactions from all blocks (approximate for large chains)
+        // For now we counted recent 100, for older blocks we estimate
+        if (height > 100) {
+            // Get a sample from middle of chain to estimate average tx per block
+            uint32_t mid_height = height / 2;
+            uint64_t mid_tx_sum = 0;
+            uint32_t mid_sample = 10;
+            for (uint32_t i = 0; i < mid_sample && mid_height + i < height; i++) {
+                mxd_block_t block = {0};
+                if (mxd_get_block_by_height(mid_height + i, &block) == 0) {
+                    mid_tx_sum += block.transaction_count;
+                    mxd_free_block(&block);
+                }
+            }
+            double avg_tx_per_block = (double)mid_tx_sum / (double)mid_sample;
+            total_transactions = (uint64_t)(avg_tx_per_block * height);
+        }
+    }
+
+    snprintf(status_buffer, sizeof(status_buffer),
+        "{"
+        "\"height\":%u,"
+        "\"latest_hash\":\"%s\","
+        "\"total_transactions\":%llu,"
+        "\"validator_count\":%u,"
+        "\"difficulty\":%u,"
+        "\"total_supply\":%llu,"
+        "\"avg_block_time\":%.2f,"
+        "\"current_tps\":%.4f"
+        "}",
+        height,
+        latest_hash_hex,
+        (unsigned long long)total_transactions,
+        validator_count,
+        difficulty,
+        (unsigned long long)total_supply,
+        avg_block_time,
+        current_tps
+    );
+
+    return status_buffer;
+}
+
+// Explorer API: Get block by height
+static char block_buffer[8192];
+const char* mxd_get_block_json(uint32_t height) {
+    mxd_block_t block = {0};
+
+    if (mxd_get_block_by_height(height, &block) != 0) {
+        snprintf(block_buffer, sizeof(block_buffer),
+            "{\"error\":\"Block not found\",\"height\":%u}", height);
+        return block_buffer;
+    }
+
+    // Convert hashes to hex strings
+    char hash_hex[129] = "";
+    char prev_hash_hex[129] = "";
+    char proposer_hex[41] = "";
+    char merkle_hex[129] = "";
+
+    for (int i = 0; i < 64; i++) {
+        snprintf(hash_hex + i*2, 3, "%02x", block.block_hash[i]);
+        snprintf(prev_hash_hex + i*2, 3, "%02x", block.prev_block_hash[i]);
+        snprintf(merkle_hex + i*2, 3, "%02x", block.merkle_root[i]);
+    }
+    for (int i = 0; i < 20; i++) {
+        snprintf(proposer_hex + i*2, 3, "%02x", block.proposer_id[i]);
+    }
+
+    snprintf(block_buffer, sizeof(block_buffer),
+        "{"
+        "\"height\":%u,"
+        "\"hash\":\"%s\","
+        "\"prev_hash\":\"%s\","
+        "\"merkle_root\":\"%s\","
+        "\"timestamp\":%llu,"
+        "\"proposer\":\"%s\","
+        "\"version\":%u,"
+        "\"difficulty\":%u,"
+        "\"nonce\":%llu,"
+        "\"validation_count\":%u,"
+        "\"rapid_membership_count\":%u,"
+        "\"transaction_count\":%u,"
+        "\"total_supply\":%llu"
+        "}",
+        block.height,
+        hash_hex,
+        prev_hash_hex,
+        merkle_hex,
+        (unsigned long long)block.timestamp,
+        proposer_hex,
+        block.version,
+        block.difficulty,
+        (unsigned long long)block.nonce,
+        block.validation_count,
+        block.rapid_membership_count,
+        block.transaction_count,
+        (unsigned long long)block.total_supply
+    );
+
+    mxd_free_block(&block);
+    return block_buffer;
+}
+
+// Explorer API: Get latest blocks
+static char blocks_buffer[32768];
+const char* mxd_get_latest_blocks_json(int limit) {
+    if (limit <= 0) limit = 10;
+    if (limit > 50) limit = 50;  // Cap at 50
+
+    uint32_t height = 0;
+    mxd_get_blockchain_height(&height);
+
+    if (height == 0) {
+        snprintf(blocks_buffer, sizeof(blocks_buffer), "{\"blocks\":[]}");
+        return blocks_buffer;
+    }
+
+    char* ptr = blocks_buffer;
+    size_t remaining = sizeof(blocks_buffer);
+    int written = snprintf(ptr, remaining, "{\"blocks\":[");
+    ptr += written;
+    remaining -= written;
+
+    int count = 0;
+    for (uint32_t h = height - 1; count < limit && h < height; h--, count++) {
+        mxd_block_t block = {0};
+        if (mxd_get_block_by_height(h, &block) != 0) {
+            break;
+        }
+
+        // Convert to hex
+        char hash_hex[129] = "";
+        char proposer_hex[41] = "";
+        for (int i = 0; i < 64; i++) {
+            snprintf(hash_hex + i*2, 3, "%02x", block.block_hash[i]);
+        }
+        for (int i = 0; i < 20; i++) {
+            snprintf(proposer_hex + i*2, 3, "%02x", block.proposer_id[i]);
+        }
+
+        if (count > 0) {
+            written = snprintf(ptr, remaining, ",");
+            ptr += written;
+            remaining -= written;
+        }
+
+        written = snprintf(ptr, remaining,
+            "{"
+            "\"height\":%u,"
+            "\"hash\":\"%s\","
+            "\"timestamp\":%llu,"
+            "\"proposer\":\"%s\","
+            "\"version\":%u,"
+            "\"validation_count\":%u,"
+            "\"transaction_count\":%u"
+            "}",
+            block.height,
+            hash_hex,
+            (unsigned long long)block.timestamp,
+            proposer_hex,
+            block.version,
+            block.validation_count,
+            block.transaction_count
+        );
+        ptr += written;
+        remaining -= written;
+
+        mxd_free_block(&block);
+
+        if (h == 0) break;  // Prevent underflow
+    }
+
+    snprintf(ptr, remaining, "]}");
+    return blocks_buffer;
+}
+
+// Explorer API: Get rapid stake table validators
+static char validators_buffer[65536];
+const char* mxd_get_validators_json(void) {
+    const mxd_rapid_table_t *table = mxd_get_rapid_table();
+
+    if (!table || table->count == 0) {
+        snprintf(validators_buffer, sizeof(validators_buffer),
+            "{\"validators\":[],\"count\":0,\"last_update\":0}");
+        return validators_buffer;
+    }
+
+    char* ptr = validators_buffer;
+    size_t remaining = sizeof(validators_buffer);
+    int written = snprintf(ptr, remaining,
+        "{\"validators\":[");
+    ptr += written;
+    remaining -= written;
+
+    for (size_t i = 0; i < table->count && remaining > 512; i++) {
+        mxd_node_stake_t *node = table->nodes[i];
+        if (!node) continue;
+
+        // Convert address to hex
+        char addr_hex[41] = "";
+        for (int j = 0; j < 20; j++) {
+            snprintf(addr_hex + j*2, 3, "%02x", node->node_address[j]);
+        }
+
+        if (i > 0) {
+            written = snprintf(ptr, remaining, ",");
+            ptr += written;
+            remaining -= written;
+        }
+
+        written = snprintf(ptr, remaining,
+            "{"
+            "\"address\":\"%s\","
+            "\"node_id\":\"%s\","
+            "\"rank\":%u,"
+            "\"active\":%d,"
+            "\"position\":%u,"
+            "\"stake\":%llu,"
+            "\"metrics\":{"
+            "\"avg_response_time\":%llu,"
+            "\"response_count\":%u,"
+            "\"message_success\":%u,"
+            "\"message_total\":%u,"
+            "\"reliability_score\":%.4f,"
+            "\"performance_score\":%.4f,"
+            "\"last_update\":%llu,"
+            "\"tip_share\":%llu,"
+            "\"peer_count\":%zu"
+            "}"
+            "}",
+            addr_hex,
+            node->node_id,
+            node->rank,
+            node->active ? 1 : 0,
+            node->rapid_table_position,
+            (unsigned long long)node->stake_amount,
+            (unsigned long long)node->metrics.avg_response_time,
+            node->metrics.response_count,
+            node->metrics.message_success,
+            node->metrics.message_total,
+            node->metrics.reliability_score,
+            node->metrics.performance_score,
+            (unsigned long long)node->metrics.last_update,
+            (unsigned long long)node->metrics.tip_share,
+            node->metrics.peer_count
+        );
+        ptr += written;
+        remaining -= written;
+    }
+
+    snprintf(ptr, remaining,
+        "],\"count\":%zu,\"last_update\":%llu}",
+        table->count,
+        (unsigned long long)table->last_update
+    );
+
+    return validators_buffer;
 }
 
 int mxd_init_wallet(void) {
@@ -1726,6 +2060,32 @@ static void handle_http_request(int client_socket) {
             response_body = mxd_get_hybrid_crypto_metrics_json();
             content_type = "application/json";
             status_code = 200;
+        } else if (strcmp(path, "/status") == 0) {
+            // Explorer API: Network status
+            response_body = mxd_get_status_json();
+            content_type = "application/json";
+            status_code = 200;
+        } else if (strncmp(path, "/block/", 7) == 0) {
+            // Explorer API: Get block by height
+            uint32_t block_height = (uint32_t)atoi(path + 7);
+            response_body = mxd_get_block_json(block_height);
+            content_type = "application/json";
+            status_code = 200;
+        } else if (strncmp(path, "/blocks/latest", 14) == 0) {
+            // Explorer API: Get latest blocks
+            int limit = 10;
+            char* limit_param = strstr(path, "limit=");
+            if (limit_param) {
+                limit = atoi(limit_param + 6);
+            }
+            response_body = mxd_get_latest_blocks_json(limit);
+            content_type = "application/json";
+            status_code = 200;
+        } else if (strcmp(path, "/validators") == 0) {
+            // Explorer API: Get rapid stake table validators
+            response_body = mxd_get_validators_json();
+            content_type = "application/json";
+            status_code = 200;
         }
     } else if (strcmp(method, "POST") == 0) {
         if (strcmp(path, "/wallet/generate") == 0 || strncmp(path, "/wallet/generate?", 17) == 0) {
@@ -1843,10 +2203,12 @@ static void handle_http_request(int client_socket) {
         "Content-Type: %s\r\n"
         "Content-Length: %zu\r\n"
         "Connection: close\r\n"
+        "Access-Control-Allow-Origin: *\r\n"
+        "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+        "Access-Control-Allow-Headers: Content-Type, Authorization\r\n"
         "X-Content-Type-Options: nosniff\r\n"
         "X-Frame-Options: DENY\r\n"
         "X-XSS-Protection: 1; mode=block\r\n"
-        "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'\r\n"
         "Strict-Transport-Security: max-age=31536000; includeSubDomains\r\n"
         "\r\n"
         "%s",

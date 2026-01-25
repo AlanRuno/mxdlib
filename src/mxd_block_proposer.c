@@ -188,22 +188,26 @@ int mxd_should_close_block(void) {
         last_status_log = current_time;
     }
 
-    // Empty blocks (no transactions and no membership changes) should never close
-    // Only produce blocks when there is actual content to include
+    // Check if block is empty (no transactions and no membership changes)
     int is_empty = (proposer_state.current_block->transaction_count == 0 &&
                     proposer_state.current_block->rapid_membership_count == 0);
 
-    if (is_empty) {
-        // Don't close empty blocks - wait for transactions
-        return 0;
-    }
+    // Determine timeout based on whether block has content
+    // - Non-empty blocks: close after 5 seconds (MXD_BLOCK_CLOSE_TIMEOUT_MS)
+    // - Empty blocks: close after 30 seconds to keep chain alive without spamming
+    #define MXD_EMPTY_BLOCK_TIMEOUT_MS 30000
+    uint64_t timeout = is_empty ? MXD_EMPTY_BLOCK_TIMEOUT_MS : MXD_BLOCK_CLOSE_TIMEOUT_MS;
 
-    // Block has content, close after timeout
-    if (elapsed >= MXD_BLOCK_CLOSE_TIMEOUT_MS) {
-        MXD_LOG_INFO("proposer", "Block timeout reached (%llu ms elapsed, %u txs, %u membership), closing block",
-                     (unsigned long long)elapsed,
-                     proposer_state.current_block->transaction_count,
-                     proposer_state.current_block->rapid_membership_count);
+    if (elapsed >= timeout) {
+        if (is_empty) {
+            MXD_LOG_INFO("proposer", "Empty block timeout reached (%llu ms elapsed), closing to keep chain alive",
+                         (unsigned long long)elapsed);
+        } else {
+            MXD_LOG_INFO("proposer", "Block timeout reached (%llu ms elapsed, %u txs, %u membership), closing block",
+                         (unsigned long long)elapsed,
+                         proposer_state.current_block->transaction_count,
+                         proposer_state.current_block->rapid_membership_count);
+        }
         return 1;
     }
 
