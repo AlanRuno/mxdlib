@@ -1212,8 +1212,9 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
         for (size_t j = 0; j < table->count; j++) {
             // Compare node_address fields directly (both are 20-byte binary)
             if (table->nodes[j] && memcmp(table->nodes[j]->node_address, entry->node_address, 20) == 0) {
-                // Update last activity timestamp
-                table->nodes[j]->metrics.last_update = entry->timestamp;
+                // Node already exists - don't update last_update from blockchain
+                // timestamp as it would make the node appear inactive. The last_update
+                // is properly updated when validators sign blocks.
                 found = 1;
                 break;
             }
@@ -1239,13 +1240,16 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
             // Get stake amount from UTXO balance
             table->nodes[table->count]->stake_amount = mxd_get_balance(entry->node_address);
             table->nodes[table->count]->active = 1;
-            // IMPORTANT: Call mxd_init_node_metrics BEFORE setting last_update
-            // because mxd_init_node_metrics resets last_update to 0
+            // Initialize metrics with current time - this makes new/restored nodes
+            // appear active. The last_update will be updated when validators sign blocks.
             mxd_init_node_metrics(&table->nodes[table->count]->metrics);
-            table->nodes[table->count]->metrics.last_update = entry->timestamp;
-            
-            MXD_LOG_INFO("rsc", "Added node to rapid table: last_update=%lu from entry timestamp=%lu",
-                         table->nodes[table->count]->metrics.last_update, entry->timestamp);
+            // Use current time for last_update so nodes appear active after restart.
+            // Historical metrics are not stored on-chain, so using entry->timestamp
+            // would make nodes appear inactive after 5 minutes of startup.
+            // table->nodes[table->count]->metrics.last_update = entry->timestamp;
+
+            MXD_LOG_INFO("rsc", "Added node to rapid table: last_update=%lu (current time)",
+                         table->nodes[table->count]->metrics.last_update);
             
             table->count++;
         }
