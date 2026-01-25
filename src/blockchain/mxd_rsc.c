@@ -103,7 +103,8 @@ int mxd_init_node_metrics(mxd_node_metrics_t *metrics) {
     metrics->max_response_time = 0;
     metrics->response_count = 0;
     metrics->tip_share = 0;
-    metrics->last_update = 0;
+    // Initialize with current time so validators appear active from start
+    metrics->last_update = mxd_now_ms();
 
     return 0;
 }
@@ -487,13 +488,28 @@ mxd_node_stake_t *mxd_get_node_from_rapid_table(const mxd_rapid_table_t *table, 
     if (!table || !node_id || !table->nodes) {
         return NULL;
     }
-    
+
     for (size_t i = 0; i < table->count; i++) {
         if (table->nodes[i] && strcmp(table->nodes[i]->node_id, node_id) == 0) {
             return table->nodes[i];
         }
     }
-    
+
+    return NULL;
+}
+
+// Get node from Rapid Table by 20-byte address
+mxd_node_stake_t *mxd_get_node_by_address(const mxd_rapid_table_t *table, const uint8_t address[20]) {
+    if (!table || !address || !table->nodes) {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < table->count; i++) {
+        if (table->nodes[i] && memcmp(table->nodes[i]->node_address, address, 20) == 0) {
+            return table->nodes[i];
+        }
+    }
+
     return NULL;
 }
 
@@ -623,9 +639,23 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
     sig->chain_position = chain_position;
     
     block->validation_count++;
-    
+
     mxd_store_signature(block->height, validator_id, signature, signature_length);
-    
+
+    // Update validator's metrics in the rapid table
+    const mxd_rapid_table_t *table = mxd_get_rapid_table();
+    if (table) {
+        mxd_node_stake_t *validator_node = mxd_get_node_by_address(table, validator_id);
+        if (validator_node) {
+            // Response time = time from block creation to signature
+            uint64_t response_time = (timestamp > block->timestamp) ?
+                                     (timestamp - block->timestamp) : 0;
+            mxd_update_node_metrics(validator_node, response_time, timestamp);
+            MXD_LOG_DEBUG("rsc", "Updated metrics for validator (response_time=%llu ms, count=%u)",
+                         (unsigned long long)response_time, validator_node->metrics.response_count);
+        }
+    }
+
     return 0;
 }
 

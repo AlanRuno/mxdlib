@@ -76,6 +76,18 @@ int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[2
 
     block->validation_count++;
 
+    // Update validator's metrics in the rapid table
+    const mxd_rapid_table_t *table = mxd_get_rapid_table();
+    if (table) {
+        mxd_node_stake_t *validator_node = mxd_get_node_by_address(table, validator_id);
+        if (validator_node) {
+            // Response time = time from block creation to signature
+            uint64_t response_time = (timestamp > block->timestamp) ?
+                                     (timestamp - block->timestamp) : 0;
+            mxd_update_node_metrics(validator_node, response_time, timestamp);
+        }
+    }
+
     return 0;
 }
 

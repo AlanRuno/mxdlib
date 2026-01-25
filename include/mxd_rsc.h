@@ -77,6 +77,9 @@ int mxd_remove_from_rapid_table(mxd_rapid_table_t *table, const char *node_id);
 
 mxd_node_stake_t *mxd_get_node_from_rapid_table(const mxd_rapid_table_t *table, const char *node_id);
 
+// Find a node by its 20-byte address in the rapid table
+mxd_node_stake_t *mxd_get_node_by_address(const mxd_rapid_table_t *table, const uint8_t address[20]);
+
 void mxd_free_rapid_table(mxd_rapid_table_t *table);
 
 int mxd_init_validation_context(mxd_validation_context_t *context, const mxd_block_t *block,
