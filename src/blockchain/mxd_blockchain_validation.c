@@ -87,8 +87,10 @@ int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[2
         mxd_node_stake_t *validator_node = mxd_get_node_by_address(table, validator_id);
         if (validator_node) {
             // Response time = time from block creation to signature
-            uint64_t response_time = (timestamp > block->timestamp) ?
-                                     (timestamp - block->timestamp) : 0;
+            // Note: block->timestamp is in seconds, signature timestamp is in milliseconds
+            uint64_t block_ts_ms = block->timestamp * 1000;
+            uint64_t response_time = (timestamp > block_ts_ms) ?
+                                     (timestamp - block_ts_ms) : 0;
             mxd_update_node_metrics(validator_node, response_time, timestamp);
             MXD_LOG_INFO("rsc", "Metrics updated for validator %s: response_count=%u, response_time=%llu",
                          vid_hex, validator_node->metrics.response_count, (unsigned long long)response_time);
