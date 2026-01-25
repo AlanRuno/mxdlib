@@ -10,6 +10,8 @@
 #include "../include/mxd_ntp.h"
 #include "../include/mxd_serialize.h"
 #include "../include/mxd_blockchain.h"
+#include "../include/mxd_crypto.h"
+#include "../include/mxd_endian.h"
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
@@ -24,6 +26,7 @@ static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t 
 static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count);
 static int mxd_apply_block_transactions(const mxd_block_t *block);
 static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height);
+int mxd_sign_and_broadcast_block(const mxd_block_t *block);
 
 static uint32_t mxd_discover_network_height(void) {
     mxd_peer_t peers[MXD_MAX_PEERS];
@@ -200,10 +203,15 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
         // Store the block
         if (mxd_store_block(&block) == 0) {
             MXD_LOG_INFO("sync", "Stored unsolicited block at height %u", block.height);
+
+            // As a validator, sign this block and broadcast signature
+            if (block.height > 0) {
+                mxd_sign_and_broadcast_block(&block);
+            }
         } else {
             MXD_LOG_ERROR("sync", "Failed to store unsolicited block at height %u", block.height);
         }
-        
+
         mxd_free_block(&block);
         return;
     }
@@ -617,17 +625,21 @@ int mxd_verify_and_add_validation_signature(mxd_block_t *block,
     }
     
     // Use NTP-synchronized time for timestamp validation
+    // Note: timestamp parameter is in milliseconds (from mxd_now_ms())
     uint64_t current_time_ms = 0;
     if (mxd_get_network_time(&current_time_ms) != 0) {
         current_time_ms = (uint64_t)time(NULL) * 1000;
     }
-    uint64_t current_time = current_time_ms / 1000;
-    uint64_t drift = (timestamp > current_time) ? 
-                     (timestamp - current_time) : 
-                     (current_time - timestamp);
-    
+    // Convert both to seconds for comparison
+    uint64_t timestamp_sec = timestamp / 1000;  // Convert ms to seconds
+    uint64_t current_time_sec = current_time_ms / 1000;
+    uint64_t drift = (timestamp_sec > current_time_sec) ?
+                     (timestamp_sec - current_time_sec) :
+                     (current_time_sec - timestamp_sec);
+
     if (drift > MXD_MAX_TIMESTAMP_DRIFT) {
-        MXD_LOG_WARN("sync", "Signature timestamp drift too large: %lu seconds", (unsigned long)drift);
+        MXD_LOG_WARN("sync", "Signature timestamp drift too large: %lu seconds (ts=%lu, now=%lu)",
+                     (unsigned long)drift, (unsigned long)timestamp_sec, (unsigned long)current_time_sec);
         return -1;
     }
     
@@ -805,4 +817,106 @@ int mxd_pull_missing_blocks(void) {
     }
 
     return 0;  // No sync needed
+}
+
+// Sign a received block and broadcast signature to the network
+// This is called by validators when they receive a new block
+int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
+    if (!block || block->height == 0) {
+        return -1;  // Don't sign genesis block here
+    }
+
+    // Get local validator credentials
+    extern const uint8_t* mxd_get_local_address(void);
+    extern const uint8_t* mxd_get_local_privkey(void);
+    extern uint8_t mxd_get_local_algo_id(void);
+
+    const uint8_t *local_address = mxd_get_local_address();
+    const uint8_t *local_privkey = mxd_get_local_privkey();
+    uint8_t algo_id = mxd_get_local_algo_id();
+
+    if (!local_address || !local_privkey) {
+        MXD_LOG_DEBUG("sync", "No local credentials for signing");
+        return -1;
+    }
+
+    // Check if we're a validator in the rapid table
+    const mxd_rapid_table_t *table = mxd_get_rapid_table();
+    if (!table) {
+        MXD_LOG_DEBUG("sync", "No rapid table for validator check");
+        return -1;
+    }
+
+    int is_validator = 0;
+    for (size_t i = 0; i < table->count; i++) {
+        if (table->nodes[i] && memcmp(table->nodes[i]->node_address, local_address, 20) == 0) {
+            is_validator = 1;
+            break;
+        }
+    }
+
+    if (!is_validator) {
+        MXD_LOG_DEBUG("sync", "Not a validator, skipping block signing");
+        return 0;
+    }
+
+    // Check if we already signed this block
+    for (uint32_t i = 0; i < block->validation_count; i++) {
+        if (memcmp(block->validation_chain[i].validator_id, local_address, 20) == 0) {
+            MXD_LOG_DEBUG("sync", "Already signed block at height %u", block->height);
+            return 0;
+        }
+    }
+
+    // Sign the block hash
+    uint64_t timestamp = mxd_now_ms();
+    uint8_t signature[MXD_SIGNATURE_MAX];
+    size_t sig_len = sizeof(signature);
+
+    if (mxd_sig_sign(algo_id, signature, &sig_len, block->block_hash, 64, local_privkey) != 0) {
+        MXD_LOG_ERROR("sync", "Failed to sign block at height %u", block->height);
+        return -1;
+    }
+
+    char addr_hex[41] = {0};
+    for (int j = 0; j < 20; j++) snprintf(addr_hex + j*2, 3, "%02x", local_address[j]);
+    MXD_LOG_INFO("sync", "Signed block at height %u, broadcasting signature (validator=%s)",
+                 block->height, addr_hex);
+
+    // Broadcast signature to all peers
+    // Format must match validation handler: block_hash(64) + algo_id(1) + validator_id(20) +
+    //   sig_len(2) + signature + chain_pos(4) + timestamp(8)
+    mxd_peer_t peers[MXD_MAX_PEERS];
+    size_t peer_count = MXD_MAX_PEERS;
+    if (mxd_get_peers(peers, &peer_count) == 0 && peer_count > 0) {
+        size_t msg_len = 64 + 1 + 20 + 2 + sig_len + 4 + 8;
+        uint8_t *msg = malloc(msg_len);
+        if (msg) {
+            uint8_t *ptr = msg;
+            memcpy(ptr, block->block_hash, 64); ptr += 64;
+            *ptr++ = algo_id;
+            memcpy(ptr, local_address, 20); ptr += 20;
+            uint16_t sig_len_net = htons((uint16_t)sig_len);
+            memcpy(ptr, &sig_len_net, 2); ptr += 2;
+            memcpy(ptr, signature, sig_len); ptr += sig_len;
+            uint32_t chain_pos = block->validation_count;  // Next position
+            uint32_t chain_pos_net = htonl(chain_pos);
+            memcpy(ptr, &chain_pos_net, 4); ptr += 4;
+            uint64_t ts_net = mxd_htonll(timestamp);
+            memcpy(ptr, &ts_net, 8);
+
+            int sent = 0;
+            for (size_t i = 0; i < peer_count; i++) {
+                if (mxd_send_message(peers[i].address, peers[i].port,
+                                    MXD_MSG_VALIDATION_SIGNATURE, msg, msg_len) == 0) {
+                    sent++;
+                }
+            }
+            MXD_LOG_INFO("sync", "Broadcast signature for block %u to %d/%zu peers",
+                         block->height, sent, peer_count);
+            free(msg);
+        }
+    }
+
+    return 0;
 }
