@@ -8,6 +8,11 @@
 #include "../include/mxd_serialize.h"
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+
+// Mutex to prevent race condition when multiple signature handlers
+// concurrently load, modify, and store the same block
+static pthread_mutex_t validation_sig_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // BLOCKER FIX: Implement actual processing of validation messages instead of just logging
 
@@ -178,14 +183,19 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             MXD_LOG_INFO("validation", "Processing validation signature: algo_id=%u, sig_len=%u, chain_pos=%u",
                          algo_id, sig_len, chain_position);
             
-            // BLOCKER FIX: Actually process the validation signature
+            // Lock mutex to prevent concurrent handlers from overwriting each other's signatures.
+            // Without this, multiple handlers load the same block (validation_count=N),
+            // each adds one signature (=N+1), and stores back - last writer wins, losing signatures.
+            pthread_mutex_lock(&validation_sig_mutex);
+
             mxd_block_t block;
             memset(&block, 0, sizeof(block));
             if (mxd_retrieve_block_by_hash(block_hash, &block) != 0) {
                 MXD_LOG_WARN("validation", "Block not found for validation signature");
+                pthread_mutex_unlock(&validation_sig_mutex);
                 return;
             }
-            
+
             // Verify and add the signature to the block
             if (mxd_verify_and_add_validation_signature(&block, validator_id, algo_id,
                                                         signature, sig_len, timestamp) == 0) {
@@ -193,7 +203,7 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
                 if (mxd_store_block(&block) == 0) {
                     MXD_LOG_INFO("validation", "Added validation signature to block (now has %u signatures)",
                                  block.validation_count);
-                    
+
                     // Check if block now has enough signatures for relay
                     if (mxd_check_block_relay_status(block_hash) == 1) {
                         MXD_LOG_INFO("validation", "Block now has enough signatures for relay");
@@ -204,8 +214,9 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             } else {
                 MXD_LOG_WARN("validation", "Failed to verify/add validation signature");
             }
-            
+
             mxd_free_block(&block);
+            pthread_mutex_unlock(&validation_sig_mutex);
             break;
         }
         

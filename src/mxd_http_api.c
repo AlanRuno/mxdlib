@@ -428,6 +428,7 @@ static char* handle_rsc(int *status_code) {
             "\"stake\":%llu,"
             "\"stake_mxd\":%.8f,"
             "\"rank\":%u,"
+            "\"rank_score\":%u,"
             "\"active\":%d,"
             "\"in_rapid_table\":%d,"
             "\"rapid_table_position\":%u,"
@@ -450,6 +451,7 @@ static char* handle_rsc(int *status_code) {
             addr_hex,
             (unsigned long long)node->stake_amount,
             stake_mxd,
+            node->rapid_table_position,
             node->rank,
             node->active,
             node->in_rapid_table,

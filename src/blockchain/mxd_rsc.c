@@ -131,11 +131,25 @@ int mxd_update_node_metrics(mxd_node_stake_t *node, uint64_t response_time, uint
     metrics->response_count++;
     double old_avg = metrics->avg_response_time;
     metrics->avg_response_time = old_avg + (response_time - old_avg) / metrics->response_count;
-    metrics->min_response_time = response_time < metrics->min_response_time ? 
+    metrics->min_response_time = response_time < metrics->min_response_time ?
                                 response_time : metrics->min_response_time;
-    metrics->max_response_time = response_time > metrics->max_response_time ? 
+    metrics->max_response_time = response_time > metrics->max_response_time ?
                                 response_time : metrics->max_response_time;
     metrics->last_update = timestamp;
+
+    // Update reliability and performance scores so they're always current
+    if (metrics->response_count >= MXD_MIN_RESPONSE_COUNT) {
+        // Reliability: consistency of response times (low variance = high reliability)
+        double variance_score = 1.0 - (metrics->max_response_time - metrics->min_response_time) /
+                               (double)MXD_MAX_RESPONSE_TIME;
+        if (variance_score < 0.0) variance_score = 0.0;
+        metrics->reliability_score = variance_score;
+
+        // Performance: speed score (lower avg response time = higher performance)
+        double speed_score = 1.0 - (metrics->avg_response_time / (double)MXD_MAX_RESPONSE_TIME);
+        if (speed_score < 0.0) speed_score = 0.0;
+        metrics->performance_score = speed_score;
+    }
 
     return 0;
 }
@@ -304,8 +318,13 @@ int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, mxd_amoun
         nodes[i].rank = mxd_calculate_node_rank(&nodes[i], total_stake);
     }
 
-    // Sort nodes by rank
+    // Sort nodes by rank score (higher score = better position)
     qsort(nodes, node_count, sizeof(mxd_node_stake_t), compare_nodes);
+
+    // Assign ordinal positions (1-based) after sorting
+    for (size_t i = 0; i < node_count; i++) {
+        nodes[i].rapid_table_position = (uint32_t)(i + 1);
+    }
 
     return 0;
 }

@@ -642,6 +642,7 @@ const char* mxd_get_validators_json(void) {
             "\"address\":\"%s\","
             "\"node_id\":\"%s\","
             "\"rank\":%u,"
+            "\"rank_score\":%u,"
             "\"active\":%d,"
             "\"position\":%u,"
             "\"stake\":%llu,"
@@ -659,6 +660,7 @@ const char* mxd_get_validators_json(void) {
             "}",
             addr_hex,
             node->node_id,
+            node->rapid_table_position,
             node->rank,
             node->active ? 1 : 0,
             node->rapid_table_position,
