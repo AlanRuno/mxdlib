@@ -575,13 +575,18 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
     }
     
     uint64_t current_time_ms = mxd_now_ms();
-    
+
     if (llabs((int64_t)timestamp - (int64_t)current_time_ms) > (int64_t)MXD_MAX_TIMESTAMP_DRIFT_MS) {
+        MXD_LOG_WARN("rsc", "Signature timestamp drift too large: %lld ms (ts=%llu, now=%llu, max=%llu)",
+                     (long long)((int64_t)timestamp - (int64_t)current_time_ms),
+                     (unsigned long long)timestamp, (unsigned long long)current_time_ms,
+                     (unsigned long long)MXD_MAX_TIMESTAMP_DRIFT_MS);
         return -1;
     }
-    
+
     for (uint32_t i = 0; i < block->validation_count; i++) {
         if (memcmp(block->validation_chain[i].validator_id, validator_id, 20) == 0) {
+            MXD_LOG_WARN("rsc", "Duplicate signature from validator for block height %u", block->height);
             return -1;
         }
     }

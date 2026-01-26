@@ -871,12 +871,23 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
         }
     }
 
-    // Sign the block hash
+    // Sign: block_hash(64) + previous_validator_id(20) + timestamp(8)
+    // This must match the verification format in mxd_add_validator_signature_to_block
     uint64_t timestamp = mxd_now_ms();
+    uint8_t sign_msg[64 + 20 + 8];
+    memcpy(sign_msg, block->block_hash, 64);
+    if (block->validation_count == 0) {
+        memset(sign_msg + 64, 0, 20);
+    } else {
+        memcpy(sign_msg + 64, block->validation_chain[block->validation_count - 1].validator_id, 20);
+    }
+    uint64_t ts_be = mxd_htonll(timestamp);
+    memcpy(sign_msg + 64 + 20, &ts_be, 8);
+
     uint8_t signature[MXD_SIGNATURE_MAX];
     size_t sig_len = sizeof(signature);
 
-    if (mxd_sig_sign(algo_id, signature, &sig_len, block->block_hash, 64, local_privkey) != 0) {
+    if (mxd_sig_sign(algo_id, signature, &sig_len, sign_msg, sizeof(sign_msg), local_privkey) != 0) {
         MXD_LOG_ERROR("sync", "Failed to sign block at height %u", block->height);
         return -1;
     }
