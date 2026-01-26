@@ -1234,7 +1234,7 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
                     continue;
                 }
             }
-            
+
             // Initialize new node
             memset(table->nodes[table->count], 0, sizeof(mxd_node_stake_t));
             // Convert binary address to hex string for node_id (node_id is char[64], needs 40 hex chars + null)
@@ -1257,8 +1257,13 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
 
             MXD_LOG_INFO("rsc", "Added node to rapid table: last_update=%lu (current time)",
                          table->nodes[table->count]->metrics.last_update);
-            
+
             table->count++;
+        }
+
+        // Register validator public key from membership entry (needed for signature verification)
+        if (entry->public_key_length > 0) {
+            mxd_test_register_validator_pubkey(entry->node_address, entry->public_key, entry->public_key_length);
         }
     }
     
