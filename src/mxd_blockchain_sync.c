@@ -836,14 +836,14 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
     uint8_t algo_id = mxd_get_local_algo_id();
 
     if (!local_address || !local_privkey) {
-        MXD_LOG_DEBUG("sync", "No local credentials for signing");
+        MXD_LOG_INFO("sync", "No local credentials for signing block %u", block->height);
         return -1;
     }
 
     // Check if we're a validator in the rapid table
     const mxd_rapid_table_t *table = mxd_get_rapid_table();
     if (!table) {
-        MXD_LOG_DEBUG("sync", "No rapid table for validator check");
+        MXD_LOG_INFO("sync", "No rapid table for validator check (block %u)", block->height);
         return -1;
     }
 
@@ -856,7 +856,10 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
     }
 
     if (!is_validator) {
-        MXD_LOG_DEBUG("sync", "Not a validator, skipping block signing");
+        char addr_hex[41] = {0};
+        for (int j = 0; j < 20; j++) snprintf(addr_hex + j*2, 3, "%02x", local_address[j]);
+        MXD_LOG_INFO("sync", "Not a validator (local=%s, table_count=%zu), skipping block %u",
+                     addr_hex, table->count, block->height);
         return 0;
     }
 
