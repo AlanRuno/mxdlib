@@ -548,6 +548,11 @@ void mxd_free_rapid_table(mxd_rapid_table_t *table) {
 
 // --- Sequential Signature Chaining ---
 
+// Compare two 20-byte addresses for qsort (lexicographic)
+static int cmp_address(const void *a, const void *b) {
+    return memcmp(a, b, 20);
+}
+
 int mxd_compute_signing_order(const mxd_rapid_table_t *table,
                               const uint8_t proposer_id[20],
                               uint8_t signing_order[][20],
@@ -557,17 +562,24 @@ int mxd_compute_signing_order(const mxd_rapid_table_t *table,
     *order_count = 0;
 
     // Position 0: proposer
-    memcpy(signing_order[*order_count], proposer_id, 20);
-    (*order_count)++;
+    memcpy(signing_order[0], proposer_id, 20);
 
-    // Remaining positions: rapid table index order, skipping proposer
+    // Collect non-proposer addresses
+    uint32_t non_proposer_count = 0;
+    uint8_t (*others)[20] = signing_order + 1;  // start after proposer slot
     for (size_t i = 0; i < table->count; i++) {
         if (!table->nodes[i]) continue;
         if (memcmp(table->nodes[i]->node_address, proposer_id, 20) == 0) continue;
-        memcpy(signing_order[*order_count], table->nodes[i]->node_address, 20);
-        (*order_count)++;
+        memcpy(others[non_proposer_count], table->nodes[i]->node_address, 20);
+        non_proposer_count++;
     }
 
+    // Sort non-proposer addresses lexicographically for deterministic order
+    if (non_proposer_count > 1) {
+        qsort(others, non_proposer_count, 20, cmp_address);
+    }
+
+    *order_count = 1 + non_proposer_count;
     return 0;
 }
 
@@ -579,13 +591,23 @@ int mxd_get_my_signing_position(const mxd_rapid_table_t *table,
     // Position 0 is the proposer
     if (memcmp(my_address, proposer_id, 20) == 0) return 0;
 
-    // Remaining positions: rapid table index order, skipping proposer
-    int position = 1;
-    for (size_t i = 0; i < table->count; i++) {
+    // Collect non-proposer addresses and sort for deterministic order
+    uint8_t addresses[64][20];  // max 64 validators
+    uint32_t count = 0;
+    for (size_t i = 0; i < table->count && count < 64; i++) {
         if (!table->nodes[i]) continue;
         if (memcmp(table->nodes[i]->node_address, proposer_id, 20) == 0) continue;
-        if (memcmp(table->nodes[i]->node_address, my_address, 20) == 0) return position;
-        position++;
+        memcpy(addresses[count], table->nodes[i]->node_address, 20);
+        count++;
+    }
+
+    if (count > 1) {
+        qsort(addresses, count, 20, cmp_address);
+    }
+
+    // Find my_address in the sorted list
+    for (uint32_t i = 0; i < count; i++) {
+        if (memcmp(addresses[i], my_address, 20) == 0) return (int)(i + 1);
     }
 
     return -1;  // Not in table
@@ -2889,12 +2911,23 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
             return -1;
         }
         
-        // Sign the block as proposer (add our signature to validation chain)
+        // Sign the block as proposer (position 0) using chain_hash format
         uint64_t timestamp = mxd_now_ms();
         uint8_t signature[MXD_SIGNATURE_MAX];
         size_t sig_len = sizeof(signature);
-        
-        if (mxd_sig_sign(algo_id, signature, &sig_len, current_block->block_hash, 64, local_privkey) != 0) {
+
+        // chain_hash_0 = SHA-512(block_hash) for position 0
+        uint8_t chain_hash_0[64];
+        mxd_compute_chain_hash(current_block, 0, chain_hash_0);
+
+        // Sign: block_hash(64) + chain_hash(64) + timestamp(8) = 136 bytes
+        uint8_t sign_msg[64 + 64 + 8];
+        memcpy(sign_msg, current_block->block_hash, 64);
+        memcpy(sign_msg + 64, chain_hash_0, 64);
+        uint64_t ts_be = mxd_htonll(timestamp);
+        memcpy(sign_msg + 64 + 64, &ts_be, 8);
+
+        if (mxd_sig_sign(algo_id, signature, &sig_len, sign_msg, sizeof(sign_msg), local_privkey) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to sign block");
             return -1;
         }
