@@ -211,8 +211,8 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
                                                         signature, sig_len, timestamp) == 0) {
                 // Store updated block with new signature
                 if (mxd_store_block(&block) == 0) {
-                    MXD_LOG_INFO("validation", "Added chained signature to block at pos %u (now has %u signatures)",
-                                 chain_position, block.validation_count);
+                    MXD_LOG_INFO("validation", "Added chained signature to block %u at pos %u (now has %u signatures)",
+                                 block.height, chain_position, block.validation_count);
 
                     // Check if block now has enough signatures for relay
                     if (mxd_check_block_relay_status(block_hash) == 1) {

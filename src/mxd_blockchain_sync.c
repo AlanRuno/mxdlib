@@ -200,9 +200,37 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
             MXD_LOG_WARN("sync", "Failed to apply transactions for unsolicited block at height %u", block.height);
         }
 
+        // Guard against overwriting a block that already has more validation signatures.
+        // This prevents a race condition where the block broadcast (with proposer sig only)
+        // arrives after the validation handler has already added more signatures.
+        {
+            mxd_block_t existing;
+            memset(&existing, 0, sizeof(existing));
+            if (mxd_retrieve_block_by_hash(block.block_hash, &existing) == 0) {
+                if (existing.validation_count >= block.validation_count) {
+                    MXD_LOG_DEBUG("sync", "Existing block at height %u already has %u sigs (broadcast has %u), keeping existing",
+                                 block.height, existing.validation_count, block.validation_count);
+                    mxd_free_block(&existing);
+                    // Still try to sign the existing block (in case we haven't yet)
+                    if (block.height > 0) {
+                        mxd_block_t sign_block;
+                        memset(&sign_block, 0, sizeof(sign_block));
+                        if (mxd_retrieve_block_by_hash(block.block_hash, &sign_block) == 0) {
+                            mxd_sign_and_broadcast_block(&sign_block);
+                            mxd_free_block(&sign_block);
+                        }
+                    }
+                    mxd_free_block(&block);
+                    return;
+                }
+                mxd_free_block(&existing);
+            }
+        }
+
         // Store the block
         if (mxd_store_block(&block) == 0) {
-            MXD_LOG_INFO("sync", "Stored unsolicited block at height %u", block.height);
+            MXD_LOG_INFO("sync", "Stored unsolicited block at height %u (validators=%u)",
+                         block.height, block.validation_count);
 
             // As a validator, sign this block and broadcast signature
             if (block.height > 0) {
@@ -881,7 +909,7 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
     // Check if it's our turn: we need all preceding signatures present
     if ((uint32_t)my_position != block->validation_count) {
         // Not our turn yet - need more preceding signatures
-        MXD_LOG_DEBUG("sync", "Not our turn yet for block %u (position=%d, have=%u signatures)",
+        MXD_LOG_INFO("sync", "Not our turn yet for block %u (my_position=%d, validation_count=%u)",
                      block->height, my_position, block->validation_count);
         return 0;
     }
