@@ -998,6 +998,53 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
             MXD_LOG_INFO("sync", "Broadcast chain signature for block %u pos %d to %d/%zu peers",
                          block->height, my_position, sent, peer_count);
             free(msg);
+
+            // Re-broadcast all preceding signatures to handle partial P2P connectivity.
+            // Some peers may have missed earlier positions' broadcasts, so we resend
+            // the full chain to ensure all peers can build the complete sequence.
+            if (my_position > 0) {
+                mxd_block_t full_block;
+                memset(&full_block, 0, sizeof(full_block));
+                if (mxd_retrieve_block_by_hash(block->block_hash, &full_block) == 0 &&
+                    full_block.validation_chain && full_block.validation_count > 1) {
+                    int resent = 0;
+                    for (uint32_t pos = 0; pos < full_block.validation_count - 1 && pos < (uint32_t)my_position; pos++) {
+                        const mxd_validator_signature_t *vs = &full_block.validation_chain[pos];
+
+                        uint8_t pos_chain_hash[64];
+                        mxd_compute_chain_hash(&full_block, pos, pos_chain_hash);
+
+                        size_t rmsg_len = 64 + 1 + 20 + 2 + vs->signature_length + 4 + 8 + 64;
+                        uint8_t *rmsg = malloc(rmsg_len);
+                        if (rmsg) {
+                            uint8_t *rp = rmsg;
+                            memcpy(rp, full_block.block_hash, 64); rp += 64;
+                            *rp++ = vs->algo_id;
+                            memcpy(rp, vs->validator_id, 20); rp += 20;
+                            uint16_t rsl = htons(vs->signature_length);
+                            memcpy(rp, &rsl, 2); rp += 2;
+                            memcpy(rp, vs->signature, vs->signature_length); rp += vs->signature_length;
+                            uint32_t rcp = htonl(pos);
+                            memcpy(rp, &rcp, 4); rp += 4;
+                            uint64_t rts = mxd_htonll(vs->timestamp);
+                            memcpy(rp, &rts, 8); rp += 8;
+                            memcpy(rp, pos_chain_hash, 64);
+
+                            for (size_t pi = 0; pi < peer_count; pi++) {
+                                mxd_send_message(peers[pi].address, peers[pi].port,
+                                                MXD_MSG_VALIDATION_SIGNATURE, rmsg, rmsg_len);
+                            }
+                            resent++;
+                            free(rmsg);
+                        }
+                    }
+                    if (resent > 0) {
+                        MXD_LOG_INFO("sync", "Re-broadcast %d preceding sigs for block %u to %zu peers",
+                                     resent, full_block.height, peer_count);
+                    }
+                    mxd_free_block(&full_block);
+                }
+            }
         }
     }
 
