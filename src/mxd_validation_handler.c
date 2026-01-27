@@ -338,7 +338,7 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
                 break;
             }
 
-            // If the signature is for a future position, buffer it
+            // If the signature is for a future position, buffer it and request missing chain
             if (chain_position > block.validation_count) {
                 MXD_LOG_INFO("validation", "Buffering out-of-order sig: pos %u but block %u has %u sigs",
                              chain_position, block.height, block.validation_count);
@@ -346,6 +346,12 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
                                    signature, sig_len, chain_position, timestamp);
                 mxd_free_block(&block);
                 pthread_mutex_unlock(&validation_sig_mutex);
+
+                // Request the full validation chain from the sender to fill gaps
+                mxd_send_message(address, port, MXD_MSG_GET_VALIDATION_CHAIN,
+                                 block_hash, 64);
+                MXD_LOG_DEBUG("validation", "Requested validation chain from %s:%u for missing sigs",
+                              address, port);
                 break;
             }
 
@@ -394,6 +400,18 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
                 if (sig_count > 0 && signatures) {
                     if (mxd_process_incoming_validation_chain(block_hash, signatures, sig_count) == 0) {
                         MXD_LOG_INFO("validation", "Successfully processed validation chain with %u signatures", sig_count);
+
+                        // Drain buffered sigs and trigger chain reaction
+                        pthread_mutex_lock(&validation_sig_mutex);
+                        drain_pending_sigs(block_hash);
+                        pthread_mutex_unlock(&validation_sig_mutex);
+
+                        mxd_block_t chain_block;
+                        memset(&chain_block, 0, sizeof(chain_block));
+                        if (mxd_retrieve_block_by_hash(block_hash, &chain_block) == 0) {
+                            mxd_sign_and_broadcast_block(&chain_block);
+                            mxd_free_block(&chain_block);
+                        }
                     } else {
                         MXD_LOG_WARN("validation", "Failed to process validation chain");
                     }
