@@ -188,6 +188,25 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
 // Check if this node is the proposer for the given height
 int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *local_address, uint32_t height);
 
+// Sequential signature chaining - signing order
+// Compute deterministic signing order: proposer first, then rapid table index order
+int mxd_compute_signing_order(const mxd_rapid_table_t *table,
+                              const uint8_t proposer_id[20],
+                              uint8_t signing_order[][20],
+                              uint32_t *order_count);
+
+// Get this node's position in the signing order (-1 if not in table)
+int mxd_get_my_signing_position(const mxd_rapid_table_t *table,
+                                const uint8_t proposer_id[20],
+                                const uint8_t my_address[20]);
+
+// Compute chain_hash for a given position from the validation chain
+// Position 0: chain_hash = SHA-512(block_hash)
+// Position N: chain_hash = SHA-512(prev_chain_hash || prev_signature_bytes)
+void mxd_compute_chain_hash(const mxd_block_t *block,
+                            uint32_t position,
+                            uint8_t chain_hash[64]);
+
 #ifdef __cplusplus
 }
 #endif

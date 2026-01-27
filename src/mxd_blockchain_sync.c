@@ -871,18 +871,32 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
         }
     }
 
-    // Sign: block_hash(64) + previous_validator_id(20) + timestamp(8)
-    // This must match the verification format in mxd_add_validator_signature_to_block
-    uint64_t timestamp = mxd_now_ms();
-    uint8_t sign_msg[64 + 20 + 8];
-    memcpy(sign_msg, block->block_hash, 64);
-    if (block->validation_count == 0) {
-        memset(sign_msg + 64, 0, 20);
-    } else {
-        memcpy(sign_msg + 64, block->validation_chain[block->validation_count - 1].validator_id, 20);
+    // Determine our signing position in the sequential chain
+    int my_position = mxd_get_my_signing_position(table, block->proposer_id, local_address);
+    if (my_position < 0) {
+        MXD_LOG_WARN("sync", "Not in signing order for block %u", block->height);
+        return 0;
     }
+
+    // Check if it's our turn: we need all preceding signatures present
+    if ((uint32_t)my_position != block->validation_count) {
+        // Not our turn yet - need more preceding signatures
+        MXD_LOG_DEBUG("sync", "Not our turn yet for block %u (position=%d, have=%u signatures)",
+                     block->height, my_position, block->validation_count);
+        return 0;
+    }
+
+    // Compute chain_hash for our position
+    uint8_t chain_hash[64];
+    mxd_compute_chain_hash(block, (uint32_t)my_position, chain_hash);
+
+    // Sign: block_hash(64) + chain_hash(64) + timestamp(8) = 136 bytes
+    uint64_t timestamp = mxd_now_ms();
+    uint8_t sign_msg[64 + 64 + 8];
+    memcpy(sign_msg, block->block_hash, 64);
+    memcpy(sign_msg + 64, chain_hash, 64);
     uint64_t ts_be = mxd_htonll(timestamp);
-    memcpy(sign_msg + 64 + 20, &ts_be, 8);
+    memcpy(sign_msg + 64 + 64, &ts_be, 8);
 
     uint8_t signature[MXD_SIGNATURE_MAX];
     size_t sig_len = sizeof(signature);
@@ -894,16 +908,18 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
 
     char addr_hex[41] = {0};
     for (int j = 0; j < 20; j++) snprintf(addr_hex + j*2, 3, "%02x", local_address[j]);
-    MXD_LOG_INFO("sync", "Signed block at height %u, broadcasting signature (validator=%s)",
-                 block->height, addr_hex);
+    char chain_hex[17] = {0};
+    for (int j = 0; j < 8; j++) snprintf(chain_hex + j*2, 3, "%02x", chain_hash[j]);
+    MXD_LOG_INFO("sync", "Signed block at height %u position %d, chain_hash=%s... (validator=%s)",
+                 block->height, my_position, chain_hex, addr_hex);
 
     // Broadcast signature to all peers
-    // Format must match validation handler: block_hash(64) + algo_id(1) + validator_id(20) +
-    //   sig_len(2) + signature + chain_pos(4) + timestamp(8)
+    // Format: block_hash(64) + algo_id(1) + validator_id(20) + sig_len(2) + signature +
+    //         chain_pos(4) + timestamp(8) + chain_hash(64)
     mxd_peer_t peers[MXD_MAX_PEERS];
     size_t peer_count = MXD_MAX_PEERS;
     if (mxd_get_peers(peers, &peer_count) == 0 && peer_count > 0) {
-        size_t msg_len = 64 + 1 + 20 + 2 + sig_len + 4 + 8;
+        size_t msg_len = 64 + 1 + 20 + 2 + sig_len + 4 + 8 + 64;
         uint8_t *msg = malloc(msg_len);
         if (msg) {
             uint8_t *ptr = msg;
@@ -913,11 +929,12 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
             uint16_t sig_len_net = htons((uint16_t)sig_len);
             memcpy(ptr, &sig_len_net, 2); ptr += 2;
             memcpy(ptr, signature, sig_len); ptr += sig_len;
-            uint32_t chain_pos = block->validation_count;  // Next position
+            uint32_t chain_pos = (uint32_t)my_position;
             uint32_t chain_pos_net = htonl(chain_pos);
             memcpy(ptr, &chain_pos_net, 4); ptr += 4;
             uint64_t ts_net = mxd_htonll(timestamp);
-            memcpy(ptr, &ts_net, 8);
+            memcpy(ptr, &ts_net, 8); ptr += 8;
+            memcpy(ptr, chain_hash, 64);
 
             int sent = 0;
             for (size_t i = 0; i < peer_count; i++) {
@@ -926,8 +943,8 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
                     sent++;
                 }
             }
-            MXD_LOG_INFO("sync", "Broadcast signature for block %u to %d/%zu peers",
-                         block->height, sent, peer_count);
+            MXD_LOG_INFO("sync", "Broadcast chain signature for block %u pos %d to %d/%zu peers",
+                         block->height, my_position, sent, peer_count);
             free(msg);
         }
     }

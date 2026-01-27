@@ -546,8 +546,96 @@ void mxd_free_rapid_table(mxd_rapid_table_t *table) {
     table->capacity = 0;
 }
 
+// --- Sequential Signature Chaining ---
+
+int mxd_compute_signing_order(const mxd_rapid_table_t *table,
+                              const uint8_t proposer_id[20],
+                              uint8_t signing_order[][20],
+                              uint32_t *order_count) {
+    if (!table || !proposer_id || !signing_order || !order_count) return -1;
+
+    *order_count = 0;
+
+    // Position 0: proposer
+    memcpy(signing_order[*order_count], proposer_id, 20);
+    (*order_count)++;
+
+    // Remaining positions: rapid table index order, skipping proposer
+    for (size_t i = 0; i < table->count; i++) {
+        if (!table->nodes[i]) continue;
+        if (memcmp(table->nodes[i]->node_address, proposer_id, 20) == 0) continue;
+        memcpy(signing_order[*order_count], table->nodes[i]->node_address, 20);
+        (*order_count)++;
+    }
+
+    return 0;
+}
+
+int mxd_get_my_signing_position(const mxd_rapid_table_t *table,
+                                const uint8_t proposer_id[20],
+                                const uint8_t my_address[20]) {
+    if (!table || !proposer_id || !my_address) return -1;
+
+    // Position 0 is the proposer
+    if (memcmp(my_address, proposer_id, 20) == 0) return 0;
+
+    // Remaining positions: rapid table index order, skipping proposer
+    int position = 1;
+    for (size_t i = 0; i < table->count; i++) {
+        if (!table->nodes[i]) continue;
+        if (memcmp(table->nodes[i]->node_address, proposer_id, 20) == 0) continue;
+        if (memcmp(table->nodes[i]->node_address, my_address, 20) == 0) return position;
+        position++;
+    }
+
+    return -1;  // Not in table
+}
+
+void mxd_compute_chain_hash(const mxd_block_t *block,
+                            uint32_t position,
+                            uint8_t chain_hash[64]) {
+    if (!block || !chain_hash) return;
+
+    if (position == 0) {
+        // chain_hash_0 = SHA-512(block_hash)
+        mxd_sha512(block->block_hash, 64, chain_hash);
+        return;
+    }
+
+    // For position N: chain_hash_N = SHA-512(prev_chain_hash || prev_signature_bytes)
+    // We must compute chain hashes iteratively from position 0
+    uint8_t prev_hash[64];
+    mxd_sha512(block->block_hash, 64, prev_hash);  // chain_hash_0
+
+    for (uint32_t i = 1; i <= position; i++) {
+        if (i - 1 >= block->validation_count) {
+            // Not enough signatures in chain yet - use what we have
+            memcpy(chain_hash, prev_hash, 64);
+            return;
+        }
+        const mxd_validator_signature_t *prev_sig = &block->validation_chain[i - 1];
+        // SHA-512(prev_chain_hash[64] || prev_signature_bytes[sig_len])
+        size_t input_len = 64 + prev_sig->signature_length;
+        uint8_t *input = malloc(input_len);
+        if (!input) {
+            memcpy(chain_hash, prev_hash, 64);
+            return;
+        }
+        memcpy(input, prev_hash, 64);
+        memcpy(input + 64, prev_sig->signature, prev_sig->signature_length);
+
+        uint8_t current_hash[64];
+        mxd_sha512(input, input_len, current_hash);
+        free(input);
+
+        memcpy(prev_hash, current_hash, 64);
+    }
+
+    memcpy(chain_hash, prev_hash, 64);
+}
+
 // Initialize validation context for a block
-int mxd_init_validation_context(mxd_validation_context_t *context, const mxd_block_t *block, 
+int mxd_init_validation_context(mxd_validation_context_t *context, const mxd_block_t *block,
                                const mxd_rapid_table_t *table) {
     if (!context || !block || !table) {
         return -1;
@@ -610,19 +698,39 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
         }
     }
     
-    // BLOCKER FIX: Verify signature content before adding to block
-    // Signature must be over "block_hash + previous_validator_id + timestamp"
-    uint8_t msg[64 + 20 + 8];
-    memcpy(msg, block->block_hash, 64);
-    if (block->validation_count == 0) {
-        memset(msg + 64, 0, 20);
-    } else {
-        memcpy(msg + 64, block->validation_chain[block->validation_count - 1].validator_id, 20);
+    // Verify sequential signing order: chain_position must match current validation_count
+    if (chain_position != block->validation_count) {
+        MXD_LOG_WARN("rsc", "Out-of-order signature: chain_position=%u but validation_count=%u (block %u)",
+                     chain_position, block->validation_count, block->height);
+        return -1;
     }
-    // CRITICAL FIX: Use big-endian encoding for timestamp (consistent with rest of codebase)
+
+    // Verify the signer is the expected validator at this position in the signing order
+    const mxd_rapid_table_t *order_table = mxd_get_rapid_table();
+    if (order_table && order_table->count > 0) {
+        int expected_pos = mxd_get_my_signing_position(order_table, block->proposer_id, validator_id);
+        if (expected_pos < 0) {
+            MXD_LOG_WARN("rsc", "Signer not in signing order for block %u", block->height);
+            return -1;
+        }
+        if ((uint32_t)expected_pos != chain_position) {
+            MXD_LOG_WARN("rsc", "Signer at wrong position: expected %d, got %u (block %u)",
+                         expected_pos, chain_position, block->height);
+            return -1;
+        }
+    }
+
+    // Compute chain_hash for this position
+    uint8_t chain_hash[64];
+    mxd_compute_chain_hash(block, chain_position, chain_hash);
+
+    // Verify signature over: block_hash(64) + chain_hash(64) + timestamp(8) = 136 bytes
+    uint8_t msg[64 + 64 + 8];
+    memcpy(msg, block->block_hash, 64);
+    memcpy(msg + 64, chain_hash, 64);
     uint64_t ts_be = mxd_htonll(timestamp);
-    memcpy(msg + 64 + 20, &ts_be, 8);
-    
+    memcpy(msg + 64 + 64, &ts_be, 8);
+
     // Get validator's public key
     uint8_t pubbuf[4096];
     size_t publen = 0;
@@ -630,10 +738,10 @@ int mxd_add_validator_signature_to_block(mxd_block_t *block, const uint8_t valid
         MXD_LOG_ERROR("rsc", "Failed to get validator public key for signature verification");
         return -1;
     }
-    
+
     // Verify signature
     if (mxd_sig_verify(algo_id, signature, signature_length, msg, sizeof(msg), pubbuf) != 0) {
-        MXD_LOG_ERROR("rsc", "Signature verification failed for validator");
+        MXD_LOG_ERROR("rsc", "Chain signature verification failed for validator at position %u", chain_position);
         return -1;
     }
     

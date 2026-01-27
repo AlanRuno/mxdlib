@@ -179,10 +179,20 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             uint64_t timestamp_net;
             memcpy(&timestamp_net, data + offset, 8);
             uint64_t timestamp = mxd_ntohll(timestamp_net);
-            
-            MXD_LOG_INFO("validation", "Processing validation signature: algo_id=%u, sig_len=%u, chain_pos=%u",
-                         algo_id, sig_len, chain_position);
-            
+            offset += 8;
+
+            // Detect new chain format: 64 extra bytes for chain_hash at end
+            int has_chain_hash = (offset + 64 <= payload_length);
+            if (has_chain_hash) {
+                char ch_hex[17] = {0};
+                for (int j = 0; j < 8; j++) snprintf(ch_hex + j*2, 3, "%02x", data[offset + j]);
+                MXD_LOG_INFO("validation", "Processing chained signature: algo_id=%u, sig_len=%u, chain_pos=%u, chain_hash=%s...",
+                             algo_id, sig_len, chain_position, ch_hex);
+            } else {
+                MXD_LOG_INFO("validation", "Processing validation signature: algo_id=%u, sig_len=%u, chain_pos=%u",
+                             algo_id, sig_len, chain_position);
+            }
+
             // Lock mutex to prevent concurrent handlers from overwriting each other's signatures.
             // Without this, multiple handlers load the same block (validation_count=N),
             // each adds one signature (=N+1), and stores back - last writer wins, losing signatures.
@@ -201,12 +211,21 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
                                                         signature, sig_len, timestamp) == 0) {
                 // Store updated block with new signature
                 if (mxd_store_block(&block) == 0) {
-                    MXD_LOG_INFO("validation", "Added validation signature to block (now has %u signatures)",
-                                 block.validation_count);
+                    MXD_LOG_INFO("validation", "Added chained signature to block at pos %u (now has %u signatures)",
+                                 chain_position, block.validation_count);
 
                     // Check if block now has enough signatures for relay
                     if (mxd_check_block_relay_status(block_hash) == 1) {
                         MXD_LOG_INFO("validation", "Block now has enough signatures for relay");
+                    }
+
+                    // Chain reaction: check if it's now our turn to sign
+                    // Re-read block from DB to get the freshest state
+                    mxd_block_t fresh_block;
+                    memset(&fresh_block, 0, sizeof(fresh_block));
+                    if (mxd_retrieve_block_by_hash(block_hash, &fresh_block) == 0) {
+                        mxd_sign_and_broadcast_block(&fresh_block);
+                        mxd_free_block(&fresh_block);
                     }
                 } else {
                     MXD_LOG_ERROR("validation", "Failed to store block with new signature");
