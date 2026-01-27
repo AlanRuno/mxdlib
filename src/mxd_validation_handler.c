@@ -9,12 +9,143 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
+#include <time.h>
 #include <pthread.h>
 
 // Mutex to prevent race condition when multiple signature handlers
 // concurrently load, modify, and store the same block
 static pthread_mutex_t validation_sig_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Pending signature buffer for out-of-order delivery.
+// When position N+1's signature arrives before position N's has been stored,
+// we buffer it and process it after the preceding signature is added.
+typedef struct {
+    uint8_t block_hash[64];
+    uint8_t validator_id[20];
+    uint8_t algo_id;
+    uint8_t signature[MXD_SIGNATURE_MAX];
+    uint16_t sig_len;
+    uint32_t chain_position;
+    uint64_t timestamp;
+    time_t buffered_at;
+    int used;
+} pending_sig_entry_t;
+
+#define MAX_PENDING_SIGS 32
+#define PENDING_SIG_EXPIRY_SEC 15
+
+static pending_sig_entry_t pending_sig_buffer[MAX_PENDING_SIGS];
+
+// Buffer a signature for later processing. Caller must hold validation_sig_mutex.
+static void buffer_pending_sig(const uint8_t *block_hash, const uint8_t *validator_id,
+                               uint8_t algo_id, const uint8_t *signature, uint16_t sig_len,
+                               uint32_t chain_position, uint64_t timestamp) {
+    time_t now = time(NULL);
+
+    // Check for duplicate before buffering
+    for (int i = 0; i < MAX_PENDING_SIGS; i++) {
+        if (pending_sig_buffer[i].used &&
+            memcmp(pending_sig_buffer[i].block_hash, block_hash, 64) == 0 &&
+            pending_sig_buffer[i].chain_position == chain_position &&
+            memcmp(pending_sig_buffer[i].validator_id, validator_id, 20) == 0) {
+            return;  // Already buffered
+        }
+    }
+
+    // Find an empty or expired slot
+    for (int i = 0; i < MAX_PENDING_SIGS; i++) {
+        if (!pending_sig_buffer[i].used ||
+            (now - pending_sig_buffer[i].buffered_at > PENDING_SIG_EXPIRY_SEC)) {
+            pending_sig_buffer[i].used = 1;
+            pending_sig_buffer[i].buffered_at = now;
+            memcpy(pending_sig_buffer[i].block_hash, block_hash, 64);
+            memcpy(pending_sig_buffer[i].validator_id, validator_id, 20);
+            pending_sig_buffer[i].algo_id = algo_id;
+            memcpy(pending_sig_buffer[i].signature, signature, sig_len);
+            pending_sig_buffer[i].sig_len = sig_len;
+            pending_sig_buffer[i].chain_position = chain_position;
+            pending_sig_buffer[i].timestamp = timestamp;
+            MXD_LOG_INFO("validation", "Buffered out-of-order sig at pos %u", chain_position);
+            return;
+        }
+    }
+    MXD_LOG_WARN("validation", "Pending signature buffer full, dropping sig at pos %u", chain_position);
+}
+
+// Process buffered signatures for a block after a new signature was added.
+// Caller must hold validation_sig_mutex.
+static void drain_pending_sigs(const uint8_t *block_hash) {
+    time_t now = time(NULL);
+    int progress = 1;
+
+    while (progress) {
+        progress = 0;
+
+        // Find the buffered sig with the lowest chain_position for this block
+        int best_idx = -1;
+        uint32_t best_pos = UINT32_MAX;
+
+        for (int i = 0; i < MAX_PENDING_SIGS; i++) {
+            if (!pending_sig_buffer[i].used) continue;
+            if (now - pending_sig_buffer[i].buffered_at > PENDING_SIG_EXPIRY_SEC) {
+                pending_sig_buffer[i].used = 0;
+                continue;
+            }
+            if (memcmp(pending_sig_buffer[i].block_hash, block_hash, 64) != 0) continue;
+            if (pending_sig_buffer[i].chain_position < best_pos) {
+                best_pos = pending_sig_buffer[i].chain_position;
+                best_idx = i;
+            }
+        }
+
+        if (best_idx < 0) break;
+
+        // Retrieve current block state
+        mxd_block_t block;
+        memset(&block, 0, sizeof(block));
+        if (mxd_retrieve_block_by_hash(block_hash, &block) != 0) break;
+
+        if (best_pos < block.validation_count) {
+            // Already past this position, remove stale entry
+            pending_sig_buffer[best_idx].used = 0;
+            mxd_free_block(&block);
+            progress = 1;
+            continue;
+        }
+
+        if (best_pos > block.validation_count) {
+            // Still waiting for preceding signatures
+            mxd_free_block(&block);
+            break;
+        }
+
+        // best_pos == validation_count: this is the next expected position
+        pending_sig_entry_t *entry = &pending_sig_buffer[best_idx];
+        if (mxd_verify_and_add_validation_signature(&block, entry->validator_id,
+                                                    entry->algo_id, entry->signature,
+                                                    entry->sig_len, entry->timestamp) == 0) {
+            if (mxd_store_block(&block) == 0) {
+                MXD_LOG_INFO("validation", "Added buffered sig to block %u at pos %u (now has %u sigs)",
+                             block.height, best_pos, block.validation_count);
+
+                if (mxd_check_block_relay_status(block_hash) == 1) {
+                    MXD_LOG_INFO("validation", "Block now has enough signatures for relay");
+                }
+
+                // Chain reaction: check if it's now our turn to sign
+                mxd_block_t fresh_block;
+                memset(&fresh_block, 0, sizeof(fresh_block));
+                if (mxd_retrieve_block_by_hash(block_hash, &fresh_block) == 0) {
+                    mxd_sign_and_broadcast_block(&fresh_block);
+                    mxd_free_block(&fresh_block);
+                }
+                progress = 1;
+            }
+        }
+        entry->used = 0;
+        mxd_free_block(&block);
+    }
+}
 
 // BLOCKER FIX: Implement actual processing of validation messages instead of just logging
 
@@ -195,80 +326,59 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
                              algo_id, sig_len, chain_position);
             }
 
-            // Retry loop for out-of-order signature delivery.
-            // Since all validators broadcast to all peers, position N+1's signature
-            // can arrive before position N's has been processed. We retry with short
-            // sleeps to allow preceding signatures to be stored first.
-            int max_retries = 6;  // 6 retries * 50ms = 300ms max wait
-            for (int retry = 0; retry <= max_retries; retry++) {
-                if (retry > 0) {
-                    usleep(50000);  // 50ms between retries
-                }
+            pthread_mutex_lock(&validation_sig_mutex);
 
-                pthread_mutex_lock(&validation_sig_mutex);
+            mxd_block_t block;
+            memset(&block, 0, sizeof(block));
+            if (mxd_retrieve_block_by_hash(block_hash, &block) != 0) {
+                // Block not stored yet - buffer the signature for later
+                buffer_pending_sig(block_hash, validator_id, algo_id,
+                                   signature, sig_len, chain_position, timestamp);
+                pthread_mutex_unlock(&validation_sig_mutex);
+                break;
+            }
 
-                mxd_block_t block;
-                memset(&block, 0, sizeof(block));
-                if (mxd_retrieve_block_by_hash(block_hash, &block) != 0) {
-                    pthread_mutex_unlock(&validation_sig_mutex);
-                    if (retry < max_retries) {
-                        MXD_LOG_INFO("validation", "Block not found for sig at pos %u, retry %d/%d",
-                                     chain_position, retry + 1, max_retries);
-                        continue;
-                    }
-                    MXD_LOG_WARN("validation", "Block not found for validation signature after retries");
-                    break;
-                }
-
-                // If the signature is for a future position, wait for preceding signatures
-                if (chain_position > block.validation_count) {
-                    uint32_t cur_vc = block.validation_count;
-                    uint32_t cur_h = block.height;
-                    mxd_free_block(&block);
-                    pthread_mutex_unlock(&validation_sig_mutex);
-                    if (retry < max_retries) {
-                        MXD_LOG_INFO("validation", "Waiting for preceding sigs: pos %u but have %u (block %u), retry %d/%d",
-                                     chain_position, cur_vc, cur_h, retry + 1, max_retries);
-                        continue;
-                    }
-                    MXD_LOG_WARN("validation", "Gave up waiting for preceding sigs: pos %u, have %u (block %u)",
-                                 chain_position, cur_vc, cur_h);
-                    break;
-                }
-
-                // Verify and add the signature to the block
-                if (mxd_verify_and_add_validation_signature(&block, validator_id, algo_id,
-                                                            signature, sig_len, timestamp) == 0) {
-                    // Store updated block with new signature
-                    if (mxd_store_block(&block) == 0) {
-                        MXD_LOG_INFO("validation", "Added chained signature to block %u at pos %u (now has %u sigs)%s",
-                                     block.height, chain_position, block.validation_count,
-                                     retry > 0 ? " [after retry]" : "");
-
-                        // Check if block now has enough signatures for relay
-                        if (mxd_check_block_relay_status(block_hash) == 1) {
-                            MXD_LOG_INFO("validation", "Block now has enough signatures for relay");
-                        }
-
-                        // Chain reaction: check if it's now our turn to sign
-                        // Re-read block from DB to get the freshest state
-                        mxd_block_t fresh_block;
-                        memset(&fresh_block, 0, sizeof(fresh_block));
-                        if (mxd_retrieve_block_by_hash(block_hash, &fresh_block) == 0) {
-                            mxd_sign_and_broadcast_block(&fresh_block);
-                            mxd_free_block(&fresh_block);
-                        }
-                    } else {
-                        MXD_LOG_ERROR("validation", "Failed to store block with new signature");
-                    }
-                } else {
-                    MXD_LOG_WARN("validation", "Failed to verify/add validation signature");
-                }
-
+            // If the signature is for a future position, buffer it
+            if (chain_position > block.validation_count) {
+                MXD_LOG_INFO("validation", "Buffering out-of-order sig: pos %u but block %u has %u sigs",
+                             chain_position, block.height, block.validation_count);
+                buffer_pending_sig(block_hash, validator_id, algo_id,
+                                   signature, sig_len, chain_position, timestamp);
                 mxd_free_block(&block);
                 pthread_mutex_unlock(&validation_sig_mutex);
                 break;
             }
+
+            // Verify and add the signature to the block
+            if (mxd_verify_and_add_validation_signature(&block, validator_id, algo_id,
+                                                        signature, sig_len, timestamp) == 0) {
+                if (mxd_store_block(&block) == 0) {
+                    MXD_LOG_INFO("validation", "Added chained signature to block %u at pos %u (now has %u sigs)",
+                                 block.height, chain_position, block.validation_count);
+
+                    if (mxd_check_block_relay_status(block_hash) == 1) {
+                        MXD_LOG_INFO("validation", "Block now has enough signatures for relay");
+                    }
+
+                    // Drain any buffered signatures that can now be added
+                    drain_pending_sigs(block_hash);
+
+                    // Chain reaction: check if it's now our turn to sign
+                    mxd_block_t fresh_block;
+                    memset(&fresh_block, 0, sizeof(fresh_block));
+                    if (mxd_retrieve_block_by_hash(block_hash, &fresh_block) == 0) {
+                        mxd_sign_and_broadcast_block(&fresh_block);
+                        mxd_free_block(&fresh_block);
+                    }
+                } else {
+                    MXD_LOG_ERROR("validation", "Failed to store block with new signature");
+                }
+            } else {
+                MXD_LOG_WARN("validation", "Failed to verify/add validation signature");
+            }
+
+            mxd_free_block(&block);
+            pthread_mutex_unlock(&validation_sig_mutex);
             break;
         }
         
@@ -413,4 +523,14 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             MXD_LOG_WARN("validation", "Unhandled validation message type: %d", type);
             break;
     }
+}
+
+// Public API: drain pending validation signatures for a block.
+// Call this after storing a new block to process any signatures
+// that arrived before the block itself.
+void mxd_drain_pending_validation_sigs(const uint8_t *block_hash) {
+    if (!block_hash) return;
+    pthread_mutex_lock(&validation_sig_mutex);
+    drain_pending_sigs(block_hash);
+    pthread_mutex_unlock(&validation_sig_mutex);
 }

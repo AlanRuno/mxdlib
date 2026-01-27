@@ -27,6 +27,7 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
 static int mxd_apply_block_transactions(const mxd_block_t *block);
 static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height);
 int mxd_sign_and_broadcast_block(const mxd_block_t *block);
+extern void mxd_drain_pending_validation_sigs(const uint8_t *block_hash);
 
 static uint32_t mxd_discover_network_height(void) {
     mxd_peer_t peers[MXD_MAX_PEERS];
@@ -231,6 +232,9 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
         if (mxd_store_block(&block) == 0) {
             MXD_LOG_INFO("sync", "Stored unsolicited block at height %u (validators=%u)",
                          block.height, block.validation_count);
+
+            // Drain any validation signatures that arrived before this block
+            mxd_drain_pending_validation_sigs(block.block_hash);
 
             // As a validator, sign this block and broadcast signature
             if (block.height > 0) {
