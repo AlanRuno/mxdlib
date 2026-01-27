@@ -913,6 +913,26 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
     MXD_LOG_INFO("sync", "Signed block at height %u position %d, chain_hash=%s... (validator=%s)",
                  block->height, my_position, chain_hex, addr_hex);
 
+    // Add our own signature to the local block and store it
+    // This ensures subsequent signatures can build on ours locally
+    {
+        mxd_block_t local_block;
+        memset(&local_block, 0, sizeof(local_block));
+        if (mxd_retrieve_block_by_hash(block->block_hash, &local_block) == 0) {
+            // Use mxd_add_validator_signature (no re-verification needed for our own sig)
+            extern int mxd_add_validator_signature(mxd_block_t *block, const uint8_t validator_id[20],
+                                                   uint64_t timestamp, uint8_t algo_id,
+                                                   const uint8_t *signature, uint16_t signature_length);
+            if (mxd_add_validator_signature(&local_block, local_address, timestamp, algo_id,
+                                            signature, (uint16_t)sig_len) == 0) {
+                mxd_store_block(&local_block);
+                MXD_LOG_INFO("sync", "Stored own chain signature locally for block %u (now %u sigs)",
+                             block->height, local_block.validation_count);
+            }
+            mxd_free_block(&local_block);
+        }
+    }
+
     // Broadcast signature to all peers
     // Format: block_hash(64) + algo_id(1) + validator_id(20) + sig_len(2) + signature +
     //         chain_pos(4) + timestamp(8) + chain_hash(64)
