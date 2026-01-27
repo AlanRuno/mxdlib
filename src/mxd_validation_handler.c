@@ -319,12 +319,14 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             if (has_chain_hash) {
                 char ch_hex[17] = {0};
                 for (int j = 0; j < 8; j++) snprintf(ch_hex + j*2, 3, "%02x", data[offset + j]);
-                MXD_LOG_INFO("validation", "Processing chained signature: algo_id=%u, sig_len=%u, chain_pos=%u, chain_hash=%s...",
-                             algo_id, sig_len, chain_position, ch_hex);
+                MXD_LOG_DEBUG("validation", "Processing chained signature: algo_id=%u, sig_len=%u, chain_pos=%u, chain_hash=%s...",
+                              algo_id, sig_len, chain_position, ch_hex);
             } else {
-                MXD_LOG_INFO("validation", "Processing validation signature: algo_id=%u, sig_len=%u, chain_pos=%u",
-                             algo_id, sig_len, chain_position);
+                MXD_LOG_DEBUG("validation", "Processing validation signature: algo_id=%u, sig_len=%u, chain_pos=%u",
+                              algo_id, sig_len, chain_position);
             }
+
+            int sig_added = 0;
 
             pthread_mutex_lock(&validation_sig_mutex);
 
@@ -359,6 +361,7 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
             if (mxd_verify_and_add_validation_signature(&block, validator_id, algo_id,
                                                         signature, sig_len, timestamp) == 0) {
                 if (mxd_store_block(&block) == 0) {
+                    sig_added = 1;
                     MXD_LOG_INFO("validation", "Added chained signature to block %u at pos %u (now has %u sigs)",
                                  block.height, chain_position, block.validation_count);
 
@@ -380,11 +383,31 @@ void mxd_validation_message_handler(const char *address, uint16_t port,
                     MXD_LOG_ERROR("validation", "Failed to store block with new signature");
                 }
             } else {
-                MXD_LOG_WARN("validation", "Failed to verify/add validation signature");
+                MXD_LOG_DEBUG("validation", "Duplicate or invalid signature at pos %u", chain_position);
             }
 
             mxd_free_block(&block);
             pthread_mutex_unlock(&validation_sig_mutex);
+
+            // Gossip relay: re-broadcast new signatures to all peers.
+            // This ensures every validator receives every signature even with
+            // partial P2P connectivity (where original broadcasts miss some nodes).
+            // Deduplication at the receiver prevents infinite relay loops.
+            if (sig_added) {
+                mxd_peer_t relay_peers[MXD_MAX_PEERS];
+                size_t relay_peer_count = MXD_MAX_PEERS;
+                if (mxd_get_peers(relay_peers, &relay_peer_count) == 0 && relay_peer_count > 0) {
+                    int relayed = 0;
+                    for (size_t ri = 0; ri < relay_peer_count; ri++) {
+                        if (mxd_send_message(relay_peers[ri].address, relay_peers[ri].port,
+                                            MXD_MSG_VALIDATION_SIGNATURE, payload, payload_length) == 0) {
+                            relayed++;
+                        }
+                    }
+                    MXD_LOG_INFO("validation", "Relayed pos %u sig to %d/%zu peers",
+                                 chain_position, relayed, relay_peer_count);
+                }
+            }
             break;
         }
         

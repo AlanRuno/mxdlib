@@ -676,7 +676,7 @@ int mxd_verify_and_add_validation_signature(mxd_block_t *block,
     }
     
     if (mxd_signature_exists(block->height, validator_id, signature, signature_length) != 0) {
-        MXD_LOG_WARN("sync", "Signature already exists for this block height");
+        MXD_LOG_DEBUG("sync", "Signature already exists for this block height");
         return -1;
     }
     
