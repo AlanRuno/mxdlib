@@ -2056,6 +2056,12 @@ int mxd_init_p2p(uint16_t port, uint8_t algo_id, const uint8_t* public_key, cons
     
     p2p_port = port;
     node_algo_id = algo_id;
+
+    // Seed self-IP cache from MXD_PUBLIC_IP env var so we never attempt self-connections
+    const char *public_ip = getenv("MXD_PUBLIC_IP");
+    if (public_ip && strlen(public_ip) > 0) {
+        add_known_self_ip(public_ip);
+    }
     size_t pubkey_len = mxd_sig_pubkey_len(algo_id);
     size_t privkey_len = mxd_sig_privkey_len(algo_id);
     memcpy(node_public_key, public_key, pubkey_len);
@@ -2354,9 +2360,13 @@ int mxd_get_peers(mxd_peer_t* peers, size_t* peer_count) {
     return 0;
 }
 
-int mxd_send_message_with_retry(const char* address, uint16_t port, 
-                                       mxd_message_type_t type, const void* payload, 
+int mxd_send_message_with_retry(const char* address, uint16_t port,
+                                       mxd_message_type_t type, const void* payload,
                                        size_t payload_length, int max_retries) {
+    if (is_self_address(address, port)) {
+        return -1;
+    }
+
     int retry_delay_ms = 1000;
     const int max_delay_ms = 60000;
     
@@ -2414,11 +2424,15 @@ static int mxd_send_message_nonblocking(const char* address, uint16_t port,
     return 0;
 }
 
-int mxd_send_message(const char* address, uint16_t port, 
-                    mxd_message_type_t type, const void* payload, 
+int mxd_send_message(const char* address, uint16_t port,
+                    mxd_message_type_t type, const void* payload,
                     size_t payload_length) {
-    if (!p2p_initialized || !address || !payload || 
+    if (!p2p_initialized || !address || !payload ||
         payload_length > MXD_MAX_MESSAGE_SIZE) {
+        return -1;
+    }
+
+    if (is_self_address(address, port)) {
         return -1;
     }
     
