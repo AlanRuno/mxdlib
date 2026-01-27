@@ -71,6 +71,33 @@ static volatile int server_running = 0;
 static pthread_mutex_t peer_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t rate_limit_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// Known self IP addresses (discovered via rejected self-connections during handshake).
+// Prevents repeated connection attempts to our own public/NAT IP.
+#define MAX_SELF_IPS 10
+static char known_self_ips[MAX_SELF_IPS][256];
+static int known_self_ip_count = 0;
+
+static void add_known_self_ip(const char *address) {
+    for (int i = 0; i < known_self_ip_count; i++) {
+        if (strcmp(known_self_ips[i], address) == 0) return;
+    }
+    if (known_self_ip_count < MAX_SELF_IPS) {
+        strncpy(known_self_ips[known_self_ip_count], address, 255);
+        known_self_ips[known_self_ip_count][255] = '\0';
+        known_self_ip_count++;
+        MXD_LOG_INFO("p2p", "Learned own external IP: %s", address);
+    }
+}
+
+static int is_self_address(const char *address, uint16_t port) {
+    if (port != p2p_port) return 0;
+    if (strcmp(address, "127.0.0.1") == 0 || strcmp(address, "localhost") == 0) return 1;
+    for (int i = 0; i < known_self_ip_count; i++) {
+        if (strcmp(known_self_ips[i], address) == 0) return 1;
+    }
+    return 0;
+}
+
 typedef struct {
     int socket;
     char address[256];
@@ -834,11 +861,8 @@ static void handle_peers_message(const char *address, uint16_t port, const void 
         }
         peer_network_type[31] = '\0';
 
-        int is_localhost = (strcmp(peer_addr, "127.0.0.1") == 0 || strcmp(peer_addr, "localhost") == 0);
-        int is_self_port = (peer_port == p2p_port);
-
-        if (is_localhost && is_self_port) {
-            MXD_LOG_DEBUG("p2p", "Skipping self-peer (localhost:%d)", peer_port);
+        if (is_self_address(peer_addr, peer_port)) {
+            MXD_LOG_DEBUG("p2p", "Skipping self-peer %s:%d", peer_addr, peer_port);
             continue;
         }
 
@@ -1243,7 +1267,8 @@ static int handle_handshake_message(const char *address, uint16_t port,
     }
     
     if (strcmp(handshake.node_id, node_config.node_id) == 0) {
-        MXD_LOG_INFO("p2p", "Rejecting self-connection from %s:%d (node_id: %s)", 
+        add_known_self_ip(address);
+        MXD_LOG_DEBUG("p2p", "Rejecting self-connection from %s:%d (node_id: %s)",
                    address, port, handshake.node_id);
         return -1;
     }
@@ -1409,6 +1434,8 @@ static int handle_incoming_message(const char *address, uint16_t port,
 }
 
 static int try_establish_persistent_connection(const char *address, uint16_t port) {
+    if (is_self_address(address, port)) return -1;
+
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         return -1;
@@ -1594,11 +1621,12 @@ static void* peer_connector_thread_func(void* arg) {
         
         for (size_t i = 0; i < dht_peer_count; i++) {
             if (!dht_peers[i].active) continue;
-            
+            if (is_self_address(dht_peers[i].address, dht_peers[i].port)) continue;
+
             pthread_mutex_lock(&peer_mutex);
             int already_connected = 0;
             for (size_t j = 0; j < MXD_MAX_PEERS; j++) {
-                if (active_connections[j].active && 
+                if (active_connections[j].active &&
                     strcmp(active_connections[j].address, dht_peers[i].address) == 0 &&
                     active_connections[j].port == dht_peers[i].port) {
                     already_connected = 1;
@@ -1606,7 +1634,7 @@ static void* peer_connector_thread_func(void* arg) {
                 }
             }
             pthread_mutex_unlock(&peer_mutex);
-            
+
             if (!already_connected) {
                 MXD_LOG_INFO("p2p", "Proactively attempting persistent connection to DHT peer %s:%d", 
                            dht_peers[i].address, dht_peers[i].port);
@@ -1912,10 +1940,18 @@ static void* server_thread_func(void* arg) {
         }
         
         pthread_mutex_lock(&peer_mutex);
-        
+
         char *client_ip = inet_ntoa(client_addr.sin_addr);
         uint16_t client_port = ntohs(client_addr.sin_port);
-        
+
+        // Reject inbound connections from our own external IP early
+        if (is_self_address(client_ip, p2p_port)) {
+            MXD_LOG_DEBUG("p2p", "Rejecting inbound self-connection from %s:%d", client_ip, client_port);
+            close(client_socket);
+            pthread_mutex_unlock(&peer_mutex);
+            continue;
+        }
+
         int duplicate_found = 0;
         for (size_t i = 0; i < MXD_MAX_PEERS; i++) {
             if (active_connections[i].active &&
