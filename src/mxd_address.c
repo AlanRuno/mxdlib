@@ -60,84 +60,101 @@ int mxd_generate_passphrase(char *output, size_t max_length) {
 
 int mxd_derive_property_key(const char *passphrase, const char *pin,
                             uint8_t property_key[64]) {
-  if (!passphrase || !pin || !property_key) {
+  if (!passphrase || !property_key) {
     return -1;
   }
 
-  // Double SHA-512 on passphrase
+  // Double SHA-512 on passphrase ONLY (PIN not included here)
   uint8_t temp_hash[64] = {0};
-  if (mxd_sha512((const uint8_t *)passphrase, strlen(passphrase), temp_hash) !=
-      0) {
+  if (mxd_sha512((const uint8_t *)passphrase, strlen(passphrase), temp_hash) != 0) {
     return -1;
   }
   if (mxd_sha512(temp_hash, 64, property_key) != 0) {
     return -1;
   }
 
+  // NOTE: PIN is NOT used in property key derivation
+  // PIN will be used in mxd_generate_keypair with Argon2
+  (void)pin; // Suppress unused parameter warning
+
   return 0;
 }
 
-int mxd_generate_keypair(const uint8_t property_key[64],
-                         uint8_t public_key[32], uint8_t private_key[64]) {
-  if (!property_key || !public_key || !private_key) {
+int mxd_generate_keypair(const uint8_t property_key[64], const char *pin,
+                         uint8_t public_key[256], uint8_t private_key[128]) {
+  if (!property_key || !pin || !public_key || !private_key) {
     return -1;
   }
 
-  // Generate Ed25519 keypair directly into output buffers
-  if (mxd_sig_keygen(MXD_SIGALG_ED25519, public_key, private_key) != 0) {
-    return -1;
-  }
-  
-  MXD_LOG_WARN("address", "mxd_generate_keypair() is deprecated - use mxd_sig_keygen() instead");
-  
-  return 0;
-}
+  // Derive deterministic salt from property_key
+  // This ensures same property_key always produces same salt (portable wallets)
+  // salt = SHA-512(property_key + "MXD_SALT_V1")[0..15]
+  uint8_t temp_hash[64] = {0};
+  const char *salt_domain = "MXD_SALT_V1";
+  size_t domain_len = strlen(salt_domain);
+  size_t salt_input_len = 64 + domain_len;
 
-int mxd_address_to_string_v2(uint8_t algo_id, const uint8_t *public_key, size_t pubkey_len, 
-                              char *address, size_t max_length) {
-  if (!public_key || !address || max_length < 42) {
+  uint8_t *salt_input = (uint8_t *)malloc(salt_input_len);
+  if (!salt_input) {
     return -1;
   }
 
-  uint8_t addr20[20];
-  if (mxd_derive_address(algo_id, public_key, pubkey_len, addr20) != 0) {
-    MXD_LOG_ERROR("address", "Failed to derive address20");
+  memcpy(salt_input, property_key, 64);
+  memcpy(salt_input + 64, salt_domain, domain_len);
+
+  if (mxd_sha512(salt_input, salt_input_len, temp_hash) != 0) {
+    free(salt_input);
     return -1;
   }
 
-  // Prepare address bytes: Version(1) + Address20(20) + Checksum(4)
-  uint8_t address_bytes[25] = {0};
-  address_bytes[0] = (algo_id == MXD_SIGALG_DILITHIUM5) ? 0x33 : 0x32;
-  memcpy(address_bytes + 1, addr20, 20);
+  // Take first 16 bytes as deterministic salt
+  uint8_t crypto_salt[16] = {0};
+  memcpy(crypto_salt, temp_hash, 16);
 
-  // Calculate checksum (double SHA-512 of version + addr20)
-  uint8_t hash_buffer[64] = {0};
-  if (mxd_sha512(address_bytes, 21, hash_buffer) != 0) {
-    MXD_LOG_ERROR("address", "Checksum first SHA-512 failed");
+  // Clear salt derivation buffer
+  memset(salt_input, 0, salt_input_len);
+  free(salt_input);
+
+  // Combine: property_key + separator + PIN + separator + crypto_salt
+  // Format: <64 bytes property_key>|<PIN string>|<16 bytes crypto_salt>
+  size_t pin_len = strlen(pin);
+  size_t combined_len = 64 + 1 + pin_len + 1 + 16; // property_key + "|" + PIN + "|" + salt
+
+  uint8_t *combined = (uint8_t *)malloc(combined_len);
+  if (!combined) {
     return -1;
   }
 
-  uint8_t temp_buffer[64] = {0};
-  memcpy(temp_buffer, hash_buffer, 64);
-  memset(hash_buffer, 0, 64);
-  if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
-    MXD_LOG_ERROR("address", "Checksum second SHA-512 failed");
+  // Build: property_key + "|" + PIN + "|" + crypto_salt
+  size_t offset = 0;
+  memcpy(combined + offset, property_key, 64);
+  offset += 64;
+  combined[offset++] = '|'; // separator
+  memcpy(combined + offset, pin, pin_len);
+  offset += pin_len;
+  combined[offset++] = '|'; // separator
+  memcpy(combined + offset, crypto_salt, 16);
+  offset += 16;
+
+  // Derive private key using Argon2
+  // Using combined input as password, with crypto_salt as Argon2 salt
+  uint8_t argon2_salt[16] = {0};
+  memcpy(argon2_salt, crypto_salt, 16);
+
+  if (mxd_argon2_lowmem((const char *)combined, argon2_salt, private_key, 128) != 0) {
+    memset(combined, 0, combined_len);
+    free(combined);
     return -1;
   }
 
-  // Add 4-byte checksum
-  memcpy(address_bytes + 21, hash_buffer, 4);
+  // Clear sensitive data
+  memset(combined, 0, combined_len);
+  free(combined);
+  memset(crypto_salt, 0, 16);
+  memset(temp_hash, 0, 64);
 
-  // Encode in Base58Check
-  int result = base58_encode(address_bytes, 25, address, max_length);
-
-  if (result == 0) {
-    MXD_LOG_INFO("address", "Generated v2 address (algo: %s)", mxd_sig_alg_name(algo_id));
-  } else {
-    MXD_LOG_WARN("address", "Failed to generate v2 address");
-  }
-
-  return result;
+  // Generate Dilithium keypair
+  return mxd_dilithium_keygen(public_key, private_key);
 }
 
 int mxd_generate_address(const uint8_t public_key[256], char *address,
@@ -171,7 +188,82 @@ int mxd_generate_address(const uint8_t public_key[256], char *address,
     return 0;
   }
 
-  return mxd_address_to_string_v2(MXD_SIGALG_ED25519, public_key, 32, address, max_length);
+  // Debug output for public key
+  MXD_LOG_DEBUG("address", "Processing public key");
+
+  // First hash: SHA-512 on public key
+  uint8_t hash_buffer[64] = {0};
+  uint8_t temp_buffer[64] = {0};
+
+  if (mxd_sha512(public_key, 256, hash_buffer) != 0) {
+    MXD_LOG_ERROR("address", "First SHA-512 failed");
+    return -1;
+  }
+
+  // Debug output for first hash
+  MXD_LOG_DEBUG("address", "Computed first SHA-512");
+
+  // Second hash: SHA-512 on first hash output
+  memcpy(temp_buffer, hash_buffer, 64);
+  memset(hash_buffer, 0, 64);
+  if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
+    MXD_LOG_ERROR("address", "Second SHA-512 failed");
+    return -1;
+  }
+
+  // Debug output for second hash
+  MXD_LOG_DEBUG("address", "Computed second SHA-512");
+
+  // RIPEMD-160 on the double SHA-512 output
+  uint8_t ripemd_output[20] = {0};
+  if (mxd_ripemd160(hash_buffer, 64, ripemd_output) != 0) {
+    MXD_LOG_ERROR("address", "RIPEMD-160 failed");
+    return -1;
+  }
+
+  // Debug output for RIPEMD-160
+  MXD_LOG_DEBUG("address", "Computed RIPEMD-160");
+
+  // Prepare address bytes: Version(1) + RIPEMD160(20) + Checksum(4)
+  uint8_t address_bytes[25] = {0};
+  address_bytes[0] = 0x32; // Version byte (50 in decimal, unique to MXD)
+  memcpy(address_bytes + 1, ripemd_output, 20);
+
+  // Calculate checksum (double SHA-512 of version + hash)
+  memset(hash_buffer, 0, 64);
+  if (mxd_sha512(address_bytes, 21, hash_buffer) != 0) {
+    MXD_LOG_ERROR("address", "Checksum first SHA-512 failed");
+    return -1;
+  }
+
+  memset(temp_buffer, 0, 64);
+  memcpy(temp_buffer, hash_buffer, 64);
+  memset(hash_buffer, 0, 64);
+  if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
+    MXD_LOG_ERROR("address", "Checksum second SHA-512 failed");
+    return -1;
+  }
+
+  // Add 4-byte checksum
+  memcpy(address_bytes + 21, hash_buffer, 4);
+
+  // Debug output for final address bytes
+  MXD_LOG_DEBUG("address", "Prepared address bytes");
+
+  // Debug output for address length
+  MXD_LOG_DEBUG("address", "Checked address buffer size");
+
+  // Encode in Base58Check
+  int result = base58_encode(address_bytes, 25, address, max_length);
+
+  // Debug output for result
+  if (result == 0) {
+    MXD_LOG_INFO("address", "Generated address");
+  } else {
+    MXD_LOG_WARN("address", "Failed to generate address");
+  }
+
+  return result;
 }
 
 int mxd_validate_address(const char *address) {
@@ -209,8 +301,8 @@ int mxd_validate_address(const char *address) {
     return -1;
   }
 
-  // Check version byte (0x32 for Ed25519, 0x33 for Dilithium5)
-  if (decoded[0] != 0x32 && decoded[0] != 0x33) {
+  // Check version byte
+  if (decoded[0] != 0x32) { // MXD version byte
     return -1;
   }
 
@@ -229,68 +321,4 @@ int mxd_validate_address(const char *address) {
 
   // Compare checksum
   return memcmp(decoded + 21, hash_buffer, 4) == 0 ? 0 : -1;
-}
-
-int mxd_parse_address(const char *address, uint8_t *out_algo_id, uint8_t out_addr20[20]) {
-  if (!address || !out_algo_id || !out_addr20) {
-    return -1;
-  }
-
-  size_t address_len = strlen(address);
-  if (address_len < 25 || address_len > 42) {
-    return -1;
-  }
-
-  if (strncmp(address, "mx", 2) != 0) {
-    return -1;
-  }
-
-  if (address_len == 41) {
-    char expected = address[2];
-    if (expected == '1' || expected == 'f') {
-      int all_match = 1;
-      for (size_t i = 2; i < 41; i++) {
-        if (address[i] != expected) {
-          all_match = 0;
-          break;
-        }
-      }
-      if (all_match) {
-        *out_algo_id = MXD_SIGALG_ED25519;
-        memset(out_addr20, expected == '1' ? 0 : 0xFF, 20);
-        return 0;
-      }
-    }
-  }
-
-  uint8_t decoded[25] = {0};
-  size_t decoded_len = sizeof(decoded);
-  if (base58_decode(address + 2, decoded, &decoded_len) != 0 || decoded_len != 25) {
-    return -1;
-  }
-
-  if (decoded[0] != 0x32 && decoded[0] != 0x33) {
-    return -1;
-  }
-
-  uint8_t hash_buffer[64] = {0};
-  if (mxd_sha512(decoded, 21, hash_buffer) != 0) {
-    return -1;
-  }
-
-  uint8_t temp_buffer[64] = {0};
-  memcpy(temp_buffer, hash_buffer, 64);
-  memset(hash_buffer, 0, 64);
-  if (mxd_sha512(temp_buffer, 64, hash_buffer) != 0) {
-    return -1;
-  }
-
-  if (memcmp(decoded + 21, hash_buffer, 4) != 0) {
-    return -1;
-  }
-
-  *out_algo_id = (decoded[0] == 0x33) ? MXD_SIGALG_DILITHIUM5 : MXD_SIGALG_ED25519;
-  memcpy(out_addr20, decoded + 1, 20);
-
-  return 0;
 }
