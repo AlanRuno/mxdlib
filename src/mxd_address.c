@@ -60,19 +60,22 @@ int mxd_generate_passphrase(char *output, size_t max_length) {
 
 int mxd_derive_property_key(const char *passphrase, const char *pin,
                             uint8_t property_key[64]) {
-  if (!passphrase || !pin || !property_key) {
+  if (!passphrase || !property_key) {
     return -1;
   }
 
-  // Double SHA-512 on passphrase
+  // Double SHA-512 on passphrase ONLY (PIN not included here)
   uint8_t temp_hash[64] = {0};
-  if (mxd_sha512((const uint8_t *)passphrase, strlen(passphrase), temp_hash) !=
-      0) {
+  if (mxd_sha512((const uint8_t *)passphrase, strlen(passphrase), temp_hash) != 0) {
     return -1;
   }
   if (mxd_sha512(temp_hash, 64, property_key) != 0) {
     return -1;
   }
+
+  // NOTE: PIN is NOT used in property key derivation
+  // PIN will be used in wallet generation (Argon2 step) if provided
+  (void)pin; // Suppress unused parameter warning
 
   return 0;
 }

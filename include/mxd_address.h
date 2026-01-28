@@ -11,7 +11,9 @@ extern "C" {
 // Generate a random 12-word mnemonic passphrase (ISO 11889 compliant)
 int mxd_generate_passphrase(char *output, size_t max_length);
 
-// Convert a passphrase and PIN into a property key
+// Convert a passphrase and optional PIN into a property key
+// NOTE: PIN is NOT used in property key derivation (passphrase only)
+// PIN should be used in later key derivation steps (e.g., Argon2)
 int mxd_derive_property_key(const char *passphrase, const char *pin,
                             uint8_t property_key[64]);
 
