@@ -17,10 +17,18 @@ int mxd_generate_passphrase(char *output, size_t max_length);
 int mxd_derive_property_key(const char *passphrase, const char *pin,
                             uint8_t property_key[64]);
 
-// DEPRECATED: Generate public/private key pair from property key (Ed25519 only)
-// Use mxd_sig_keygen() for algorithm-aware key generation
+// Generate keypair with PIN support and algorithm selection (RECOMMENDED)
+// Implements: property_key → deterministic salt → Argon2(property_key + PIN + salt) → keypair
+// - algo_id: MXD_SIGALG_ED25519 or MXD_SIGALG_DILITHIUM5
+// - pin: 4-6 digit PIN (can be empty string "" for no PIN)
+// - Same property_key + PIN always produces same keypair (portable wallets)
+int mxd_generate_keypair_with_pin(uint8_t algo_id, const uint8_t property_key[64],
+                                   const char *pin, uint8_t *public_key, uint8_t *private_key);
+
+// DEPRECATED: Generate public/private key pair from property key (Ed25519 only, no PIN)
+// Use mxd_generate_keypair_with_pin() for PIN support and algorithm selection
 // This function is deprecated and should only be used in legacy code or tests
-__attribute__((deprecated("Use mxd_sig_keygen() for algorithm-aware key generation")))
+__attribute__((deprecated("Use mxd_generate_keypair_with_pin() for PIN support")))
 int mxd_generate_keypair(const uint8_t property_key[64],
                          uint8_t public_key[32], uint8_t private_key[64]);
 

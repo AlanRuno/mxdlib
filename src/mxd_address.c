@@ -80,6 +80,94 @@ int mxd_derive_property_key(const char *passphrase, const char *pin,
   return 0;
 }
 
+int mxd_generate_keypair_with_pin(uint8_t algo_id, const uint8_t property_key[64],
+                                   const char *pin, uint8_t *public_key, uint8_t *private_key) {
+  if (!property_key || !pin || !public_key || !private_key) {
+    return -1;
+  }
+
+  // Derive deterministic salt from property_key
+  // This ensures same property_key always produces same salt (portable wallets)
+  // salt = SHA-512(property_key + "MXD_SALT_V1")[0..15]
+  uint8_t temp_hash[64] = {0};
+  const char *salt_domain = "MXD_SALT_V1";
+  size_t domain_len = strlen(salt_domain);
+  size_t salt_input_len = 64 + domain_len;
+
+  uint8_t *salt_input = (uint8_t *)malloc(salt_input_len);
+  if (!salt_input) {
+    return -1;
+  }
+
+  memcpy(salt_input, property_key, 64);
+  memcpy(salt_input + 64, salt_domain, domain_len);
+
+  if (mxd_sha512(salt_input, salt_input_len, temp_hash) != 0) {
+    free(salt_input);
+    return -1;
+  }
+
+  // Take first 16 bytes as deterministic salt
+  uint8_t crypto_salt[16] = {0};
+  memcpy(crypto_salt, temp_hash, 16);
+
+  // Clear salt derivation buffer
+  memset(salt_input, 0, salt_input_len);
+  free(salt_input);
+
+  // Combine: property_key + separator + PIN + separator + crypto_salt
+  // Format: <64 bytes property_key>|<PIN string>|<16 bytes crypto_salt>
+  size_t pin_len = strlen(pin);
+  size_t combined_len = 64 + 1 + pin_len + 1 + 16; // property_key + "|" + PIN + "|" + salt
+
+  uint8_t *combined = (uint8_t *)malloc(combined_len);
+  if (!combined) {
+    return -1;
+  }
+
+  // Build: property_key + "|" + PIN + "|" + crypto_salt
+  size_t offset = 0;
+  memcpy(combined + offset, property_key, 64);
+  offset += 64;
+  combined[offset++] = '|'; // separator
+  memcpy(combined + offset, pin, pin_len);
+  offset += pin_len;
+  combined[offset++] = '|'; // separator
+  memcpy(combined + offset, crypto_salt, 16);
+  offset += 16;
+
+  // Determine key size based on algorithm
+  size_t key_size = (algo_id == MXD_SIGALG_DILITHIUM5) ? 128 : 64;
+
+  // Derive private key using Argon2
+  // Using combined input as password, with crypto_salt as Argon2 salt
+  uint8_t argon2_salt[16] = {0};
+  memcpy(argon2_salt, crypto_salt, 16);
+
+  if (mxd_argon2_lowmem((const char *)combined, argon2_salt, private_key, key_size) != 0) {
+    memset(combined, 0, combined_len);
+    free(combined);
+    return -1;
+  }
+
+  // Clear sensitive data
+  memset(combined, 0, combined_len);
+  free(combined);
+  memset(crypto_salt, 0, 16);
+  memset(temp_hash, 0, 64);
+
+  // Generate keypair using specified algorithm
+  int result = mxd_sig_keygen(algo_id, public_key, private_key);
+
+  if (result == 0) {
+    MXD_LOG_INFO("address", "Generated keypair with PIN (algo: %d)", algo_id);
+  } else {
+    MXD_LOG_ERROR("address", "Failed to generate keypair with PIN");
+  }
+
+  return result;
+}
+
 int mxd_generate_keypair(const uint8_t property_key[64],
                          uint8_t public_key[32], uint8_t private_key[64]) {
   if (!property_key || !public_key || !private_key) {
@@ -90,9 +178,9 @@ int mxd_generate_keypair(const uint8_t property_key[64],
   if (mxd_sig_keygen(MXD_SIGALG_ED25519, public_key, private_key) != 0) {
     return -1;
   }
-  
-  MXD_LOG_WARN("address", "mxd_generate_keypair() is deprecated - use mxd_sig_keygen() instead");
-  
+
+  MXD_LOG_WARN("address", "mxd_generate_keypair() is deprecated - use mxd_generate_keypair_with_pin() instead");
+
   return 0;
 }
 
