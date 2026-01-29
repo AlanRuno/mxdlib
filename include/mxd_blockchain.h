@@ -42,6 +42,7 @@ typedef struct {
     uint32_t version;
     uint8_t prev_block_hash[64];
     uint8_t merkle_root[64];
+    uint8_t contracts_state_root[64]; // SHA-512 of all contract states (v3+)
     uint64_t timestamp;           // Unix timestamp in seconds (was time_t)
     uint32_t difficulty;
     uint64_t nonce;
@@ -77,6 +78,8 @@ int mxd_validate_block(const mxd_block_t *block);
 int mxd_verify_validation_chain(const mxd_block_t *block);
 
 int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]);
+
+int mxd_calculate_contracts_state_root(const mxd_block_t *block, uint8_t root[64]);
 
 int mxd_calculate_membership_digest(const mxd_block_t *block, uint8_t digest[64]);
 

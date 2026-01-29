@@ -6,6 +6,7 @@
 #include "../../include/mxd_logging.h"
 #include "../../include/mxd_ntp.h"
 #include "../../include/mxd_serialize.h"
+#include "../../include/mxd_protocol_version.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,8 +20,9 @@ int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]) {
 
   // Initialize block structure
   memset(block, 0, sizeof(mxd_block_t));
-  block->version = 1; // Current version
+  block->version = 1; // Current version (will be 3 after protocol upgrade)
   memcpy(block->prev_block_hash, prev_hash, 64);
+  memset(block->contracts_state_root, 0, 64); // Initialize to zero (v3+)
   block->timestamp = mxd_now_ms() / 1000; // NTP-synchronized time in seconds
   block->difficulty = 1; // Initial difficulty
   block->nonce = 0;
@@ -86,36 +88,54 @@ int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]) {
     return -1;
   }
 
-  // Create buffer for block header with fixed-size fields
-  uint8_t header[sizeof(uint32_t) + 64 + 64 + sizeof(uint64_t) +
-                 sizeof(uint32_t) + sizeof(uint64_t)];
+  // Calculate buffer size based on version
+  // v3+ includes contracts_state_root (additional 64 bytes)
+  size_t header_size = sizeof(uint32_t) + 64 + 64 + sizeof(uint64_t) +
+                       sizeof(uint32_t) + sizeof(uint64_t);
+  if (block->version >= 3) {
+    header_size += 64; // contracts_state_root
+  }
+
+  uint8_t *header = malloc(header_size);
+  if (!header) {
+    return -1;
+  }
   size_t offset = 0;
 
   // Serialize block header with big-endian byte order for deterministic hashing
   uint32_t version_be = htonl(block->version);
   memcpy(header + offset, &version_be, sizeof(uint32_t));
   offset += sizeof(uint32_t);
-  
+
   memcpy(header + offset, block->prev_block_hash, 64);
   offset += 64;
-  
+
   memcpy(header + offset, block->merkle_root, 64);
   offset += 64;
-  
+
+  // Include contracts_state_root for v3+ blocks
+  if (block->version >= 3) {
+    memcpy(header + offset, block->contracts_state_root, 64);
+    offset += 64;
+  }
+
   uint64_t timestamp_be = mxd_htonll(block->timestamp);
   memcpy(header + offset, &timestamp_be, sizeof(uint64_t));
   offset += sizeof(uint64_t);
-  
+
   uint32_t difficulty_be = htonl(block->difficulty);
   memcpy(header + offset, &difficulty_be, sizeof(uint32_t));
   offset += sizeof(uint32_t);
-  
+
   uint64_t nonce_be = mxd_htonll(block->nonce);
   memcpy(header + offset, &nonce_be, sizeof(uint64_t));
 
   // Calculate double SHA-512 hash
   uint8_t temp_hash[64];
-  if (mxd_sha512(header, sizeof(header), temp_hash) != 0) {
+  int result = mxd_sha512(header, header_size, temp_hash);
+  free(header);
+
+  if (result != 0) {
     return -1;
   }
   return mxd_sha512(temp_hash, 64, hash);
@@ -127,9 +147,34 @@ int mxd_validate_block(const mxd_block_t *block) {
     return -1;
   }
 
-  // Verify block version
-  if (block->version != 1) {
+  // Verify block version is within valid range (v1, v2, v3)
+  if (block->version < 1 || block->version > 3) {
+    MXD_LOG_ERROR("blockchain", "Invalid block version: %u", block->version);
     return -1;
+  }
+
+  // Verify block version matches required version for its height
+  mxd_network_type_t network = mxd_get_network_type();
+  if (!mxd_is_valid_block_version(block->version, block->height, network)) {
+    uint32_t required_version = mxd_get_required_protocol_version(block->height, network);
+    MXD_LOG_ERROR("blockchain",
+                  "Block version mismatch at height %u: expected v%u, got v%u",
+                  block->height, required_version, block->version);
+    return -1;
+  }
+
+  // For v3+ blocks, verify contracts_state_root
+  if (block->version >= 3) {
+    uint8_t computed_state_root[64];
+    if (mxd_calculate_contracts_state_root(block, computed_state_root) != 0) {
+      MXD_LOG_ERROR("blockchain", "Failed to compute contracts state root");
+      return -1;
+    }
+
+    if (memcmp(computed_state_root, block->contracts_state_root, 64) != 0) {
+      MXD_LOG_ERROR("blockchain", "Contracts state root mismatch");
+      return -1;
+    }
   }
 
   // Verify timestamp using NTP-synchronized time
@@ -150,6 +195,121 @@ int mxd_validate_block(const mxd_block_t *block) {
   }
 
   return hash[0] >= block->difficulty ? 0 : -1;
+}
+
+// Calculate contracts state root from all contract executions in block
+// This function computes the Merkle root of all contract state changes
+// that occurred during transaction processing in this block
+int mxd_calculate_contracts_state_root(const mxd_block_t *block, uint8_t root[64]) {
+  if (!block || !root) {
+    return -1;
+  }
+
+  // For blocks without smart contract transactions, use zero hash
+  // Version 3+ blocks must include this field
+  if (block->transaction_count == 0) {
+    memset(root, 0, 64);
+    return 0;
+  }
+
+  // Collect contract state hashes from all transactions
+  // In a full implementation, this would:
+  // 1. Deserialize each transaction
+  // 2. Identify contract deployment/execution transactions
+  // 3. Extract the resulting contract state hash
+  // 4. Build a Merkle tree of all state hashes
+
+  // For now, create a simplified implementation:
+  // - Hash all transaction data together as a placeholder
+  // - This will be replaced with proper Merkle trie integration
+
+  // Create a temporary buffer to accumulate transaction hashes
+  uint8_t *state_buffer = malloc(block->transaction_count * 64);
+  if (!state_buffer) {
+    return -1;
+  }
+
+  uint32_t contract_count = 0;
+
+  // Extract state hashes from contract transactions
+  for (uint32_t i = 0; i < block->transaction_count; i++) {
+    // Check if transaction involves contracts
+    // This is a placeholder - proper implementation would parse transaction type
+    if (block->transactions[i].length > 0) {
+      // Hash transaction data as placeholder for contract state
+      if (mxd_sha512(block->transactions[i].data,
+                     block->transactions[i].length,
+                     state_buffer + (contract_count * 64)) != 0) {
+        free(state_buffer);
+        return -1;
+      }
+      contract_count++;
+    }
+  }
+
+  if (contract_count == 0) {
+    // No contract transactions
+    memset(root, 0, 64);
+    free(state_buffer);
+    return 0;
+  }
+
+  if (contract_count == 1) {
+    // Single contract state
+    memcpy(root, state_buffer, 64);
+    free(state_buffer);
+    return 0;
+  }
+
+  // Build Merkle tree of contract states (similar to transaction merkle tree)
+  uint8_t *current_level = state_buffer;
+  uint32_t level_size = contract_count;
+
+  while (level_size > 1) {
+    uint32_t next_level_size = (level_size + 1) / 2;
+    uint8_t *next_level = malloc(next_level_size * 64);
+    if (!next_level) {
+      free(current_level);
+      return -1;
+    }
+
+    for (uint32_t i = 0; i < next_level_size; i++) {
+      uint32_t left_idx = i * 2;
+      uint32_t right_idx = left_idx + 1;
+
+      uint8_t pair_buffer[128];
+      memcpy(pair_buffer, current_level + (left_idx * 64), 64);
+
+      if (right_idx < level_size) {
+        memcpy(pair_buffer + 64, current_level + (right_idx * 64), 64);
+      } else {
+        // Duplicate left hash for odd number of nodes
+        memcpy(pair_buffer + 64, current_level + (left_idx * 64), 64);
+      }
+
+      if (mxd_sha512(pair_buffer, 128, next_level + (i * 64)) != 0) {
+        free(next_level);
+        free(current_level);
+        return -1;
+      }
+    }
+
+    if (current_level != state_buffer) {
+      free(current_level);
+    }
+    current_level = next_level;
+    level_size = next_level_size;
+  }
+
+  // Copy root hash
+  memcpy(root, current_level, 64);
+
+  if (current_level != state_buffer) {
+    free(current_level);
+  }
+  free(state_buffer);
+
+  return 0;
 }
 
 // Freeze transaction set and calculate final merkle root
@@ -243,8 +403,16 @@ int mxd_freeze_transaction_set(mxd_block_t *block) {
     memcpy(block->merkle_root, current_level, 64);
     free(current_level);
   }
-  
-  // Mark as frozen - merkle_root is now immutable
+
+  // Calculate contracts state root for v3+ blocks
+  if (block->version >= 3) {
+    if (mxd_calculate_contracts_state_root(block, block->contracts_state_root) != 0) {
+      MXD_LOG_ERROR("blockchain", "Failed to calculate contracts state root during freeze");
+      return -1;
+    }
+  }
+
+  // Mark as frozen - merkle_root and contracts_state_root are now immutable
   block->transaction_set_frozen = 1;
   return 0;
 }

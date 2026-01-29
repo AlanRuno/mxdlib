@@ -6,6 +6,7 @@
 #include "../include/mxd_gas_metering.h"
 #include "../include/mxd_merkle_trie.h"
 #include "../include/mxd_endian.h"
+#include "../include/mxd_wasm_validator.h"
 #include "metrics/mxd_prometheus.h"
 #include <stdlib.h>
 #include <string.h>
@@ -75,10 +76,22 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
     MXD_LOG_WARN("contracts", "Smart contracts are disabled");
     return -1;
   }
-  
+
   if (!code || !state || code_size > MXD_MAX_CONTRACT_SIZE) {
     return -1;
   }
+
+  // Validate WASM bytecode for determinism
+  mxd_wasm_validation_result_t validation_result;
+  int validation_code = mxd_validate_wasm_determinism(code, code_size, &validation_result);
+
+  if (validation_code != MXD_WASM_VALID) {
+    MXD_LOG_ERROR("contracts", "Contract validation failed: %s",
+                  validation_result.error_message);
+    return -1;
+  }
+
+  MXD_LOG_INFO("contracts", "Contract passed determinism validation");
 
   // Calculate contract hash
   mxd_sha512(code, code_size, state->contract_hash);
@@ -90,6 +103,8 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
     state->storage = NULL;
     state->storage_size = 0;
     state->storage_trie = mxd_trie_create();  // Create merkle trie for production storage
+    state->reentrancy_lock = 0;
+    state->call_depth = 0;
 
   // Calculate contract hash
   mxd_sha512(code, code_size, state->contract_hash);
@@ -131,10 +146,27 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     MXD_LOG_WARN("contracts", "Smart contracts are disabled");
     return -1;
   }
-  
+
   if (!state || !input || !result || input_size > MXD_MAX_CONTRACT_SIZE) {
     return -1;
   }
+
+  // Check reentrancy
+  if (state->reentrancy_lock) {
+    MXD_LOG_ERROR("contracts", "Reentrancy detected");
+    return -1;
+  }
+
+  // Check call depth (max 256)
+  if (state->call_depth > 256) {
+    MXD_LOG_ERROR("contracts", "Call stack overflow (depth > 256)");
+    return -1;
+  }
+
+  // Cast away const for lock management (mutable state during execution)
+  mxd_contract_state_t *mutable_state = (mxd_contract_state_t *)state;
+  mutable_state->reentrancy_lock = 1;
+  mutable_state->call_depth++;
 
   memset(result, 0, sizeof(mxd_execution_result_t));
 
@@ -151,15 +183,21 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
   if (res) {
     MXD_LOG_ERROR("contracts", "Find function error: %s", res);
     mxd_metrics_increment("contract_execution_errors_total");
+    // Release locks on error
+    mutable_state->call_depth--;
+    mutable_state->reentrancy_lock = 0;
     return -1;
   }
 
   // Validate input size before accessing as uint32_t to prevent out-of-bounds read
   // This is a memory safety fix - callers must provide at least 4 bytes of input
   if (input_size < sizeof(uint32_t)) {
-    MXD_LOG_ERROR("contracts", "Input size too small: %zu bytes (minimum: %zu)", 
+    MXD_LOG_ERROR("contracts", "Input size too small: %zu bytes (minimum: %zu)",
                   input_size, sizeof(uint32_t));
     mxd_metrics_increment("contract_execution_errors_total");
+    // Release locks on error
+    mutable_state->call_depth--;
+    mutable_state->reentrancy_lock = 0;
     return -1;
   }
 
@@ -174,9 +212,24 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
   
   // Check if gas limit would be exceeded before execution
   if (gas_used > state->gas_limit) {
-    MXD_LOG_ERROR("contracts", "Gas limit exceeded before execution: %lu > %lu", 
+    MXD_LOG_ERROR("contracts", "Gas limit exceeded before execution: %lu > %lu",
                   (unsigned long)gas_used, (unsigned long)state->gas_limit);
     mxd_metrics_increment("contract_execution_errors_total");
+    // Release locks on error
+    mutable_state->call_depth--;
+    mutable_state->reentrancy_lock = 0;
+    return -1;
+  }
+
+  // Check cumulative gas usage
+  if (state->gas_used + gas_used > state->gas_limit) {
+    MXD_LOG_ERROR("contracts", "Cumulative gas limit exceeded: %lu + %lu > %lu",
+                  (unsigned long)state->gas_used, (unsigned long)gas_used,
+                  (unsigned long)state->gas_limit);
+    mxd_metrics_increment("contract_execution_errors_total");
+    // Release locks on error
+    mutable_state->call_depth--;
+    mutable_state->reentrancy_lock = 0;
     return -1;
   }
 
@@ -189,12 +242,18 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
   if (difftime(end_time, start_time) > timeout_seconds) {
     MXD_LOG_ERROR("contracts", "Contract execution timeout exceeded (%d seconds)", timeout_seconds);
     mxd_metrics_increment("contract_timeouts_total");
+    // Release locks on error
+    mutable_state->call_depth--;
+    mutable_state->reentrancy_lock = 0;
     return -1;
   }
-  
+
   if (res) {
     MXD_LOG_ERROR("contracts", "Call error: %s", res);
     mxd_metrics_increment("contract_execution_errors_total");
+    // Release locks on error
+    mutable_state->call_depth--;
+    mutable_state->reentrancy_lock = 0;
     return -1;
   }
 
@@ -203,16 +262,29 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
   if (res) {
     MXD_LOG_ERROR("contracts", "Get results error: %s", res);
     mxd_metrics_increment("contract_execution_errors_total");
+    // Release locks on error
+    mutable_state->call_depth--;
+    mutable_state->reentrancy_lock = 0;
     return -1;
   }
 
   if (sizeof(ret) > sizeof(result->return_data)) {
+    // Release locks on error
+    mutable_state->call_depth--;
+    mutable_state->reentrancy_lock = 0;
     return -1;
   }
   memcpy(result->return_data, &ret, sizeof(ret));
   result->return_size = sizeof(ret);
   result->success = 1;
   result->gas_used = gas_used;
+
+  // Update contract state gas tracking
+  mutable_state->gas_used += gas_used;
+
+  // Release reentrancy lock
+  mutable_state->call_depth--;
+  mutable_state->reentrancy_lock = 0;
 
   mxd_metrics_increment("contract_executions_total");
 

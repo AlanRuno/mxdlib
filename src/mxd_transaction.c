@@ -566,3 +566,533 @@ void mxd_free_transaction(mxd_transaction_t *tx) {
     memset(tx, 0, sizeof(mxd_transaction_t));
   }
 }
+
+// ========== Bridge Transaction Functions (v3) ==========
+
+// Create a bridge mint transaction (BNB → MXD)
+int mxd_create_bridge_mint_tx(mxd_transaction_v3_t *tx,
+                               const mxd_bridge_payload_t *payload) {
+  if (!tx || !payload) {
+    return -1;
+  }
+
+  memset(tx, 0, sizeof(mxd_transaction_v3_t));
+  tx->version = 3;
+  tx->type = MXD_TX_TYPE_BRIDGE_MINT;
+  tx->input_count = 0;  // Bridge mints have no inputs
+  tx->output_count = 0;
+  tx->voluntary_tip = 0;
+  tx->timestamp = time(NULL);
+  tx->inputs = NULL;
+  tx->outputs = NULL;
+
+  // Allocate and copy bridge payload
+  tx->payload.bridge = malloc(sizeof(mxd_bridge_payload_t));
+  if (!tx->payload.bridge) {
+    return -1;
+  }
+  memcpy(tx->payload.bridge, payload, sizeof(mxd_bridge_payload_t));
+
+  // Create output for minted MXD
+  tx->outputs = malloc(sizeof(mxd_tx_output_t));
+  if (!tx->outputs) {
+    free(tx->payload.bridge);
+    tx->payload.bridge = NULL;
+    return -1;
+  }
+
+  memcpy(tx->outputs[0].recipient_addr, payload->recipient_addr, 20);
+  tx->outputs[0].amount = payload->amount;
+  tx->output_count = 1;
+
+  return 0;
+}
+
+// Create a bridge burn transaction (MXD → BNB)
+int mxd_create_bridge_burn_tx(mxd_transaction_v3_t *tx,
+                               const uint8_t sender_addr[20],
+                               mxd_amount_t burn_amount,
+                               const uint8_t bridge_contract[64],
+                               uint32_t dest_chain_id,
+                               const uint8_t dest_recipient[20]) {
+  if (!tx || !sender_addr || !bridge_contract || !dest_recipient || burn_amount == 0) {
+    return -1;
+  }
+
+  memset(tx, 0, sizeof(mxd_transaction_v3_t));
+  tx->version = 3;
+  tx->type = MXD_TX_TYPE_BRIDGE_BURN;
+  tx->input_count = 0;  // Will be set when inputs are added
+  tx->output_count = 0;
+  tx->voluntary_tip = 0;
+  tx->timestamp = time(NULL);
+  tx->inputs = NULL;
+  tx->outputs = NULL;
+
+  // Allocate bridge payload
+  tx->payload.bridge = malloc(sizeof(mxd_bridge_payload_t));
+  if (!tx->payload.bridge) {
+    return -1;
+  }
+
+  // Initialize bridge payload
+  memcpy(tx->payload.bridge->bridge_contract, bridge_contract, 64);
+  memset(tx->payload.bridge->source_chain_id, 0, 32);
+  // Store dest_chain_id in source_chain_id field (repurposed for burn)
+  memcpy(tx->payload.bridge->source_chain_id, &dest_chain_id, sizeof(uint32_t));
+  memset(tx->payload.bridge->source_tx_hash, 0, 32);  // Not applicable for burn
+  tx->payload.bridge->source_block_number = 0;         // Not applicable for burn
+  memcpy(tx->payload.bridge->recipient_addr, dest_recipient, 20);
+  tx->payload.bridge->amount = burn_amount;
+  tx->payload.bridge->proof_length = 0;                // No proof needed for burn
+  memset(tx->payload.bridge->proof, 0, 1024);
+
+  // Create burn output (to zero address)
+  tx->outputs = malloc(sizeof(mxd_tx_output_t));
+  if (!tx->outputs) {
+    free(tx->payload.bridge);
+    tx->payload.bridge = NULL;
+    return -1;
+  }
+
+  // Burn address (all zeros)
+  memset(tx->outputs[0].recipient_addr, 0, 20);
+  tx->outputs[0].amount = burn_amount;
+  tx->output_count = 1;
+
+  return 0;
+}
+
+// Validate bridge mint transaction
+int mxd_validate_bridge_mint_tx(const mxd_transaction_v3_t *tx) {
+  if (!tx || tx->version != 3 || tx->type != MXD_TX_TYPE_BRIDGE_MINT) {
+    MXD_LOG_ERROR("transaction", "Invalid bridge mint transaction: wrong version or type");
+    return -1;
+  }
+
+  if (!tx->payload.bridge) {
+    MXD_LOG_ERROR("transaction", "Bridge mint transaction missing payload");
+    return -1;
+  }
+
+  mxd_bridge_payload_t *bridge = tx->payload.bridge;
+
+  // 1. Verify bridge contract is authorized
+  if (!mxd_is_bridge_contract_authorized(bridge->bridge_contract)) {
+    MXD_LOG_ERROR("transaction", "Bridge contract not authorized");
+    return -1;
+  }
+
+  // 2. Verify source chain is supported (BNB mainnet 56 or testnet 97)
+  uint32_t chain_id;
+  memcpy(&chain_id, bridge->source_chain_id, sizeof(uint32_t));
+  if (chain_id != 56 && chain_id != 97) {
+    MXD_LOG_ERROR("transaction", "Unsupported source chain ID: %u", chain_id);
+    return -1;
+  }
+
+  // 3. Verify source transaction hasn't been processed before (replay protection)
+  if (mxd_is_bridge_tx_processed(bridge->source_tx_hash)) {
+    MXD_LOG_ERROR("transaction", "Bridge transaction already processed (replay attack)");
+    return -1;
+  }
+
+  // 4. Verify amount is positive
+  if (bridge->amount == 0) {
+    MXD_LOG_ERROR("transaction", "Bridge mint amount must be positive");
+    return -1;
+  }
+
+  // 5. Verify recipient address is valid (not zero)
+  uint8_t zero_addr[20] = {0};
+  if (memcmp(bridge->recipient_addr, zero_addr, 20) == 0) {
+    MXD_LOG_ERROR("transaction", "Bridge mint recipient cannot be zero address");
+    return -1;
+  }
+
+  // 6. Verify proof is present
+  if (bridge->proof_length == 0 || bridge->proof_length > 1024) {
+    MXD_LOG_ERROR("transaction", "Invalid bridge proof length: %u", bridge->proof_length);
+    return -1;
+  }
+
+  // 7. Verify transaction has exactly one output matching the payload
+  if (tx->output_count != 1) {
+    MXD_LOG_ERROR("transaction", "Bridge mint must have exactly one output");
+    return -1;
+  }
+
+  if (memcmp(tx->outputs[0].recipient_addr, bridge->recipient_addr, 20) != 0) {
+    MXD_LOG_ERROR("transaction", "Output recipient mismatch");
+    return -1;
+  }
+
+  if (tx->outputs[0].amount != bridge->amount) {
+    MXD_LOG_ERROR("transaction", "Output amount mismatch");
+    return -1;
+  }
+
+  // 8. Verify no inputs (mint creates new coins)
+  if (tx->input_count != 0) {
+    MXD_LOG_ERROR("transaction", "Bridge mint must have zero inputs");
+    return -1;
+  }
+
+  return 0;
+}
+
+// Validate bridge burn transaction
+int mxd_validate_bridge_burn_tx(const mxd_transaction_v3_t *tx) {
+  if (!tx || tx->version != 3 || tx->type != MXD_TX_TYPE_BRIDGE_BURN) {
+    MXD_LOG_ERROR("transaction", "Invalid bridge burn transaction: wrong version or type");
+    return -1;
+  }
+
+  if (!tx->payload.bridge) {
+    MXD_LOG_ERROR("transaction", "Bridge burn transaction missing payload");
+    return -1;
+  }
+
+  mxd_bridge_payload_t *bridge = tx->payload.bridge;
+
+  // 1. Verify bridge contract is authorized
+  if (!mxd_is_bridge_contract_authorized(bridge->bridge_contract)) {
+    MXD_LOG_ERROR("transaction", "Bridge contract not authorized");
+    return -1;
+  }
+
+  // 2. Verify destination chain is supported
+  uint32_t dest_chain_id;
+  memcpy(&dest_chain_id, bridge->source_chain_id, sizeof(uint32_t));
+  if (dest_chain_id != 56 && dest_chain_id != 97) {
+    MXD_LOG_ERROR("transaction", "Unsupported destination chain ID: %u", dest_chain_id);
+    return -1;
+  }
+
+  // 3. Verify amount is positive
+  if (bridge->amount == 0) {
+    MXD_LOG_ERROR("transaction", "Bridge burn amount must be positive");
+    return -1;
+  }
+
+  // 4. Verify recipient address is valid (not zero)
+  uint8_t zero_addr[20] = {0};
+  if (memcmp(bridge->recipient_addr, zero_addr, 20) == 0) {
+    MXD_LOG_ERROR("transaction", "Bridge burn recipient cannot be zero address");
+    return -1;
+  }
+
+  // 5. Verify transaction has exactly one output to burn address
+  if (tx->output_count != 1) {
+    MXD_LOG_ERROR("transaction", "Bridge burn must have exactly one output");
+    return -1;
+  }
+
+  if (memcmp(tx->outputs[0].recipient_addr, zero_addr, 20) != 0) {
+    MXD_LOG_ERROR("transaction", "Bridge burn output must be to zero address");
+    return -1;
+  }
+
+  if (tx->outputs[0].amount != bridge->amount) {
+    MXD_LOG_ERROR("transaction", "Output amount mismatch");
+    return -1;
+  }
+
+  // 6. Verify inputs exist and are valid
+  if (tx->input_count == 0) {
+    MXD_LOG_ERROR("transaction", "Bridge burn must have inputs");
+    return -1;
+  }
+
+  // 7. Validate inputs against UTXO database
+  mxd_amount_t total_input = 0;
+  for (uint32_t i = 0; i < tx->input_count; i++) {
+    mxd_amount_t amount = 0;
+    if (mxd_verify_tx_input_utxo(&tx->inputs[i], &amount) != 0) {
+      MXD_LOG_ERROR("transaction", "Invalid UTXO for burn input %u", i);
+      return -1;
+    }
+
+    // Check for overflow
+    if (total_input > UINT64_MAX - amount) {
+      MXD_LOG_ERROR("transaction", "Input sum overflow in bridge burn");
+      return -1;
+    }
+    total_input += amount;
+  }
+
+  // 8. Verify total input >= burn amount + fee
+  mxd_amount_t required = bridge->amount + tx->voluntary_tip;
+  if (total_input < required) {
+    MXD_LOG_ERROR("transaction", "Insufficient input for bridge burn: have %lu, need %lu",
+                  (unsigned long)total_input, (unsigned long)required);
+    return -1;
+  }
+
+  return 0;
+}
+
+// Check if bridge transaction already processed (replay protection)
+int mxd_is_bridge_tx_processed(const uint8_t source_tx_hash[32]) {
+  if (!source_tx_hash) {
+    return 0;
+  }
+
+  rocksdb_t *db = mxd_get_rocksdb_db();
+  if (!db) {
+    MXD_LOG_ERROR("transaction", "Database not initialized");
+    return 0;
+  }
+
+  // Create key: "bridge_tx:" + source_tx_hash
+  uint8_t key[42];
+  memcpy(key, "bridge_tx:", 10);
+  memcpy(key + 10, source_tx_hash, 32);
+
+  rocksdb_readoptions_t *readopts = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t val_len;
+
+  char *value = rocksdb_get(db, readopts, (const char *)key, 42, &val_len, &err);
+
+  rocksdb_readoptions_destroy(readopts);
+
+  if (err) {
+    MXD_LOG_ERROR("transaction", "Database error checking bridge tx: %s", err);
+    free(err);
+    return 0;
+  }
+
+  if (value) {
+    free(value);
+    return 1;  // Already processed
+  }
+
+  return 0;  // Not processed
+}
+
+// Mark bridge transaction as processed
+int mxd_mark_bridge_tx_processed(const mxd_bridge_payload_t *payload,
+                                  const uint8_t mxd_tx_hash[64],
+                                  uint32_t block_index) {
+  if (!payload || !mxd_tx_hash) {
+    return -1;
+  }
+
+  rocksdb_t *db = mxd_get_rocksdb_db();
+  if (!db) {
+    MXD_LOG_ERROR("transaction", "Database not initialized");
+    return -1;
+  }
+
+  // Create key: "bridge_tx:" + source_tx_hash
+  uint8_t key[42];
+  memcpy(key, "bridge_tx:", 10);
+  memcpy(key + 10, payload->source_tx_hash, 32);
+
+  // Create value: mxd_tx_hash (64 bytes) + block_index (4 bytes)
+  uint8_t value[68];
+  memcpy(value, mxd_tx_hash, 64);
+  memcpy(value + 64, &block_index, 4);
+
+  rocksdb_writeoptions_t *writeopts = rocksdb_writeoptions_create();
+  char *err = NULL;
+
+  rocksdb_put(db, writeopts, (const char *)key, 42, (const char *)value, 68, &err);
+
+  rocksdb_writeoptions_destroy(writeopts);
+
+  if (err) {
+    MXD_LOG_ERROR("transaction", "Failed to mark bridge tx as processed: %s", err);
+    free(err);
+    return -1;
+  }
+
+  MXD_LOG_INFO("transaction", "Marked bridge transaction as processed at block %u", block_index);
+  return 0;
+}
+
+// Verify bridge contract is authorized
+int mxd_is_bridge_contract_authorized(const uint8_t contract_hash[64]) {
+  if (!contract_hash) {
+    return 0;
+  }
+
+  rocksdb_t *db = mxd_get_rocksdb_db();
+  if (!db) {
+    MXD_LOG_ERROR("transaction", "Database not initialized");
+    return 0;
+  }
+
+  // Create key: "bridge_auth:" + contract_hash
+  uint8_t key[76];
+  memcpy(key, "bridge_auth:", 12);
+  memcpy(key + 12, contract_hash, 64);
+
+  rocksdb_readoptions_t *readopts = rocksdb_readoptions_create();
+  char *err = NULL;
+  size_t val_len;
+
+  char *value = rocksdb_get(db, readopts, (const char *)key, 76, &val_len, &err);
+
+  rocksdb_readoptions_destroy(readopts);
+
+  if (err) {
+    MXD_LOG_ERROR("transaction", "Database error checking bridge auth: %s", err);
+    free(err);
+    return 0;
+  }
+
+  if (value) {
+    // Check if not revoked (value should be "1" for authorized, "0" for revoked)
+    int authorized = (val_len > 0 && value[0] == '1');
+    free(value);
+    return authorized;
+  }
+
+  return 0;  // Not authorized
+}
+
+// Calculate v3 transaction hash
+int mxd_calculate_tx_hash_v3(const mxd_transaction_v3_t *tx, uint8_t hash[64]) {
+  if (!tx || !hash) {
+    return -1;
+  }
+
+  // Calculate buffer size
+  size_t buffer_size =
+      4 +                                               // version (u32)
+      4 +                                               // type (u32)
+      4 +                                               // input_count (u32)
+      4 +                                               // output_count (u32)
+      8 +                                               // voluntary_tip (u64)
+      8;                                                // timestamp (u64)
+
+  // Add input sizes
+  for (uint32_t i = 0; i < tx->input_count; i++) {
+    buffer_size += 64 + 4 + 1 + 2 + tx->inputs[i].public_key_length;
+  }
+
+  // Add output sizes
+  buffer_size += tx->output_count * (20 + 8);
+
+  // Add bridge payload size if applicable
+  if (tx->type == MXD_TX_TYPE_BRIDGE_MINT || tx->type == MXD_TX_TYPE_BRIDGE_BURN) {
+    if (!tx->payload.bridge) {
+      return -1;
+    }
+    buffer_size += sizeof(mxd_bridge_payload_t);
+  }
+
+  uint8_t *buffer = malloc(buffer_size);
+  if (!buffer) {
+    return -1;
+  }
+
+  // Serialize transaction data
+  uint8_t *ptr = buffer;
+
+  mxd_write_u32_be(&ptr, tx->version);
+  mxd_write_u32_be(&ptr, (uint32_t)tx->type);
+  mxd_write_u32_be(&ptr, tx->input_count);
+  mxd_write_u32_be(&ptr, tx->output_count);
+  mxd_write_u64_be(&ptr, tx->voluntary_tip);
+  mxd_write_u64_be(&ptr, tx->timestamp);
+
+  // Serialize inputs
+  for (uint32_t i = 0; i < tx->input_count; i++) {
+    mxd_write_bytes(&ptr, tx->inputs[i].prev_tx_hash, 64);
+    mxd_write_u32_be(&ptr, tx->inputs[i].output_index);
+    mxd_write_u8(&ptr, tx->inputs[i].algo_id);
+    mxd_write_u16_be(&ptr, tx->inputs[i].public_key_length);
+    mxd_write_bytes(&ptr, tx->inputs[i].public_key, tx->inputs[i].public_key_length);
+  }
+
+  // Serialize outputs
+  for (uint32_t i = 0; i < tx->output_count; i++) {
+    mxd_write_bytes(&ptr, tx->outputs[i].recipient_addr, 20);
+    mxd_write_u64_be(&ptr, tx->outputs[i].amount);
+  }
+
+  // Serialize bridge payload
+  if (tx->type == MXD_TX_TYPE_BRIDGE_MINT || tx->type == MXD_TX_TYPE_BRIDGE_BURN) {
+    mxd_bridge_payload_t *bridge = tx->payload.bridge;
+    mxd_write_bytes(&ptr, bridge->bridge_contract, 64);
+    mxd_write_bytes(&ptr, bridge->source_chain_id, 32);
+    mxd_write_bytes(&ptr, bridge->source_tx_hash, 32);
+    mxd_write_u64_be(&ptr, bridge->source_block_number);
+    mxd_write_bytes(&ptr, bridge->recipient_addr, 20);
+    mxd_write_u64_be(&ptr, bridge->amount);
+    mxd_write_u16_be(&ptr, bridge->proof_length);
+    mxd_write_bytes(&ptr, bridge->proof, bridge->proof_length);
+  }
+
+  // Calculate double SHA-512 hash
+  uint8_t temp_hash[64];
+  int result = -1;
+  if (mxd_sha512(buffer, buffer_size, temp_hash) == 0 &&
+      mxd_sha512(temp_hash, 64, hash) == 0) {
+    result = 0;
+  }
+
+  free(buffer);
+  return result;
+}
+
+// Validate v3 transaction
+int mxd_validate_transaction_v3(const mxd_transaction_v3_t *tx) {
+  if (!tx || tx->version != 3) {
+    return -1;
+  }
+
+  // Dispatch to type-specific validation
+  switch (tx->type) {
+    case MXD_TX_TYPE_BRIDGE_MINT:
+      return mxd_validate_bridge_mint_tx(tx);
+
+    case MXD_TX_TYPE_BRIDGE_BURN:
+      return mxd_validate_bridge_burn_tx(tx);
+
+    case MXD_TX_TYPE_REGULAR:
+    case MXD_TX_TYPE_COINBASE:
+      // Regular/coinbase transactions use v2 validation logic
+      // (would need to convert to v2 structure or adapt validation)
+      MXD_LOG_ERROR("transaction", "Regular/coinbase should use v2 transactions");
+      return -1;
+
+    case MXD_TX_TYPE_CONTRACT_DEPLOY:
+    case MXD_TX_TYPE_CONTRACT_CALL:
+      MXD_LOG_ERROR("transaction", "Contract transactions not yet implemented");
+      return -1;
+
+    default:
+      MXD_LOG_ERROR("transaction", "Unknown transaction type: %d", tx->type);
+      return -1;
+  }
+}
+
+// Free v3 transaction resources
+void mxd_free_transaction_v3(mxd_transaction_v3_t *tx) {
+  if (tx) {
+    if (tx->inputs) {
+      for (uint32_t i = 0; i < tx->input_count; i++) {
+        if (tx->inputs[i].public_key) {
+          free(tx->inputs[i].public_key);
+        }
+        if (tx->inputs[i].signature) {
+          free(tx->inputs[i].signature);
+        }
+      }
+      free(tx->inputs);
+    }
+    if (tx->outputs) {
+      free(tx->outputs);
+    }
+    if (tx->type == MXD_TX_TYPE_BRIDGE_MINT || tx->type == MXD_TX_TYPE_BRIDGE_BURN) {
+      if (tx->payload.bridge) {
+        free(tx->payload.bridge);
+      }
+    }
+    memset(tx, 0, sizeof(mxd_transaction_v3_t));
+  }
+}

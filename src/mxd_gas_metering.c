@@ -31,8 +31,8 @@ typedef enum {
     WASM_OP_NUMERIC_F64 = 0x44,
 } wasm_opcode_category_t;
 
-// Get gas cost for a specific WASM opcode
-static uint64_t get_opcode_gas_cost(uint8_t opcode) {
+// Get gas cost for a specific WASM opcode (now public for runtime use)
+uint64_t mxd_get_opcode_gas_cost(uint8_t opcode) {
     // Control flow instructions (0x00-0x11)
     if (opcode >= 0x00 && opcode <= 0x11) {
         if (opcode == 0x10) return GAS_COST_CALL;           // call
@@ -224,7 +224,7 @@ uint64_t mxd_calculate_gas_from_bytecode(const uint8_t *code, size_t code_size) 
                 // Parse instructions in function body
                 while (ptr < body_end) {
                     uint8_t opcode = *ptr++;
-                    total_gas += get_opcode_gas_cost(opcode);
+                    total_gas += mxd_get_opcode_gas_cost(opcode);
                     
                     // Skip immediate operands based on opcode
                     if (opcode == 0x0C || opcode == 0x0D) {  // br, br_if

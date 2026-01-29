@@ -24,6 +24,8 @@ typedef struct {
   size_t storage_size;       // Legacy storage size
   void *storage_trie;        // Merkle patricia trie for production storage
   void *module;              // WebAssembly module handle
+  uint8_t reentrancy_lock;   // Prevent recursive calls
+  uint32_t call_depth;       // Track call stack depth (max 256)
 } mxd_contract_state_t;
 
 // Contract execution result

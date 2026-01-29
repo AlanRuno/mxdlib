@@ -6,32 +6,41 @@
 #include "../../include/mxd_p2p.h"
 #include "../../include/mxd_ntp.h"
 #include "../../include/mxd_endian.h"
+#include "../../include/mxd_protocol_version.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
-int mxd_init_block_with_validation(mxd_block_t *block, const uint8_t prev_hash[64], 
+int mxd_init_block_with_validation(mxd_block_t *block, const uint8_t prev_hash[64],
                                   const uint8_t proposer_id[20], uint32_t height) {
     if (!block || !prev_hash || !proposer_id) {
         return -1;
     }
-    
+
     if (mxd_init_block(block, prev_hash) != 0) {
         return -1;
     }
-    
+
     memcpy(block->proposer_id, proposer_id, 20);
     block->height = height;
-    
+
+    // Set protocol version based on height and network
+    mxd_network_type_t network = mxd_get_network_type();
+    uint32_t required_version = mxd_get_required_protocol_version(height, network);
+    block->version = required_version;
+
+    MXD_LOG_DEBUG("blockchain", "Initialized block at height %u with protocol v%u",
+                  height, required_version);
+
     block->validation_count = 0;
     block->validation_capacity = 10; // Initial capacity for 10 validators
     block->validation_chain = malloc(block->validation_capacity * sizeof(mxd_validator_signature_t));
-    
+
     if (!block->validation_chain) {
         return -1;
     }
-    
+
     return 0;
 }
 
