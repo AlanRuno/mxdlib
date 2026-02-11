@@ -54,7 +54,9 @@ int mxd_stop_block_proposal(void);
 void mxd_cleanup_block_proposer(void);
 
 // Timeout tracking functions
-mxd_height_timeout_t* mxd_get_current_timeout(void);
+int mxd_get_timeout_state(uint32_t *height, uint32_t *retry_count);
+uint32_t mxd_get_timeout_retry_count(void);
+uint32_t mxd_get_timeout_height(void);
 int mxd_start_height_timeout(uint32_t height, const uint8_t *expected_proposer);
 int mxd_check_timeout_expired(void);
 int mxd_increment_retry_count(void);

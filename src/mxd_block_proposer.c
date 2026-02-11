@@ -328,6 +328,31 @@ int mxd_increment_retry_count(void) {
     return count;
 }
 
-mxd_height_timeout_t* mxd_get_current_timeout(void) {
-    return &g_height_timeout;
+// Thread-safe accessor: Get both height and retry count atomically
+int mxd_get_timeout_state(uint32_t *height, uint32_t *retry_count) {
+    if (!height || !retry_count) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_timeout_mutex);
+    *height = g_height_timeout.height;
+    *retry_count = g_height_timeout.retry_count;
+    pthread_mutex_unlock(&g_timeout_mutex);
+    return 0;
+}
+
+// Thread-safe accessor: Get retry count only
+uint32_t mxd_get_timeout_retry_count(void) {
+    pthread_mutex_lock(&g_timeout_mutex);
+    uint32_t count = g_height_timeout.retry_count;
+    pthread_mutex_unlock(&g_timeout_mutex);
+    return count;
+}
+
+// Thread-safe accessor: Get height only
+uint32_t mxd_get_timeout_height(void) {
+    pthread_mutex_lock(&g_timeout_mutex);
+    uint32_t height = g_height_timeout.height;
+    pthread_mutex_unlock(&g_timeout_mutex);
+    return height;
 }

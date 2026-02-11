@@ -2783,16 +2783,18 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
     uint32_t base_index = height % latest_block.rapid_membership_count;
     uint32_t proposer_index = base_index;
 
-    // Get current timeout state for fallback logic
-    mxd_height_timeout_t *timeout = mxd_get_current_timeout();
+    // Get current timeout state for fallback logic (thread-safe)
+    uint32_t timeout_height = 0;
+    uint32_t timeout_retry_count = 0;
+    mxd_get_timeout_state(&timeout_height, &timeout_retry_count);
 
     // If timeout expired for this height, try fallback proposers
-    if (timeout->height == height && timeout->retry_count > 0) {
+    if (timeout_height == height && timeout_retry_count > 0) {
         // Fallback: (base_index + retry_count) % validator_count
-        proposer_index = (base_index + timeout->retry_count) % latest_block.rapid_membership_count;
+        proposer_index = (base_index + timeout_retry_count) % latest_block.rapid_membership_count;
 
         MXD_LOG_INFO("rsc", "Fallback proposer selection: retry %u, proposer index %u (base %u)",
-                     timeout->retry_count, proposer_index, base_index);
+                     timeout_retry_count, proposer_index, base_index);
     }
 
     // Debug: log both addresses for comparison
@@ -2809,9 +2811,9 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
                               20) == 0);
 
     if (is_proposer) {
-        if (timeout->retry_count > 0) {
+        if (timeout_retry_count > 0) {
             MXD_LOG_WARN("rsc", "This node is FALLBACK proposer for height %u (retry %u, index %u of %u validators)",
-                        height, timeout->retry_count, proposer_index, latest_block.rapid_membership_count);
+                        height, timeout_retry_count, proposer_index, latest_block.rapid_membership_count);
         } else {
             MXD_LOG_INFO("rsc", "This node is PRIMARY proposer for height %u (index %u of %u validators)",
                         height, proposer_index, latest_block.rapid_membership_count);
@@ -2869,10 +2871,10 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
 
     // Check if we're waiting for a block and timeout expired
     if (!current_block) {
-        // Not currently proposing - check timeout
-        mxd_height_timeout_t *timeout = mxd_get_current_timeout();
+        // Not currently proposing - check timeout (thread-safe)
+        uint32_t current_timeout_height = mxd_get_timeout_height();
 
-        if (timeout->height != next_height) {
+        if (current_timeout_height != next_height) {
             // First time waiting for this height - start timeout tracking
             // Calculate expected proposer for this height
             mxd_block_t latest_block;
@@ -2929,10 +2931,11 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         last_proposed_height = next_height;
         mxd_free_block(&latest_block);
 
-        mxd_height_timeout_t *timeout = mxd_get_current_timeout();
-        if (timeout->retry_count > 0) {
+        // Get retry count (thread-safe)
+        uint32_t current_retry_count = mxd_get_timeout_retry_count();
+        if (current_retry_count > 0) {
             MXD_LOG_WARN("rsc", "Started FALLBACK block proposal for height %u (retry %d)",
-                        next_height, timeout->retry_count);
+                        next_height, current_retry_count);
         } else {
             MXD_LOG_INFO("rsc", "Started PRIMARY block proposal for height %u", next_height);
         }
@@ -2964,6 +2967,7 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         }
 
         // Process pending validator join requests
+        // SECURITY: Requests are returned as a deep copy to prevent TOCTOU (Issue #3)
         mxd_validator_join_request_t *requests = NULL;
         size_t request_count = 0;
 
@@ -3003,6 +3007,9 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
                                 requests[i].node_address[18], requests[i].node_address[19]);
                 }
             }
+
+            // Free the deep copy (SECURITY: Issue #3)
+            free(requests);
         }
     }
 

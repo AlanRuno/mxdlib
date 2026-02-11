@@ -43,6 +43,27 @@ int mxd_submit_validator_join_request(const uint8_t *node_address,
         return -1;
     }
 
+    // Validate algorithm ID (SECURITY: Issue #5)
+    if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
+        MXD_LOG_ERROR("validator", "Invalid algorithm ID: %u", algo_id);
+        return -1;
+    }
+
+    // Validate public key length matches algorithm
+    size_t expected_key_len = mxd_sig_pubkey_len(algo_id);
+    if (public_key_length != expected_key_len) {
+        MXD_LOG_ERROR("validator", "Public key length %u doesn't match algorithm %u (expected %zu)",
+                      public_key_length, algo_id, expected_key_len);
+        return -1;
+    }
+
+    // Validate public key length doesn't exceed buffer (SECURITY: Issue #2)
+    if (public_key_length > 2592) {
+        MXD_LOG_ERROR("validator", "Public key length %u exceeds maximum buffer size 2592",
+                      public_key_length);
+        return -1;
+    }
+
     pthread_mutex_lock(&g_request_pool.mutex);
 
     // Check for duplicates
@@ -56,6 +77,23 @@ int mxd_submit_validator_join_request(const uint8_t *node_address,
     // Expand array if needed
     if (g_request_pool.join_count >= g_request_pool.join_capacity) {
         size_t new_cap = g_request_pool.join_capacity * 2;
+
+        // Check for integer overflow (SECURITY: Issue #4)
+        if (new_cap > SIZE_MAX / sizeof(mxd_validator_join_request_t)) {
+            pthread_mutex_unlock(&g_request_pool.mutex);
+            MXD_LOG_ERROR("validator", "Request pool size would cause integer overflow");
+            return -1;
+        }
+
+        // Check for maximum pool size (SECURITY: Issue #7 - DoS prevention)
+        #define MXD_MAX_REQUEST_POOL_SIZE 1000
+        if (new_cap > MXD_MAX_REQUEST_POOL_SIZE) {
+            pthread_mutex_unlock(&g_request_pool.mutex);
+            MXD_LOG_WARN("validator", "Request pool full (%zu requests), rejecting new request",
+                         g_request_pool.join_count);
+            return -1;
+        }
+
         mxd_validator_join_request_t *new_requests = realloc(g_request_pool.join_requests,
                                                new_cap * sizeof(mxd_validator_join_request_t));
         if (!new_requests) {
@@ -137,10 +175,11 @@ int mxd_submit_validator_exit_request(const uint8_t *node_address,
     req->timestamp = mxd_now_ms();
     req->exit_height = 0; // Will be set by proposer
 
-    // Sign request (simplified - just timestamp)
-    uint8_t sign_data[8];
+    // Sign request: address + timestamp (SECURITY: Issue #8 - bind to address)
+    uint8_t sign_data[20 + 8];
+    memcpy(sign_data, node_address, 20);
     uint64_t ts_be = mxd_htonll(req->timestamp);
-    memcpy(sign_data, &ts_be, 8);
+    memcpy(sign_data + 20, &ts_be, 8);
 
     size_t sig_len = sizeof(req->signature);
     if (mxd_sig_sign(algo_id, req->signature, &sig_len, sign_data, sizeof(sign_data),
@@ -165,7 +204,24 @@ int mxd_validate_join_request(const mxd_validator_join_request_t *request,
         return -1;
     }
 
-    // 1. Verify stake meets 0.10% requirement
+    // 1. Validate timestamp to prevent replay attacks (SECURITY: Issue #6)
+    uint64_t current_time = mxd_now_ms();
+    uint64_t max_future_ms = 60000;  // Max 1 minute in future
+    uint64_t max_age_ms = 300000;    // Max 5 minutes old
+
+    if (request->timestamp > current_time + max_future_ms) {
+        MXD_LOG_WARN("validator", "Join request rejected: timestamp %llu ms in future",
+                     request->timestamp - current_time);
+        return -1;
+    }
+
+    if (current_time - request->timestamp > max_age_ms) {
+        MXD_LOG_WARN("validator", "Join request rejected: timestamp too old (%llu ms)",
+                     current_time - request->timestamp);
+        return -1;
+    }
+
+    // 2. Verify stake meets 0.10% requirement
     if (request->stake_amount < total_supply / 1000) {
         MXD_LOG_WARN("validator", "Join request rejected: insufficient stake (%llu < %llu)",
                      (unsigned long long)request->stake_amount,
@@ -173,14 +229,14 @@ int mxd_validate_join_request(const mxd_validator_join_request_t *request,
         return -1;
     }
 
-    // 2. Verify balance matches declared stake
+    // 3. Verify balance matches declared stake
     mxd_amount_t actual_balance = mxd_get_balance(request->node_address);
     if (actual_balance < request->stake_amount) {
         MXD_LOG_WARN("validator", "Join request rejected: declared stake exceeds actual balance");
         return -1;
     }
 
-    // 3. Verify signature
+    // 4. Verify signature
     uint8_t sign_data[20 + 8];
     memcpy(sign_data, request->node_address, 20);
     uint64_t ts_be = mxd_htonll(request->timestamp);
@@ -192,7 +248,7 @@ int mxd_validate_join_request(const mxd_validator_join_request_t *request,
         return -1;
     }
 
-    // 4. Verify address matches public key
+    // 5. Verify address matches public key
     uint8_t derived_addr[20];
     mxd_derive_address(request->algo_id, request->public_key, request->public_key_length,
                        derived_addr);
@@ -204,14 +260,36 @@ int mxd_validate_join_request(const mxd_validator_join_request_t *request,
     return 0;
 }
 
+// SECURITY: Issue #3 - Return deep copy to prevent TOCTOU vulnerability
+// Caller must free the returned array with free()
 int mxd_get_pending_join_requests(mxd_validator_join_request_t **requests, size_t *count) {
     if (!requests || !count) {
         return -1;
     }
 
     pthread_mutex_lock(&g_request_pool.mutex);
-    *requests = g_request_pool.join_requests;
+
     *count = g_request_pool.join_count;
+
+    // If no requests, return NULL
+    if (*count == 0) {
+        *requests = NULL;
+        pthread_mutex_unlock(&g_request_pool.mutex);
+        return 0;
+    }
+
+    // Allocate memory for copy
+    *requests = malloc(*count * sizeof(mxd_validator_join_request_t));
+    if (!*requests) {
+        pthread_mutex_unlock(&g_request_pool.mutex);
+        MXD_LOG_ERROR("validator", "Failed to allocate memory for request copy");
+        return -1;
+    }
+
+    // Deep copy all requests
+    memcpy(*requests, g_request_pool.join_requests,
+           *count * sizeof(mxd_validator_join_request_t));
+
     pthread_mutex_unlock(&g_request_pool.mutex);
     return 0;
 }
