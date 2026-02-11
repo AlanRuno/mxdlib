@@ -1,0 +1,67 @@
+{
+    "node_id": "NODE_ID_PLACEHOLDER",
+    "network_type": "testnet",
+    "port": 8000,
+    "metrics_port": 8080,
+    "data_dir": "/opt/mxdlib/testnet/nodeNODE_NUM/data",
+    "node_name": "MXD Testnet Node NODE_NUM",
+    "initial_stake": 100.0,
+    "preferred_sign_algo": 1,
+    "bootstrap_nodes": [
+        "34.61.51.191:8000",
+        "35.224.215.234:8000",
+        "34.68.42.142:8000"
+    ],
+    "enable_upnp": false,
+    "bootstrap_refresh_interval": 300,
+    "metrics": {
+        "update_interval": 1000,
+        "display_interval": 5000,
+        "performance_threshold": 10,
+        "max_latency": 3000,
+        "error_threshold": 10
+    },
+    "validation": {
+        "min_tps": 10,
+        "stake_table_update_interval": 60000
+    },
+    "network": {
+        "max_peers": 50,
+        "connection_timeout": 5000
+    },
+    "http": {
+        "bind_address": "0.0.0.0",
+        "port": 8081,
+        "require_auth": false,
+        "wallet_enabled": true,
+        "rate_limit_per_minute": 100,
+        "timeout_seconds": 30
+    },
+    "mempool": {
+        "max_size": 10000,
+        "max_tx_per_peer": 100,
+        "max_bytes_per_peer": 1048576,
+        "min_fee_per_byte": 1,
+        "max_tx_per_sec_per_peer": 10
+    },
+    "contracts": {
+        "enabled": true,
+        "gas_limit_default": 1000000,
+        "timeout_seconds": 30,
+        "metering_enabled": true,
+        "max_memory_pages": 256
+    },
+    "consensus": {
+        "blacklist_duration_blocks": 100,
+        "min_unique_validators": 3,
+        "signature_cache_size": 1000
+    },
+    "p2p_security": {
+        "challenge_cache_size": 1000,
+        "challenge_ttl_seconds": 300,
+        "session_timeout_seconds": 600,
+        "timestamp_tolerance_seconds": 60
+    },
+    "log_level": "info",
+    "protocol_version": 3
+}
