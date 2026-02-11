@@ -29,8 +29,8 @@ static inline int contracts_disabled(void) {
 // SECURITY FIX: Only initializes database, not shared runtime
 int mxd_init_contracts(void) {
   if (contracts_disabled()) {
-    MXD_LOG_WARN("contracts", "Smart contracts are disabled");
-    return -1;
+    MXD_LOG_INFO("contracts", "Smart contracts are disabled (skipping initialization)");
+    return 0;  // FIX: Disabled is a valid state, not an error
   }
 
   // Initialize contracts database
