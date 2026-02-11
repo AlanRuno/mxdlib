@@ -311,8 +311,17 @@ int mxd_check_timeout_expired(void) {
     pthread_mutex_lock(&g_timeout_mutex);
 
     uint64_t now = get_current_time_ms();
-    uint64_t elapsed = now - g_height_timeout.wait_start_time;
 
+    // SECURITY: Issue #14 - Check if clock went backward (prevent underflow)
+    if (now < g_height_timeout.wait_start_time) {
+        // Clock adjustment detected - reset timer
+        MXD_LOG_WARN("proposer", "Clock adjustment detected (time went backward), resetting timeout timer");
+        g_height_timeout.wait_start_time = now;
+        pthread_mutex_unlock(&g_timeout_mutex);
+        return 0;  // Not expired, timer reset
+    }
+
+    uint64_t elapsed = now - g_height_timeout.wait_start_time;
     int expired = (elapsed >= MXD_PROPOSER_TIMEOUT_MS);
 
     pthread_mutex_unlock(&g_timeout_mutex);

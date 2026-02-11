@@ -129,8 +129,11 @@ add_library(mxd SHARED
     src/mxd_get_utxo.c
     src/mxd_rocksdb_globals.c
     src/mxd_smart_contracts.c
+    src/mxd_contracts_db.c
+    src/mxd_wasm_validator.c
     src/mxd_gas_metering.c
     src/mxd_merkle_trie.c
+    src/mxd_protocol_version.c
     src/checkpoints/mxd_checkpoints.c
     src/quantization/mxd_data_quantization.c
     src/mxd_ntp.c

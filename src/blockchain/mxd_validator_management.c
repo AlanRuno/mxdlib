@@ -159,6 +159,22 @@ int mxd_submit_validator_exit_request(const uint8_t *node_address,
     // Expand array if needed
     if (g_request_pool.exit_count >= g_request_pool.exit_capacity) {
         size_t new_cap = g_request_pool.exit_capacity * 2;
+
+        // SECURITY: Issue #13 - Check for multiplication overflow
+        if (new_cap > SIZE_MAX / sizeof(mxd_validator_exit_request_t)) {
+            pthread_mutex_unlock(&g_request_pool.mutex);
+            MXD_LOG_ERROR("validator", "Exit request pool allocation would overflow");
+            return -1;
+        }
+
+        // SECURITY: Issue #13 - Enforce maximum capacity (same as join requests)
+        if (new_cap > MXD_MAX_REQUEST_POOL_SIZE) {
+            pthread_mutex_unlock(&g_request_pool.mutex);
+            MXD_LOG_WARN("validator", "Exit request pool full (%zu requests)",
+                         g_request_pool.exit_count);
+            return -1;
+        }
+
         mxd_validator_exit_request_t *new_requests = realloc(g_request_pool.exit_requests,
                                                new_cap * sizeof(mxd_validator_exit_request_t));
         if (!new_requests) {
@@ -215,11 +231,15 @@ int mxd_validate_join_request(const mxd_validator_join_request_t *request,
         return -1;
     }
 
-    if (current_time - request->timestamp > max_age_ms) {
-        MXD_LOG_WARN("validator", "Join request rejected: timestamp too old (%llu ms)",
-                     current_time - request->timestamp);
-        return -1;
+    // SECURITY: Issue #11 - Check timestamp age only if in the past (prevent underflow)
+    if (request->timestamp <= current_time) {
+        if (current_time - request->timestamp > max_age_ms) {
+            MXD_LOG_WARN("validator", "Join request rejected: timestamp too old (%llu ms)",
+                         current_time - request->timestamp);
+            return -1;
+        }
     }
+    // If timestamp > current_time, it's in the future but within tolerance (valid)
 
     // 2. Verify stake meets 0.10% requirement
     if (request->stake_amount < total_supply / 1000) {
@@ -354,14 +374,39 @@ int mxd_track_validator_liveness(mxd_rapid_table_t *table, uint32_t height,
     if (!entry) {
         // Create new entry
         if (g_liveness_count >= g_liveness_capacity) {
-            g_liveness_capacity = g_liveness_capacity == 0 ? 10 : g_liveness_capacity * 2;
+            size_t new_cap = g_liveness_capacity == 0 ? 10 : g_liveness_capacity * 2;
+
+            // SECURITY: Issue #12 - Check for doubling overflow
+            if (g_liveness_capacity > 0 && new_cap / 2 != g_liveness_capacity) {
+                pthread_mutex_unlock(&g_liveness_mutex);
+                MXD_LOG_ERROR("validator", "Liveness capacity doubling would overflow");
+                return -1;
+            }
+
+            // SECURITY: Issue #12 - Check for multiplication overflow
+            if (new_cap > SIZE_MAX / sizeof(mxd_validator_liveness_t)) {
+                pthread_mutex_unlock(&g_liveness_mutex);
+                MXD_LOG_ERROR("validator", "Liveness allocation size would overflow");
+                return -1;
+            }
+
+            // SECURITY: Issue #12 - Enforce maximum capacity (DoS prevention)
+            #define MXD_MAX_LIVENESS_TRACKER_SIZE 10000
+            if (new_cap > MXD_MAX_LIVENESS_TRACKER_SIZE) {
+                pthread_mutex_unlock(&g_liveness_mutex);
+                MXD_LOG_ERROR("validator", "Liveness tracker at maximum capacity %d",
+                             MXD_MAX_LIVENESS_TRACKER_SIZE);
+                return -1;
+            }
+
             mxd_validator_liveness_t *new_tracker = realloc(g_liveness_tracker,
-                                        g_liveness_capacity * sizeof(mxd_validator_liveness_t));
+                                        new_cap * sizeof(mxd_validator_liveness_t));
             if (!new_tracker) {
                 pthread_mutex_unlock(&g_liveness_mutex);
                 return -1;
             }
             g_liveness_tracker = new_tracker;
+            g_liveness_capacity = new_cap;
         }
         entry = &g_liveness_tracker[g_liveness_count++];
         memcpy(entry->node_address, expected_addr, 20);

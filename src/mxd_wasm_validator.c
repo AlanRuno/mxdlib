@@ -96,28 +96,45 @@ static const mxd_banned_instruction_t BANNED_INSTRUCTIONS[] = {
 
 #define BANNED_INSTRUCTIONS_COUNT (sizeof(BANNED_INSTRUCTIONS) / sizeof(mxd_banned_instruction_t))
 
-// LEB128 parsing helper
-static uint64_t parse_leb128_u(const uint8_t **ptr, const uint8_t *end) {
-    uint64_t result = 0;
+// LEB128 parsing helper with error handling
+// Returns 0 on success, -1 on error
+// SECURITY FIX: Added bounds checking, byte limit, and error reporting
+static int parse_leb128_u(const uint8_t **ptr, const uint8_t *end, uint64_t *result) {
+    if (!ptr || !*ptr || !result || *ptr >= end) {
+        return -1;
+    }
+
+    *result = 0;
     int shift = 0;
+    int bytes_read = 0;
+    const int MAX_LEB128_BYTES = 10; // Max bytes for 64-bit value
 
     while (*ptr < end) {
+        // Check byte limit to prevent DoS
+        if (bytes_read >= MAX_LEB128_BYTES) {
+            return -1; // Malformed LEB128
+        }
+
         uint8_t byte = **ptr;
         (*ptr)++;
+        bytes_read++;
 
-        result |= ((uint64_t)(byte & 0x7F)) << shift;
+        // Check for overflow before shifting
+        if (shift >= 64) {
+            return -1; // Would overflow
+        }
 
+        *result |= ((uint64_t)(byte & 0x7F)) << shift;
+
+        // Check if this is the last byte
         if ((byte & 0x80) == 0) {
-            break;
+            return 0; // Success
         }
 
         shift += 7;
-        if (shift >= 64) {
-            break;
-        }
     }
 
-    return result;
+    return -1; // Unexpected end of data
 }
 
 // Check if an opcode is banned
@@ -221,36 +238,86 @@ int mxd_validate_wasm_determinism(const uint8_t *bytecode, size_t size,
         if (ptr + 1 > end) break;
 
         uint8_t section_id = *ptr++;
-        uint64_t section_size = parse_leb128_u(&ptr, end);
+        uint64_t section_size;
+
+        // SECURITY FIX: Check parse_leb128_u return value
+        if (parse_leb128_u(&ptr, end, &section_size) != 0) {
+            result->result_code = MXD_WASM_INVALID_MAGIC;
+            snprintf(result->error_message, sizeof(result->error_message),
+                     "Malformed section size LEB128");
+            return MXD_WASM_INVALID_MAGIC;
+        }
+
+        // SECURITY FIX: Validate section_size before arithmetic to prevent overflow
+        if (section_size > (uint64_t)(end - ptr)) {
+            result->result_code = MXD_WASM_TOO_LARGE;
+            snprintf(result->error_message, sizeof(result->error_message),
+                     "Section size overflow: %llu bytes exceeds remaining data",
+                     (unsigned long long)section_size);
+            return MXD_WASM_TOO_LARGE;
+        }
 
         const uint8_t *section_end = ptr + section_size;
-        if (section_end > end) {
-            section_end = end;
-        }
 
         // Check import section
         if (section_id == WASM_SECTION_IMPORT) {
-            uint64_t import_count = parse_leb128_u(&ptr, section_end);
+            uint64_t import_count;
+            if (parse_leb128_u(&ptr, section_end, &import_count) != 0) {
+                result->result_code = MXD_WASM_INVALID_IMPORT;
+                snprintf(result->error_message, sizeof(result->error_message),
+                         "Malformed import count");
+                return MXD_WASM_INVALID_IMPORT;
+            }
 
             for (uint64_t i = 0; i < import_count && ptr < section_end; i++) {
                 // Parse module name
-                uint64_t module_len = parse_leb128_u(&ptr, section_end);
+                uint64_t module_len;
+                if (parse_leb128_u(&ptr, section_end, &module_len) != 0) {
+                    result->result_code = MXD_WASM_INVALID_IMPORT;
+                    snprintf(result->error_message, sizeof(result->error_message),
+                             "Malformed module name length");
+                    return MXD_WASM_INVALID_IMPORT;
+                }
+
                 if (ptr + module_len > section_end) break;
 
+                // SECURITY FIX: Reject names > 255 bytes instead of truncating
+                if (module_len >= 256) {
+                    result->result_code = MXD_WASM_INVALID_IMPORT;
+                    result->error_offset = ptr - bytecode;
+                    snprintf(result->error_message, sizeof(result->error_message),
+                             "Import module name too long: %llu bytes (max 255)",
+                             (unsigned long long)module_len);
+                    return MXD_WASM_INVALID_IMPORT;
+                }
+
                 char module_name[256] = {0};
-                size_t copy_len = module_len < sizeof(module_name) - 1 ?
-                                  module_len : sizeof(module_name) - 1;
-                memcpy(module_name, ptr, copy_len);
+                memcpy(module_name, ptr, module_len);
                 ptr += module_len;
 
                 // Parse field name
-                uint64_t field_len = parse_leb128_u(&ptr, section_end);
+                uint64_t field_len;
+                if (parse_leb128_u(&ptr, section_end, &field_len) != 0) {
+                    result->result_code = MXD_WASM_INVALID_IMPORT;
+                    snprintf(result->error_message, sizeof(result->error_message),
+                             "Malformed field name length");
+                    return MXD_WASM_INVALID_IMPORT;
+                }
+
                 if (ptr + field_len > section_end) break;
 
+                // SECURITY FIX: Reject names > 255 bytes instead of truncating
+                if (field_len >= 256) {
+                    result->result_code = MXD_WASM_INVALID_IMPORT;
+                    result->error_offset = ptr - bytecode;
+                    snprintf(result->error_message, sizeof(result->error_message),
+                             "Import field name too long: %llu bytes (max 255)",
+                             (unsigned long long)field_len);
+                    return MXD_WASM_INVALID_IMPORT;
+                }
+
                 char field_name[256] = {0};
-                copy_len = field_len < sizeof(field_name) - 1 ?
-                           field_len : sizeof(field_name) - 1;
-                memcpy(field_name, ptr, copy_len);
+                memcpy(field_name, ptr, field_len);
                 ptr += field_len;
 
                 // Validate import
@@ -266,30 +333,60 @@ int mxd_validate_wasm_determinism(const uint8_t *bytecode, size_t size,
 
                 // Skip import kind and type
                 if (ptr < section_end) ptr++; // kind
-                parse_leb128_u(&ptr, section_end); // type index
+                uint64_t type_index;
+                if (parse_leb128_u(&ptr, section_end, &type_index) != 0) {
+                    // Ignore parse error for type index (optional)
+                }
             }
         }
 
         // Check code section for banned opcodes
         if (section_id == WASM_SECTION_CODE) {
-            uint64_t function_count = parse_leb128_u(&ptr, section_end);
+            uint64_t function_count;
+            if (parse_leb128_u(&ptr, section_end, &function_count) != 0) {
+                result->result_code = MXD_WASM_INVALID_MAGIC;
+                snprintf(result->error_message, sizeof(result->error_message),
+                         "Malformed function count in code section");
+                return MXD_WASM_INVALID_MAGIC;
+            }
 
             for (uint64_t i = 0; i < function_count && ptr < section_end; i++) {
-                uint64_t body_size = parse_leb128_u(&ptr, section_end);
-                const uint8_t *body_end = ptr + body_size;
-                if (body_end > section_end) {
-                    body_end = section_end;
+                uint64_t body_size;
+                if (parse_leb128_u(&ptr, section_end, &body_size) != 0) {
+                    result->result_code = MXD_WASM_INVALID_MAGIC;
+                    snprintf(result->error_message, sizeof(result->error_message),
+                             "Malformed function body size");
+                    return MXD_WASM_INVALID_MAGIC;
                 }
 
+                // SECURITY FIX: Validate body_size before arithmetic
+                if (body_size > (uint64_t)(section_end - ptr)) {
+                    result->result_code = MXD_WASM_TOO_LARGE;
+                    snprintf(result->error_message, sizeof(result->error_message),
+                             "Function body size overflow");
+                    return MXD_WASM_TOO_LARGE;
+                }
+
+                const uint8_t *body_end = ptr + body_size;
+
                 // Skip local declarations
-                uint64_t local_count = parse_leb128_u(&ptr, body_end);
+                uint64_t local_count;
+                if (parse_leb128_u(&ptr, body_end, &local_count) != 0) {
+                    // Continue anyway
+                    local_count = 0;
+                }
+
                 for (uint64_t j = 0; j < local_count && ptr < body_end; j++) {
-                    parse_leb128_u(&ptr, body_end); // count
+                    uint64_t count;
+                    if (parse_leb128_u(&ptr, body_end, &count) != 0) break;
                     if (ptr < body_end) ptr++; // type
                 }
 
                 // Check instructions
                 while (ptr < body_end) {
+                    // SECURITY FIX: Check bounds before reading opcode
+                    if (ptr >= body_end) break;
+
                     uint8_t opcode = *ptr;
                     const mxd_banned_instruction_t *banned = mxd_is_opcode_banned(opcode);
 
@@ -308,15 +405,16 @@ int mxd_validate_wasm_determinism(const uint8_t *bytecode, size_t size,
                     ptr++;
 
                     // Skip operands (simplified - full parser would be more complex)
+                    uint64_t operand;
                     if (opcode >= 0x20 && opcode <= 0x24) { // Variable access
-                        parse_leb128_u(&ptr, body_end);
+                        parse_leb128_u(&ptr, body_end, &operand);
                     } else if (opcode >= 0x28 && opcode <= 0x3E) { // Memory ops
-                        parse_leb128_u(&ptr, body_end); // align
-                        parse_leb128_u(&ptr, body_end); // offset
+                        parse_leb128_u(&ptr, body_end, &operand); // align
+                        parse_leb128_u(&ptr, body_end, &operand); // offset
                     } else if (opcode == 0x41) { // i32.const
-                        parse_leb128_u(&ptr, body_end);
+                        parse_leb128_u(&ptr, body_end, &operand);
                     } else if (opcode == 0x42) { // i64.const
-                        parse_leb128_u(&ptr, body_end);
+                        parse_leb128_u(&ptr, body_end, &operand);
                     }
                 }
             }

@@ -9,6 +9,8 @@
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_p2p.h"
 #include "../include/mxd_rsc.h"
+#include "../include/mxd_smart_contracts.h"
+#include "../include/mxd_contracts_db.h"
 #include <microhttpd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -570,6 +572,291 @@ static char* handle_balance(const char *address_hex, int *status_code) {
     return response;
 }
 
+// Handle POST /contract/deploy - Deploy a new smart contract
+static char* handle_contract_deploy(const char *post_data, int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    if (!post_data) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"No POST data provided\"}");
+    }
+
+    // Parse JSON input
+    cJSON *json = cJSON_Parse(post_data);
+    if (!json) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid JSON\"}");
+    }
+
+    // Extract code (hex string)
+    cJSON *code_item = cJSON_GetObjectItem(json, "code");
+    if (!code_item || !cJSON_IsString(code_item)) {
+        cJSON_Delete(json);
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Missing or invalid 'code' field (hex string required)\"}");
+    }
+
+    const char *code_hex = code_item->valuestring;
+    size_t code_len = strlen(code_hex);
+    if (code_len % 2 != 0 || code_len > MXD_MAX_CONTRACT_SIZE * 2) {
+        cJSON_Delete(json);
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid code length or exceeds maximum size\"}");
+    }
+
+    // Convert hex to bytes
+    uint8_t *code = malloc(code_len / 2);
+    if (!code) {
+        cJSON_Delete(json);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Memory allocation failed\"}");
+    }
+
+    if (hex_to_bytes(code_hex, code, code_len / 2) != (int)(code_len / 2)) {
+        free(code);
+        cJSON_Delete(json);
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid hex encoding\"}");
+    }
+
+    // Extract deployer address (optional, defaults to zeros if not provided)
+    uint8_t deployer[20] = {0};
+    cJSON *deployer_item = cJSON_GetObjectItem(json, "deployer");
+    if (deployer_item && cJSON_IsString(deployer_item)) {
+        const char *deployer_hex = deployer_item->valuestring;
+        if (strlen(deployer_hex) == 40) {
+            // SECURITY FIX: Check hex_to_bytes return value
+            if (hex_to_bytes(deployer_hex, deployer, 20) != 20) {
+                free(code);
+                cJSON_Delete(json);
+                *status_code = MHD_HTTP_BAD_REQUEST;
+                return strdup("{\"error\":\"Invalid deployer address hex encoding\"}");
+            }
+        }
+    }
+
+    // Deploy contract
+    mxd_contract_state_t state;
+    int result = mxd_deploy_contract(code, code_len / 2, deployer, &state);
+    free(code);
+    cJSON_Delete(json);
+
+    if (result != 0) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Contract deployment failed\",\"details\":\"Check node logs for details\"}");
+    }
+
+    // Convert contract hash to hex
+    char hash_hex[129] = {0};
+    for (int i = 0; i < 64; i++) {
+        snprintf(hash_hex + i*2, 3, "%02x", state.contract_hash[i]);
+    }
+
+    // Build success response
+    char *response = malloc(512);
+    snprintf(response, 512,
+        "{\"success\":true,\"contract_hash\":\"%s\",\"gas_used\":%llu}",
+        hash_hex, (unsigned long long)state.gas_used);
+
+    return response;
+}
+
+// Handle POST /contract/call - Call a contract function
+static char* handle_contract_call(const char *post_data, int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    if (!post_data) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"No POST data provided\"}");
+    }
+
+    // Parse JSON input
+    cJSON *json = cJSON_Parse(post_data);
+    if (!json) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid JSON\"}");
+    }
+
+    // Extract contract_hash (hex string)
+    cJSON *hash_item = cJSON_GetObjectItem(json, "contract_hash");
+    if (!hash_item || !cJSON_IsString(hash_item)) {
+        cJSON_Delete(json);
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Missing or invalid 'contract_hash' field\"}");
+    }
+
+    const char *hash_hex = hash_item->valuestring;
+    uint8_t contract_hash[64];
+    if (hex_to_bytes(hash_hex, contract_hash, 64) != 64) {
+        cJSON_Delete(json);
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid contract_hash format (expected 128 hex chars)\"}");
+    }
+
+    // Extract function name
+    cJSON *function_item = cJSON_GetObjectItem(json, "function");
+    if (!function_item || !cJSON_IsString(function_item)) {
+        cJSON_Delete(json);
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Missing or invalid 'function' field\"}");
+    }
+
+    const char *function_name = function_item->valuestring;
+
+    // Extract params (optional, hex string)
+    const char *params_hex = "";
+    cJSON *params_item = cJSON_GetObjectItem(json, "params");
+    if (params_item && cJSON_IsString(params_item)) {
+        params_hex = params_item->valuestring;
+    }
+
+    // Convert params to bytes
+    size_t params_len = strlen(params_hex);
+    uint8_t *params = NULL;
+    if (params_len > 0) {
+        // SECURITY FIX: Limit params size to prevent DoS (1MB max = 2MB hex)
+        if (params_len > MXD_MAX_CONTRACT_SIZE * 2) {
+            cJSON_Delete(json);
+            *status_code = MHD_HTTP_BAD_REQUEST;
+            return strdup("{\"error\":\"Params too large (max 1MB)\"}");
+        }
+
+        if (params_len % 2 != 0) {
+            cJSON_Delete(json);
+            *status_code = MHD_HTTP_BAD_REQUEST;
+            return strdup("{\"error\":\"Invalid params hex encoding\"}");
+        }
+        params = malloc(params_len / 2);
+        if (!params) {
+            cJSON_Delete(json);
+            *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+            return strdup("{\"error\":\"Memory allocation failed\"}");
+        }
+        if (hex_to_bytes(params_hex, params, params_len / 2) != (int)(params_len / 2)) {
+            free(params);
+            cJSON_Delete(json);
+            *status_code = MHD_HTTP_BAD_REQUEST;
+            return strdup("{\"error\":\"Invalid params hex encoding\"}");
+        }
+        params_len /= 2;
+    }
+
+    cJSON_Delete(json);
+
+    // TODO: Load contract state from database
+    // For now, return error indicating contracts need to be stored
+    if (params) free(params);
+
+    *status_code = MHD_HTTP_NOT_IMPLEMENTED;
+    return strdup("{\"error\":\"Contract execution not yet implemented\",\"details\":\"Contract state persistence needed\"}");
+}
+
+// Handle GET /contracts - List all deployed contracts
+static char* handle_contracts_list(int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    // Query database for all contracts
+    mxd_contract_metadata_t *contracts = NULL;
+    uint32_t count = 0;
+
+    if (mxd_contracts_db_get_all_contracts(&contracts, &count) != 0) {
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Failed to query contracts database\"}");
+    }
+
+    // Build JSON response
+    cJSON *root = cJSON_CreateObject();
+    cJSON *contracts_array = cJSON_CreateArray();
+
+    for (uint32_t i = 0; i < count; i++) {
+        cJSON *contract_obj = cJSON_CreateObject();
+
+        // Convert hash to hex
+        char hash_hex[129] = {0};
+        for (int j = 0; j < 64; j++) {
+            snprintf(hash_hex + j*2, 3, "%02x", contracts[i].contract_hash[j]);
+        }
+        cJSON_AddStringToObject(contract_obj, "hash", hash_hex);
+
+        // Convert deployer to hex
+        char deployer_hex[41] = {0};
+        for (int j = 0; j < 20; j++) {
+            snprintf(deployer_hex + j*2, 3, "%02x", contracts[i].deployer[j]);
+        }
+        cJSON_AddStringToObject(contract_obj, "deployer", deployer_hex);
+
+        cJSON_AddNumberToObject(contract_obj, "deployed_at", contracts[i].deployed_at);
+        cJSON_AddNumberToObject(contract_obj, "deployed_timestamp", contracts[i].deployed_timestamp);
+        cJSON_AddNumberToObject(contract_obj, "bytecode_size", contracts[i].bytecode_size);
+        cJSON_AddNumberToObject(contract_obj, "total_gas_used", contracts[i].total_gas_used);
+        cJSON_AddNumberToObject(contract_obj, "call_count", contracts[i].call_count);
+
+        cJSON_AddItemToArray(contracts_array, contract_obj);
+
+        // Free bytecode if allocated
+        if (contracts[i].bytecode) {
+            free(contracts[i].bytecode);
+        }
+    }
+
+    cJSON_AddItemToObject(root, "contracts", contracts_array);
+    cJSON_AddNumberToObject(root, "count", count);
+
+    char *json_str = cJSON_Print(root);
+    cJSON_Delete(root);
+
+    // Free contracts array
+    if (contracts) {
+        free(contracts);
+    }
+
+    return json_str;
+}
+
+// Handle GET /contract/{hash} - Get contract info
+static char* handle_contract_info(const char *hash_hex, int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    if (strlen(hash_hex) != 128) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid contract hash (expected 128 hex chars)\"}");
+    }
+
+    uint8_t contract_hash[64];
+    if (hex_to_bytes(hash_hex, contract_hash, 64) != 64) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid contract hash format\"}");
+    }
+
+    // TODO: Query database for contract info
+    // For now, return not found
+
+    *status_code = MHD_HTTP_NOT_FOUND;
+    return strdup("{\"error\":\"Contract not found\",\"note\":\"Contract storage not yet implemented\"}");
+}
+
+// Handle GET /contract/{hash}/state - Get contract state
+static char* handle_contract_state(const char *hash_hex, int *status_code) {
+    *status_code = MHD_HTTP_OK;
+
+    if (strlen(hash_hex) != 128) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid contract hash (expected 128 hex chars)\"}");
+    }
+
+    uint8_t contract_hash[64];
+    if (hex_to_bytes(hash_hex, contract_hash, 64) != 64) {
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Invalid contract hash format\"}");
+    }
+
+    // TODO: Query database for contract state
+    // For now, return not found
+
+    *status_code = MHD_HTTP_NOT_FOUND;
+    return strdup("{\"error\":\"Contract not found\",\"note\":\"Contract storage not yet implemented\"}");
+}
+
 static enum MHD_Result handle_request(void *cls,
                                        struct MHD_Connection *connection,
                                        const char *url,
@@ -608,10 +895,17 @@ static enum MHD_Result handle_request(void *cls,
         // All data received - process request
         char *json_response = NULL;
         int status_code = MHD_HTTP_OK;
-        
+
         if (strcmp(url, "/transaction") == 0) {
             json_response = handle_transaction_submit(con_info->post_data, &status_code);
-        } else {
+        }
+        else if (strcmp(url, "/contract/deploy") == 0) {
+            json_response = handle_contract_deploy(con_info->post_data, &status_code);
+        }
+        else if (strcmp(url, "/contract/call") == 0) {
+            json_response = handle_contract_call(con_info->post_data, &status_code);
+        }
+        else {
             json_response = strdup("{\"error\":\"Endpoint not found\"}");
             status_code = MHD_HTTP_NOT_FOUND;
         }
@@ -727,16 +1021,16 @@ static enum MHD_Result handle_request(void *cls,
         int limit = limit_str ? atoi(limit_str) : 10;
         if (limit > 100) limit = 100;
         if (limit < 1) limit = 1;
-        
+
         uint32_t height = 0;
         mxd_get_blockchain_height(&height);
-        
+
         // Build JSON array of blocks
         json_response = malloc(limit * 1024 + 256);
         if (json_response) {
             strcpy(json_response, "{\"blocks\":[");
             int first = 1;
-            
+
             for (int i = 0; i < limit && height > 0; i++) {
                 mxd_block_t block;
                 if (mxd_retrieve_block_by_height(height - 1 - i, &block) == 0) {
@@ -750,8 +1044,35 @@ static enum MHD_Result handle_request(void *cls,
                     mxd_free_block(&block);
                 }
             }
-            
+
             strcat(json_response, "]}");
+        }
+    }
+    // Handle /contracts endpoint - list all contracts
+    else if (strcmp(url, "/contracts") == 0) {
+        json_response = handle_contracts_list(&status_code);
+    }
+    // Handle /contract/{hash} endpoint - get contract info
+    else if (strncmp(url, "/contract/", 10) == 0 && strlen(url) == 138) {
+        const char *hash_hex = url + 10;
+        // Check if it's a state query
+        if (strlen(url) > 138 && strcmp(url + 138, "/state") == 0) {
+            json_response = handle_contract_state(hash_hex, &status_code);
+        } else {
+            json_response = handle_contract_info(hash_hex, &status_code);
+        }
+    }
+    // Handle /contract/{hash}/state endpoint
+    else if (strncmp(url, "/contract/", 10) == 0 && strlen(url) > 138) {
+        const char *remainder = url + 10;
+        char hash_hex[129];
+        strncpy(hash_hex, remainder, 128);
+        hash_hex[128] = '\0';
+        if (strcmp(remainder + 128, "/state") == 0) {
+            json_response = handle_contract_state(hash_hex, &status_code);
+        } else {
+            json_response = strdup("{\"error\":\"Endpoint not found\"}");
+            status_code = MHD_HTTP_NOT_FOUND;
         }
     }
     else {

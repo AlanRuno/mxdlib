@@ -24,8 +24,13 @@ typedef struct {
   size_t storage_size;       // Legacy storage size
   void *storage_trie;        // Merkle patricia trie for production storage
   void *module;              // WebAssembly module handle
+  void *runtime;             // SECURITY FIX: Per-contract WASM runtime (not shared)
+  void *env;                 // SECURITY FIX: Per-contract WASM environment
   uint8_t reentrancy_lock;   // Prevent recursive calls
   uint32_t call_depth;       // Track call stack depth (max 256)
+  void *mutex;               // SECURITY FIX: Thread safety mutex
+  uint8_t *bytecode;         // SECURITY FIX: Store bytecode for gas calculation
+  size_t bytecode_size;      // Bytecode size
 } mxd_contract_state_t;
 
 // Contract execution result
@@ -41,10 +46,12 @@ int mxd_init_contracts(void);
 
 // Deploy contract
 int mxd_deploy_contract(const uint8_t *code, size_t code_size,
+                        const uint8_t deployer[20],
                         mxd_contract_state_t *state);
 
 // Execute contract
-int mxd_execute_contract(const mxd_contract_state_t *state,
+// SECURITY FIX: Removed const to allow safe reentrancy lock modification
+int mxd_execute_contract(mxd_contract_state_t *state,
                          const uint8_t *input, size_t input_size,
                          mxd_execution_result_t *result);
 

@@ -25,6 +25,7 @@
 #include "../include/mxd_ntp.h"
 #include "../include/mxd_utxo.h"
 #include "../include/mxd_mempool.h"
+#include "../include/mxd_smart_contracts.h"
 #include "../include/mxd_blockchain_sync.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
@@ -324,6 +325,15 @@ int main(int argc, char** argv) {
     }
     MXD_LOG_INFO("node", "UTXO database initialized successfully");
     log_memory_usage("after_utxo_db");
+
+    // Initialize contracts database
+    MXD_LOG_INFO("node", "Initializing contracts system...");
+    if (mxd_init_contracts() != 0) {
+        MXD_LOG_ERROR("node", "Failed to initialize contracts system");
+        return 1;
+    }
+    MXD_LOG_INFO("node", "Contracts system initialized successfully");
+    log_memory_usage("after_contracts");
 
     // Initialize mempool
     MXD_LOG_INFO("node", "Initializing mempool...");

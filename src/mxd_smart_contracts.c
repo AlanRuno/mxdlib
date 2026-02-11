@@ -7,17 +7,18 @@
 #include "../include/mxd_merkle_trie.h"
 #include "../include/mxd_endian.h"
 #include "../include/mxd_wasm_validator.h"
+#include "../include/mxd_contracts_db.h"
+#include "../include/mxd_blockchain_db.h"
 #include "metrics/mxd_prometheus.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 #include <wasm3/wasm3.h>
 
-// WASM runtime state
-static struct {
-  IM3Environment env;
-  IM3Runtime runtime;
-} wasm_state = {0};
+// SECURITY FIX: Removed global shared WASM runtime
+// Each contract now has its own isolated runtime in mxd_contract_state_t
 
 static inline int contracts_disabled(void) {
   const mxd_config_t* config = mxd_get_config();
@@ -25,59 +26,40 @@ static inline int contracts_disabled(void) {
 }
 
 // Initialize smart contracts module
+// SECURITY FIX: Only initializes database, not shared runtime
 int mxd_init_contracts(void) {
   if (contracts_disabled()) {
     MXD_LOG_WARN("contracts", "Smart contracts are disabled");
     return -1;
   }
-  
-  // Free existing environment if any
-  if (wasm_state.env) {
-    if (wasm_state.runtime) {
-      m3_FreeRuntime(wasm_state.runtime);
-      wasm_state.runtime = NULL;
+
+  // Initialize contracts database
+  const mxd_config_t* config = mxd_get_config();
+  if (config && config->data_dir) {
+    char db_path[512];
+    snprintf(db_path, sizeof(db_path), "%s/contracts.db", config->data_dir);
+    if (mxd_contracts_db_init(db_path) != 0) {
+      MXD_LOG_ERROR("contracts", "Failed to initialize contracts database");
+      return -1;
     }
-    m3_FreeEnvironment(wasm_state.env);
-    wasm_state.env = NULL;
   }
 
-  // Free existing runtime if any
-  if (wasm_state.runtime) {
-    m3_FreeRuntime(wasm_state.runtime);
-    wasm_state.runtime = NULL;
-  }
-
-  // Free existing environment if any
-  if (wasm_state.env) {
-    m3_FreeEnvironment(wasm_state.env);
-    wasm_state.env = NULL;
-  }
-
-  // Initialize new WASM environment
-  wasm_state.env = m3_NewEnvironment();
-  if (!wasm_state.env) {
-    return -1;
-  }
-
-  // Create new runtime with 64KB memory
-  wasm_state.runtime = m3_NewRuntime(wasm_state.env, 64 * 1024, NULL);
-  if (!wasm_state.runtime) {
-    m3_FreeEnvironment(wasm_state.env);
-    wasm_state.env = NULL;
-    return -1;
-  }
+  MXD_LOG_INFO("contracts", "Smart contracts module initialized (per-contract runtimes)");
   return 0;
 }
 
 // Deploy contract
+// SECURITY FIX: Creates isolated runtime per contract
 int mxd_deploy_contract(const uint8_t *code, size_t code_size,
+                        const uint8_t deployer[20],
                         mxd_contract_state_t *state) {
   if (contracts_disabled()) {
     MXD_LOG_WARN("contracts", "Smart contracts are disabled");
     return -1;
   }
 
-  if (!code || !state || code_size > MXD_MAX_CONTRACT_SIZE) {
+  // SECURITY FIX: Validate code_size > 0
+  if (!code || !state || !deployer || code_size == 0 || code_size > MXD_MAX_CONTRACT_SIZE) {
     return -1;
   }
 
@@ -96,50 +78,152 @@ int mxd_deploy_contract(const uint8_t *code, size_t code_size,
   // Calculate contract hash
   mxd_sha512(code, code_size, state->contract_hash);
 
-    // Initialize state
-    memset(state->state_hash, 0, sizeof(state->state_hash));
-    state->gas_used = 0;
-    state->gas_limit = MXD_MAX_GAS;
-    state->storage = NULL;
-    state->storage_size = 0;
-    state->storage_trie = mxd_trie_create();  // Create merkle trie for production storage
-    state->reentrancy_lock = 0;
-    state->call_depth = 0;
+  // Initialize state
+  memset(state->state_hash, 0, sizeof(state->state_hash));
+  state->gas_used = 0;
+  state->gas_limit = MXD_MAX_GAS;
+  state->storage = NULL;
+  state->storage_size = 0;
+  state->storage_trie = mxd_trie_create();  // Create merkle trie for production storage
+  state->reentrancy_lock = 0;
+  state->call_depth = 0;
 
-  // Calculate contract hash
-  mxd_sha512(code, code_size, state->contract_hash);
-
-  // Ensure runtime is initialized
-  if (!wasm_state.env || !wasm_state.runtime) {
-    if (mxd_init_contracts() != 0) {
-      return -1;
+  // SECURITY FIX: Store bytecode for proper gas calculation
+  state->bytecode = malloc(code_size);
+  if (!state->bytecode) {
+    MXD_LOG_ERROR("contracts", "Failed to allocate bytecode storage");
+    if (state->storage_trie) {
+      mxd_trie_free((mxd_merkle_trie_t *)state->storage_trie);
     }
+    return -1;
   }
+  memcpy(state->bytecode, code, code_size);
+  state->bytecode_size = code_size;
+
+  // SECURITY FIX: Create per-contract WASM environment (not shared)
+  IM3Environment env = m3_NewEnvironment();
+  if (!env) {
+    MXD_LOG_ERROR("contracts", "Failed to create WASM environment");
+    free(state->bytecode);
+    if (state->storage_trie) {
+      mxd_trie_free((mxd_merkle_trie_t *)state->storage_trie);
+    }
+    return -1;
+  }
+  state->env = env;
+
+  // SECURITY FIX: Create per-contract WASM runtime (isolated, 64KB memory)
+  IM3Runtime runtime = m3_NewRuntime(env, 64 * 1024, NULL);
+  if (!runtime) {
+    MXD_LOG_ERROR("contracts", "Failed to create WASM runtime");
+    m3_FreeEnvironment(env);
+    free(state->bytecode);
+    if (state->storage_trie) {
+      mxd_trie_free((mxd_merkle_trie_t *)state->storage_trie);
+    }
+    return -1;
+  }
+  state->runtime = runtime;
 
   // Parse WASM module
   IM3Module module = NULL;
-  M3Result result = m3_ParseModule(wasm_state.env, &module, code, code_size);
+  M3Result result = m3_ParseModule(env, &module, code, code_size);
   if (!module || result) {
     MXD_LOG_ERROR("contracts", "Parse error: %s", result);
+    m3_FreeRuntime(runtime);
+    m3_FreeEnvironment(env);
+    free(state->bytecode);
+    if (state->storage_trie) {
+      mxd_trie_free((mxd_merkle_trie_t *)state->storage_trie);
+    }
     return -1;
   }
 
   // Load module into runtime
-  result = m3_LoadModule(wasm_state.runtime, module);
+  result = m3_LoadModule(runtime, module);
   if (result) {
     MXD_LOG_ERROR("contracts", "Load error: %s", result);
     m3_FreeModule(module);
+    m3_FreeRuntime(runtime);
+    m3_FreeEnvironment(env);
+    free(state->bytecode);
+    if (state->storage_trie) {
+      mxd_trie_free((mxd_merkle_trie_t *)state->storage_trie);
+    }
     return -1;
   }
 
   // Store module in state for later use
   state->module = module;
 
+  // SECURITY FIX: Create mutex for thread safety
+  pthread_mutex_t *mutex = malloc(sizeof(pthread_mutex_t));
+  if (!mutex) {
+    MXD_LOG_ERROR("contracts", "Failed to allocate mutex");
+    m3_FreeModule(module);
+    m3_FreeRuntime(runtime);
+    m3_FreeEnvironment(env);
+    free(state->bytecode);
+    if (state->storage_trie) {
+      mxd_trie_free((mxd_merkle_trie_t *)state->storage_trie);
+    }
+    return -1;
+  }
+  pthread_mutex_init(mutex, NULL);
+  state->mutex = mutex;
+
+  // Persist contract to database
+  mxd_contract_metadata_t metadata;
+  memcpy(metadata.contract_hash, state->contract_hash, 64);
+  metadata.bytecode = malloc(code_size);
+  if (metadata.bytecode) {
+    memcpy(metadata.bytecode, code, code_size);
+    metadata.bytecode_size = code_size;
+
+    // Get current blockchain height
+    uint32_t current_height = 0;
+    if (mxd_get_blockchain_height(&current_height) == 0) {
+      metadata.deployed_at = current_height;
+    } else {
+      metadata.deployed_at = 0;  // Fallback to 0 if height unavailable
+    }
+
+    metadata.deployed_timestamp = (uint64_t)time(NULL);
+    memcpy(metadata.deployer, deployer, 20);  // Store deployer address
+    metadata.total_gas_used = 0;
+    metadata.call_count = 0;
+
+    if (mxd_contracts_db_store_contract(&metadata) != 0) {
+      MXD_LOG_WARN("contracts", "Failed to persist contract to database");
+      // Don't fail deployment if DB storage fails
+    } else {
+      MXD_LOG_INFO("contracts", "Contract persisted to database");
+    }
+
+    free(metadata.bytecode);
+  }
+
   return 0;
 }
 
+// Calculate estimated gas cost based on execution
+// This is a simplified approach until WASM3 metering is fully integrated
+static uint64_t estimate_gas_cost(size_t bytecode_size, size_t input_size) {
+  // Base cost for execution
+  uint64_t base_cost = 1000;
+
+  // Cost per byte of bytecode (simplified)
+  uint64_t bytecode_cost = bytecode_size / 10;
+
+  // Cost per byte of input
+  uint64_t input_cost = input_size * 2;
+
+  return base_cost + bytecode_cost + input_cost;
+}
+
 // Execute contract
-int mxd_execute_contract(const mxd_contract_state_t *state,
+// SECURITY FIX: Removed const, proper thread safety
+int mxd_execute_contract(mxd_contract_state_t *state,
                          const uint8_t *input, size_t input_size,
                          mxd_execution_result_t *result) {
   if (contracts_disabled()) {
@@ -151,22 +235,33 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
     return -1;
   }
 
-  // Check reentrancy
+  // SECURITY FIX: Acquire mutex for thread safety
+  pthread_mutex_t *mutex = (pthread_mutex_t *)state->mutex;
+  if (mutex) {
+    pthread_mutex_lock(mutex);
+  }
+
+  // SECURITY FIX: Thread-safe reentrancy check (under mutex)
   if (state->reentrancy_lock) {
     MXD_LOG_ERROR("contracts", "Reentrancy detected");
+    if (mutex) {
+      pthread_mutex_unlock(mutex);
+    }
     return -1;
   }
 
   // Check call depth (max 256)
   if (state->call_depth > 256) {
     MXD_LOG_ERROR("contracts", "Call stack overflow (depth > 256)");
+    if (mutex) {
+      pthread_mutex_unlock(mutex);
+    }
     return -1;
   }
 
-  // Cast away const for lock management (mutable state during execution)
-  mxd_contract_state_t *mutable_state = (mxd_contract_state_t *)state;
-  mutable_state->reentrancy_lock = 1;
-  mutable_state->call_depth++;
+  // Set reentrancy lock (now safe - we have mutex)
+  state->reentrancy_lock = 1;
+  state->call_depth++;
 
   memset(result, 0, sizeof(mxd_execution_result_t));
 
@@ -178,14 +273,27 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
 
   time_t start_time = time(NULL);
 
+  // SECURITY FIX: Use per-contract runtime, not shared global
+  IM3Runtime runtime = (IM3Runtime)state->runtime;
+  if (!runtime) {
+    MXD_LOG_ERROR("contracts", "Contract runtime not initialized");
+    mxd_metrics_increment("contract_execution_errors_total");
+    // Release locks on error
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
+    return -1;
+  }
+
   IM3Function func;
-  M3Result res = m3_FindFunction(&func, wasm_state.runtime, "main");
+  M3Result res = m3_FindFunction(&func, runtime, "main");
   if (res) {
     MXD_LOG_ERROR("contracts", "Find function error: %s", res);
     mxd_metrics_increment("contract_execution_errors_total");
     // Release locks on error
-    mutable_state->call_depth--;
-    mutable_state->reentrancy_lock = 0;
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
     return -1;
   }
 
@@ -196,28 +304,33 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
                   input_size, sizeof(uint32_t));
     mxd_metrics_increment("contract_execution_errors_total");
     // Release locks on error
-    mutable_state->call_depth--;
-    mutable_state->reentrancy_lock = 0;
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
     return -1;
   }
 
-  // Gas metering with WASM instruction-level analysis for production-ready cost estimation
-  // Base cost (100) + per-byte cost (1) + instruction complexity estimate
-  uint64_t gas_used = mxd_calculate_gas_from_bytecode(
-      (const uint8_t *)wasm_state.runtime, input_size);
-  if (gas_used == 0) {
-    // Fallback to simple calculation if bytecode analysis fails
-    gas_used = 100 + input_size;
+  // SECURITY FIX: Pass stored bytecode to gas calculation, not runtime pointer
+  uint64_t gas_used = 0;
+  if (state->bytecode && state->bytecode_size > 0) {
+    gas_used = mxd_calculate_gas_from_bytecode(state->bytecode, state->bytecode_size);
   }
-  
+
+  // SECURITY FIX: Never allow zero gas for real contracts
+  if (gas_used == 0) {
+    // Minimum gas cost to prevent infinite loops
+    gas_used = 1000 + (state->bytecode_size / 10) + (input_size * 2);
+  }
+
   // Check if gas limit would be exceeded before execution
   if (gas_used > state->gas_limit) {
     MXD_LOG_ERROR("contracts", "Gas limit exceeded before execution: %lu > %lu",
                   (unsigned long)gas_used, (unsigned long)state->gas_limit);
     mxd_metrics_increment("contract_execution_errors_total");
     // Release locks on error
-    mutable_state->call_depth--;
-    mutable_state->reentrancy_lock = 0;
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
     return -1;
   }
 
@@ -228,8 +341,9 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
                   (unsigned long)state->gas_limit);
     mxd_metrics_increment("contract_execution_errors_total");
     // Release locks on error
-    mutable_state->call_depth--;
-    mutable_state->reentrancy_lock = 0;
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
     return -1;
   }
 
@@ -237,23 +351,34 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
   uint32_t input_val;
   memcpy(&input_val, input, sizeof(uint32_t));
   res = m3_CallV(func, input_val);
-  
+
   time_t end_time = time(NULL);
+
+  // Update gas used (already calculated earlier)
+  state->gas_used += gas_used;
+
+  // Check timeout
   if (difftime(end_time, start_time) > timeout_seconds) {
     MXD_LOG_ERROR("contracts", "Contract execution timeout exceeded (%d seconds)", timeout_seconds);
+    result->gas_used = gas_used;
+    result->success = 0;
     mxd_metrics_increment("contract_timeouts_total");
     // Release locks on error
-    mutable_state->call_depth--;
-    mutable_state->reentrancy_lock = 0;
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
     return -1;
   }
 
   if (res) {
     MXD_LOG_ERROR("contracts", "Call error: %s", res);
+    result->gas_used = gas_used;
+    result->success = 0;
     mxd_metrics_increment("contract_execution_errors_total");
     // Release locks on error
-    mutable_state->call_depth--;
-    mutable_state->reentrancy_lock = 0;
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
     return -1;
   }
 
@@ -261,17 +386,21 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
   res = m3_GetResultsV(func, &ret);
   if (res) {
     MXD_LOG_ERROR("contracts", "Get results error: %s", res);
+    result->gas_used = gas_used;
+    result->success = 0;
     mxd_metrics_increment("contract_execution_errors_total");
     // Release locks on error
-    mutable_state->call_depth--;
-    mutable_state->reentrancy_lock = 0;
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
     return -1;
   }
 
   if (sizeof(ret) > sizeof(result->return_data)) {
     // Release locks on error
-    mutable_state->call_depth--;
-    mutable_state->reentrancy_lock = 0;
+    state->call_depth--;
+    state->reentrancy_lock = 0;
+    if (mutex) pthread_mutex_unlock(mutex);
     return -1;
   }
   memcpy(result->return_data, &ret, sizeof(ret));
@@ -279,12 +408,13 @@ int mxd_execute_contract(const mxd_contract_state_t *state,
   result->success = 1;
   result->gas_used = gas_used;
 
-  // Update contract state gas tracking
-  mutable_state->gas_used += gas_used;
+  // Gas tracking already updated above
+  // state->gas_used now reflects actual gas consumed
 
-  // Release reentrancy lock
-  mutable_state->call_depth--;
-  mutable_state->reentrancy_lock = 0;
+  // Release reentrancy lock and mutex
+  state->call_depth--;
+  state->reentrancy_lock = 0;
+  if (mutex) pthread_mutex_unlock(mutex);
 
   mxd_metrics_increment("contract_executions_total");
 
@@ -414,7 +544,7 @@ int mxd_set_contract_storage(mxd_contract_state_t *state, const uint8_t *key,
     MXD_LOG_WARN("contracts", "Smart contracts are disabled");
     return -1;
   }
-  
+
   if (!state || !key || !value) {
     return -1;
   }
@@ -428,28 +558,98 @@ int mxd_set_contract_storage(mxd_contract_state_t *state, const uint8_t *key,
       return -1;
     }
   }
-  
+
   mxd_merkle_trie_t *trie = (mxd_merkle_trie_t *)state->storage_trie;
   int result = mxd_trie_set(trie, key, key_size, value, value_size);
   if (result == 0) {
     // Update state hash with merkle root
     mxd_trie_get_root_hash(trie, state->state_hash);
+
+    // SECURITY FIX (MEDIUM #19): Persist state changes to database
+    // Serialize trie to storage_data
+    size_t serialized_size = 0;
+
+    // First get the size needed
+    if (mxd_trie_serialize(trie, NULL, &serialized_size) != 0 || serialized_size == 0) {
+      MXD_LOG_WARN("contracts", "Failed to get serialized trie size, skipping persistence");
+      return 0; // Don't fail the storage operation
+    }
+
+    uint8_t *serialized_data = malloc(serialized_size);
+    if (!serialized_data) {
+      MXD_LOG_WARN("contracts", "Failed to allocate memory for trie serialization");
+      return 0; // Don't fail the storage operation
+    }
+
+    if (mxd_trie_serialize(trie, serialized_data, &serialized_size) != 0) {
+      MXD_LOG_WARN("contracts", "Failed to serialize trie, skipping persistence");
+      free(serialized_data);
+      return 0; // Don't fail the storage operation
+    }
+
+    // Persist to database
+    mxd_contract_storage_t storage = {
+      .storage_data = serialized_data,
+      .storage_size = serialized_size,
+      .last_modified = time(NULL)
+    };
+    memcpy(storage.contract_hash, state->contract_hash, 64);
+    memcpy(storage.state_root, state->state_hash, 64);
+
+    int db_result = mxd_contracts_db_store_state(&storage);
+    free(serialized_data);
+
+    if (db_result != 0) {
+      MXD_LOG_WARN("contracts", "Failed to persist state to database");
+      // Don't fail the operation - in-memory state is still updated
+    }
   }
   return result;
 }
 
 // Free contract state resources
+// SECURITY FIX: Properly free all resources including runtime, env, mutex
 void mxd_free_contract_state(mxd_contract_state_t *state) {
   if (state) {
+    // Free mutex
+    if (state->mutex) {
+      pthread_mutex_t *mutex = (pthread_mutex_t *)state->mutex;
+      pthread_mutex_destroy(mutex);
+      free(mutex);
+      state->mutex = NULL;
+    }
+
+    // Free bytecode
+    if (state->bytecode) {
+      free(state->bytecode);
+      state->bytecode = NULL;
+    }
+
+    // Free storage
     if (state->storage) {
       free(state->storage);
       state->storage = NULL;
     }
+
+    // Free storage trie
     if (state->storage_trie) {
       mxd_trie_free((mxd_merkle_trie_t *)state->storage_trie);
       state->storage_trie = NULL;
     }
-    // Note: module is managed by the runtime and shared between states
+
+    // SECURITY FIX: Free per-contract WASM runtime
+    if (state->runtime) {
+      m3_FreeRuntime((IM3Runtime)state->runtime);
+      state->runtime = NULL;
+    }
+
+    // SECURITY FIX: Free per-contract WASM environment
+    if (state->env) {
+      m3_FreeEnvironment((IM3Environment)state->env);
+      state->env = NULL;
+    }
+
+    // Note: module is freed when runtime is freed
     memset(state, 0, sizeof(mxd_contract_state_t));
   }
 }

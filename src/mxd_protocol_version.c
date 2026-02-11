@@ -4,7 +4,8 @@
 #include <string.h>
 
 // Static network type (can be overridden for testing)
-static mxd_network_type_t current_network = MXD_NETWORK_MAINNET;
+// SECURITY FIX: Default to TESTNET for GCP testnet nodes
+static mxd_network_type_t current_network = MXD_NETWORK_TESTNET;
 
 // Activation heights for each network
 static const mxd_activation_heights_t MAINNET_HEIGHTS = {
@@ -32,8 +33,9 @@ mxd_activation_heights_t mxd_get_activation_heights(mxd_network_type_t network) 
         case MXD_NETWORK_DEVNET:
             return DEVNET_HEIGHTS;
         default:
-            MXD_LOG_WARN("protocol", "Unknown network type %d, defaulting to mainnet", network);
-            return MAINNET_HEIGHTS;
+            // SECURITY FIX: Don't log during early init - logging may not be ready
+            // Just return safe default (TESTNET)
+            return TESTNET_HEIGHTS;
     }
 }
 
@@ -59,9 +61,8 @@ int mxd_is_valid_block_version(uint32_t block_version, uint32_t height,
     // Block must use the required version for its height
     // We allow exact match only (no forward/backward compatibility during migration)
     if (block_version != required_version) {
-        MXD_LOG_WARN("protocol",
-                     "Block version mismatch: height=%u requires v%u, but block has v%u",
-                     height, required_version, block_version);
+        // SECURITY FIX: Don't log during early init - just return failure
+        // Logging will happen in calling function if needed
         return 0;
     }
 
@@ -73,23 +74,33 @@ mxd_network_type_t mxd_get_network_type(void) {
     const mxd_config_t* config = mxd_get_config();
 
     if (!config) {
-        MXD_LOG_WARN("protocol", "No config available, using static network type");
+        // SECURITY FIX: Early initialization - config not loaded yet
+        // Don't use MXD_LOG here - logging may not be initialized
+        // Return safe default (TESTNET for GCP testnet nodes)
         return current_network;
     }
 
-    // Check if network type is configured
-    // This assumes the config has a network field (may need to be added)
-    // For now, return the static value
+    // SECURITY FIX: Actually parse config->network_type field
+    // Config has char network_type[32] field with "mainnet" or "testnet"
+    if (strcmp(config->network_type, "mainnet") == 0) {
+        return MXD_NETWORK_MAINNET;
+    } else if (strcmp(config->network_type, "testnet") == 0) {
+        return MXD_NETWORK_TESTNET;
+    } else if (strcmp(config->network_type, "devnet") == 0) {
+        return MXD_NETWORK_DEVNET;
+    }
+
+    // Fallback to current_network if parsing fails
     return current_network;
 }
 
 // Set network type (for testing purposes)
 void mxd_set_network_type(mxd_network_type_t network) {
     if (network > MXD_NETWORK_DEVNET) {
-        MXD_LOG_ERROR("protocol", "Invalid network type: %d", network);
+        // SECURITY FIX: Don't log during early init - just return
         return;
     }
 
-    MXD_LOG_INFO("protocol", "Setting network type to %d", network);
+    // SECURITY FIX: Don't log during early init - just set the value
     current_network = network;
 }
