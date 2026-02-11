@@ -12,6 +12,7 @@
 #include "../../include/mxd_transaction.h"
 #include "../../include/mxd_blockchain.h"
 #include "../../include/mxd_serialize.h"
+#include "../../include/mxd_validator_management.h"
 #include "../metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,15 @@
 #include <time.h>
 #include <pthread.h>
 #include <rocksdb/c.h>
+
+// Global rapid table for validator tracking
+static mxd_rapid_table_t g_rapid_table = {0};
+static pthread_mutex_t rapid_table_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Accessor function for rapid table (used by other modules)
+const mxd_rapid_table_t* mxd_get_rapid_table(void) {
+    return &g_rapid_table;
+}
 
 // Performance thresholds
 #define MXD_MAX_RESPONSE_TIME 120000   // Maximum acceptable response time (ms) - increased for testing
@@ -1311,8 +1321,8 @@ int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, mxd_amount_t tot
         return 1;
     }
     
-    // Check if stake is at least 1% of total supply
-    if (node->stake_amount < total_supply / 100) {
+    // Check if stake is at least 0.10% of total supply
+    if (node->stake_amount < total_supply / 1000) {
         return 0;
     }
     
@@ -2769,9 +2779,21 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
         MXD_LOG_DEBUG("rsc", "Using genesis block membership for proposer check (latest block had no entries)");
     }
     
-    // Sort validators by address (already sorted in block, but verify)
-    // For simplicity, use round-robin based on membership order
-    uint32_t proposer_index = height % latest_block.rapid_membership_count;
+    // Calculate proposer index with fallback support
+    uint32_t base_index = height % latest_block.rapid_membership_count;
+    uint32_t proposer_index = base_index;
+
+    // Get current timeout state for fallback logic
+    mxd_height_timeout_t *timeout = mxd_get_current_timeout();
+
+    // If timeout expired for this height, try fallback proposers
+    if (timeout->height == height && timeout->retry_count > 0) {
+        // Fallback: (base_index + retry_count) % validator_count
+        proposer_index = (base_index + timeout->retry_count) % latest_block.rapid_membership_count;
+
+        MXD_LOG_INFO("rsc", "Fallback proposer selection: retry %u, proposer index %u (base %u)",
+                     timeout->retry_count, proposer_index, base_index);
+    }
 
     // Debug: log both addresses for comparison
     char local_hex[41], proposer_hex[41];
@@ -2787,10 +2809,15 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
                               20) == 0);
 
     if (is_proposer) {
-        MXD_LOG_INFO("rsc", "This node is proposer for height %u (index %u of %u validators)",
-                     height, proposer_index, latest_block.rapid_membership_count);
+        if (timeout->retry_count > 0) {
+            MXD_LOG_WARN("rsc", "This node is FALLBACK proposer for height %u (retry %u, index %u of %u validators)",
+                        height, timeout->retry_count, proposer_index, latest_block.rapid_membership_count);
+        } else {
+            MXD_LOG_INFO("rsc", "This node is PRIMARY proposer for height %u (index %u of %u validators)",
+                        height, proposer_index, latest_block.rapid_membership_count);
+        }
     }
-    
+
     mxd_free_block(&latest_block);
     return is_proposer;
 }
@@ -2836,12 +2863,45 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
     // block_count = number of existing blocks, so next_height = block_count
     uint32_t next_height = block_count;
     uint32_t latest_height = block_count - 1;  // Height of the most recent block
-    
-    // Check if we're the proposer for the next block
-    int is_proposer = mxd_is_proposer_for_height(table, local_address, next_height);
 
     // Get current block being proposed (if any)
     mxd_block_t *current_block = (mxd_block_t *)mxd_get_current_block();
+
+    // Check if we're waiting for a block and timeout expired
+    if (!current_block) {
+        // Not currently proposing - check timeout
+        mxd_height_timeout_t *timeout = mxd_get_current_timeout();
+
+        if (timeout->height != next_height) {
+            // First time waiting for this height - start timeout tracking
+            // Calculate expected proposer for this height
+            mxd_block_t latest_block;
+            memset(&latest_block, 0, sizeof(latest_block));
+
+            if (mxd_retrieve_block_by_height(latest_height, &latest_block) == 0) {
+                if (latest_block.rapid_membership_count > 0) {
+                    uint32_t expected_index = next_height % latest_block.rapid_membership_count;
+                    uint8_t *expected_addr = latest_block.rapid_membership_entries[expected_index].node_address;
+
+                    mxd_start_height_timeout(next_height, expected_addr);
+
+                    MXD_LOG_INFO("rsc", "Started timeout tracking for height %u, expecting validator %02x%02x...%02x%02x",
+                                next_height, expected_addr[0], expected_addr[1],
+                                expected_addr[18], expected_addr[19]);
+                }
+                mxd_free_block(&latest_block);
+            }
+        } else if (mxd_check_timeout_expired()) {
+            // Timeout expired! Increment retry count for fallback
+            int retry_count = mxd_increment_retry_count();
+
+            MXD_LOG_WARN("rsc", "Proposer timeout expired for height %u (retry %d), enabling fallback proposers",
+                        next_height, retry_count);
+        }
+    }
+
+    // Check if we're the proposer for the next block (includes fallback logic)
+    int is_proposer = mxd_is_proposer_for_height(table, local_address, next_height);
 
     // Log proposal conditions
     if (is_proposer) {
@@ -2868,8 +2928,14 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         
         last_proposed_height = next_height;
         mxd_free_block(&latest_block);
-        
-        MXD_LOG_INFO("rsc", "Started block proposal for height %u", next_height);
+
+        mxd_height_timeout_t *timeout = mxd_get_current_timeout();
+        if (timeout->retry_count > 0) {
+            MXD_LOG_WARN("rsc", "Started FALLBACK block proposal for height %u (retry %d)",
+                        next_height, timeout->retry_count);
+        } else {
+            MXD_LOG_INFO("rsc", "Started PRIMARY block proposal for height %u", next_height);
+        }
         current_block = (mxd_block_t *)mxd_get_current_block();
     }
     
@@ -2896,8 +2962,50 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
                 free(pending_txs);
             }
         }
+
+        // Process pending validator join requests
+        mxd_validator_join_request_t *requests = NULL;
+        size_t request_count = 0;
+
+        if (mxd_get_pending_join_requests(&requests, &request_count) == 0 && request_count > 0) {
+            MXD_LOG_INFO("rsc", "Processing %zu validator join requests", request_count);
+
+            for (size_t i = 0; i < request_count; i++) {
+                // Validate request against current total supply
+                if (mxd_validate_join_request(&requests[i], current_block->total_supply) != 0) {
+                    continue;
+                }
+
+                // Check not already in validator set
+                int already_validator = 0;
+                for (size_t j = 0; j < table->count; j++) {
+                    if (memcmp(table->nodes[j]->node_address, requests[i].node_address, 20) == 0) {
+                        already_validator = 1;
+                        break;
+                    }
+                }
+
+                if (already_validator) {
+                    continue;
+                }
+
+                // Add to block membership
+                if (mxd_append_membership_entry(current_block,
+                                               requests[i].node_address,
+                                               requests[i].algo_id,
+                                               requests[i].public_key,
+                                               requests[i].public_key_length,
+                                               requests[i].signature,
+                                               requests[i].signature_length,
+                                               requests[i].timestamp) == 0) {
+                    MXD_LOG_INFO("rsc", "Added validator %02x%02x...%02x%02x to block membership",
+                                requests[i].node_address[0], requests[i].node_address[1],
+                                requests[i].node_address[18], requests[i].node_address[19]);
+                }
+            }
+        }
     }
-    
+
     // Check if block should be closed
     if (current_block && mxd_should_close_block()) {
         if (mxd_close_block() != 0) {

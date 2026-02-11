@@ -116,6 +116,7 @@ add_library(mxd SHARED
     src/blockchain/mxd_blockchain.c
     src/blockchain/mxd_blockchain_validation.c
     src/blockchain/mxd_rsc.c
+    src/blockchain/mxd_validator_management.c
     src/mxd_transaction.c
     src/mxd_utxo.c
     src/mxd_mempool.c

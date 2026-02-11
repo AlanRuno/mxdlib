@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <pthread.h>
 
 // Helper function to serialize a transaction for block storage
 // Returns allocated buffer that must be freed by caller, or NULL on error
@@ -272,4 +273,61 @@ void mxd_cleanup_block_proposer(void) {
     mxd_stop_block_proposal();
     memset(&proposer_state, 0, sizeof(mxd_block_proposer_t));
     MXD_LOG_INFO("proposer", "Block proposer cleaned up");
+}
+
+// Timeout tracking implementation
+static mxd_height_timeout_t g_height_timeout = {0};
+static pthread_mutex_t g_timeout_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static uint64_t get_current_time_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
+}
+
+int mxd_start_height_timeout(uint32_t height, const uint8_t *expected_proposer) {
+    if (!expected_proposer) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_timeout_mutex);
+
+    if (g_height_timeout.height == height) {
+        // Already tracking this height
+        pthread_mutex_unlock(&g_timeout_mutex);
+        return 0;
+    }
+
+    g_height_timeout.height = height;
+    g_height_timeout.wait_start_time = get_current_time_ms();
+    g_height_timeout.retry_count = 0;
+    memcpy(g_height_timeout.expected_proposer, expected_proposer, 20);
+
+    pthread_mutex_unlock(&g_timeout_mutex);
+    return 0;
+}
+
+int mxd_check_timeout_expired(void) {
+    pthread_mutex_lock(&g_timeout_mutex);
+
+    uint64_t now = get_current_time_ms();
+    uint64_t elapsed = now - g_height_timeout.wait_start_time;
+
+    int expired = (elapsed >= MXD_PROPOSER_TIMEOUT_MS);
+
+    pthread_mutex_unlock(&g_timeout_mutex);
+    return expired;
+}
+
+int mxd_increment_retry_count(void) {
+    pthread_mutex_lock(&g_timeout_mutex);
+    g_height_timeout.retry_count++;
+    g_height_timeout.wait_start_time = get_current_time_ms(); // Reset timer for next fallback
+    uint32_t count = g_height_timeout.retry_count;
+    pthread_mutex_unlock(&g_timeout_mutex);
+    return count;
+}
+
+mxd_height_timeout_t* mxd_get_current_timeout(void) {
+    return &g_height_timeout;
 }

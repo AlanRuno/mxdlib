@@ -142,8 +142,82 @@ int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]) {
 }
 
 // Validate block structure and contents
+// Validate that the block proposer is valid (primary or fallback)
+static int mxd_validate_block_proposer(const mxd_block_t *block) {
+  if (!block) {
+    return -1;
+  }
+
+  // Skip proposer validation for genesis block
+  if (block->height == 0) {
+    return 0;
+  }
+
+  // Get membership from previous block to determine valid proposers
+  mxd_block_t prev_block;
+  memset(&prev_block, 0, sizeof(prev_block));
+
+  if (mxd_retrieve_block_by_height(block->height - 1, &prev_block) != 0) {
+    MXD_LOG_ERROR("blockchain", "Failed to retrieve previous block for proposer validation");
+    return -1;
+  }
+
+  uint32_t membership_count = prev_block.rapid_membership_count;
+  mxd_rapid_membership_entry_t *membership = prev_block.rapid_membership_entries;
+
+  if (membership_count == 0) {
+    // Fall back to genesis membership
+    mxd_free_block(&prev_block);
+    if (mxd_retrieve_block_by_height(0, &prev_block) != 0) {
+      return -1;
+    }
+    membership_count = prev_block.rapid_membership_count;
+    membership = prev_block.rapid_membership_entries;
+  }
+
+  if (membership_count == 0) {
+    MXD_LOG_ERROR("blockchain", "No validator set found for proposer validation");
+    mxd_free_block(&prev_block);
+    return -1;
+  }
+
+  // Primary proposer
+  uint32_t primary_index = block->height % membership_count;
+
+  // Check if proposer is primary
+  if (memcmp(block->proposer_id, membership[primary_index].node_address, 20) == 0) {
+    mxd_free_block(&prev_block);
+    return 0; // Valid primary proposer
+  }
+
+  // Check if proposer is a valid fallback (within reasonable retry range)
+  #define MAX_FALLBACK_RETRIES 10
+
+  for (uint32_t retry = 1; retry <= MAX_FALLBACK_RETRIES; retry++) {
+    uint32_t fallback_index = (primary_index + retry) % membership_count;
+
+    if (memcmp(block->proposer_id, membership[fallback_index].node_address, 20) == 0) {
+      MXD_LOG_INFO("blockchain", "Block %u proposed by fallback validator (retry %u)",
+                  block->height, retry);
+      mxd_free_block(&prev_block);
+      return 0; // Valid fallback proposer
+    }
+  }
+
+  // Proposer not valid
+  MXD_LOG_ERROR("blockchain", "Block %u has invalid proposer (not primary or fallback)",
+               block->height);
+  mxd_free_block(&prev_block);
+  return -1;
+}
+
 int mxd_validate_block(const mxd_block_t *block) {
   if (!block) {
+    return -1;
+  }
+
+  // Validate proposer (primary or fallback)
+  if (mxd_validate_block_proposer(block) != 0) {
     return -1;
   }
 
@@ -494,10 +568,9 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
   if (!block || !node_address || !public_key || !signature || signature_length == 0 || public_key_length == 0) {
     return -1;
   }
-  
-  if (!block->transaction_set_frozen) {
-    return -1; // Transaction set must be frozen before accepting membership entries
-  }
+
+  // Allow membership entries to be added during block proposal (not just after freeze)
+  // This enables dynamic validator admission in post-genesis blocks
   
   // Validate algo_id
   if (algo_id != MXD_SIGALG_ED25519 && algo_id != MXD_SIGALG_DILITHIUM5) {
@@ -559,8 +632,8 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
       return -1; // Failed to derive address
     }
     mxd_amount_t balance = mxd_get_balance(addr20);
-    // Check if balance >= 1% of total supply (balance * 100 >= total_supply)
-    if (balance < block->total_supply / 100) {
+    // Check if balance >= 0.10% of total supply (balance * 1000 >= total_supply)
+    if (balance < block->total_supply / 1000) {
       return -1; // Insufficient stake
     }
   }

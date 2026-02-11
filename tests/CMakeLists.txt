@@ -380,3 +380,18 @@ target_link_libraries(mxd_stress_test_100tx
 
 add_test(NAME stress_test_100tx COMMAND mxd_stress_test_100tx)
 set_tests_properties(stress_test_100tx PROPERTIES TIMEOUT 300 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=0")
+
+# Validator management test
+add_executable(mxd_validator_management_test
+    test_validator_management.c
+)
+
+target_link_libraries(mxd_validator_management_test
+    mxd
+    ${OPENSSL_LIBRARIES}
+    sodium
+    pthread
+)
+
+add_test(NAME validator_management_tests COMMAND mxd_validator_management_test)
+set_tests_properties(validator_management_tests PROPERTIES TIMEOUT 120 ENVIRONMENT "MXD_ENABLE_PEER_CONNECTOR=0")
