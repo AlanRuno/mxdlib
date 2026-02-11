@@ -279,11 +279,7 @@ void mxd_cleanup_block_proposer(void) {
 static mxd_height_timeout_t g_height_timeout = {0};
 static pthread_mutex_t g_timeout_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static uint64_t get_current_time_ms(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
-}
+// Note: get_current_time_ms() is already defined earlier in this file (line 82)
 
 int mxd_start_height_timeout(uint32_t height, const uint8_t *expected_proposer) {
     if (!expected_proposer) {
