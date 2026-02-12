@@ -2699,14 +2699,7 @@ int mxd_try_create_genesis_block(mxd_rapid_table_t *table, const uint8_t *node_a
     return mxd_try_coordinate_genesis_block();
 }
 
-// Forward declarations for block proposer functions
-extern int mxd_init_block_proposer(const uint8_t proposer_id[20]);
-extern int mxd_start_block_proposal(const uint8_t prev_hash[64], uint32_t height);
-extern int mxd_add_transaction_to_block(const void* tx);
-extern int mxd_should_close_block(void);
-extern int mxd_close_block(void);
-extern void* mxd_get_current_block(void);
-extern int mxd_stop_block_proposal(void);
+// Block proposer functions are now declared in mxd_block_proposer.h (included above)
 
 // Forward declarations for mempool functions
 extern size_t mxd_get_mempool_size(void);
