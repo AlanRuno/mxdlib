@@ -27,6 +27,8 @@
 #include "../include/mxd_mempool.h"
 #include "../include/mxd_smart_contracts.h"
 #include "../include/mxd_blockchain_sync.h"
+#include "../include/mxd_transaction.h"
+#include "../include/mxd_serialize.h"
 #include "metrics_display.h"
 #include "memory_utils.h"
 
@@ -40,6 +42,73 @@ extern void mxd_validation_message_handler(const char *address, uint16_t port,
                                            const void *payload,
                                            size_t payload_length);
 
+// Handle incoming P2P transaction: deserialize and add to local mempool
+static void handle_p2p_transaction(const void *payload, size_t payload_length) {
+    if (!payload || payload_length < 93) return; // minimum header size
+
+    const uint8_t *ptr = payload;
+    const uint8_t *end = ptr + payload_length;
+
+    mxd_transaction_t tx;
+    memset(&tx, 0, sizeof(mxd_transaction_t));
+
+    tx.version = mxd_read_u32_be(&ptr);
+    tx.input_count = mxd_read_u32_be(&ptr);
+    tx.output_count = mxd_read_u32_be(&ptr);
+    tx.voluntary_tip = mxd_read_u64_be(&ptr);
+    tx.timestamp = mxd_read_u64_be(&ptr);
+    tx.is_coinbase = mxd_read_u8(&ptr);
+    mxd_read_bytes(&ptr, tx.tx_hash, 64);
+
+    if (tx.input_count > 256 || tx.output_count > 256) {
+        return; // sanity check
+    }
+
+    // Deserialize inputs
+    if (tx.input_count > 0) {
+        tx.inputs = calloc(tx.input_count, sizeof(mxd_tx_input_t));
+        if (!tx.inputs) return;
+        for (uint32_t i = 0; i < tx.input_count; i++) {
+            if (ptr + 64 + 4 + 1 + 2 > end) { mxd_free_transaction(&tx); return; }
+            mxd_read_bytes(&ptr, tx.inputs[i].prev_tx_hash, 64);
+            tx.inputs[i].output_index = mxd_read_u32_be(&ptr);
+            tx.inputs[i].algo_id = mxd_read_u8(&ptr);
+            tx.inputs[i].public_key_length = mxd_read_u16_be(&ptr);
+            if (ptr + tx.inputs[i].public_key_length + 2 > end) { mxd_free_transaction(&tx); return; }
+            tx.inputs[i].public_key = malloc(tx.inputs[i].public_key_length);
+            if (!tx.inputs[i].public_key) { mxd_free_transaction(&tx); return; }
+            mxd_read_bytes(&ptr, tx.inputs[i].public_key, tx.inputs[i].public_key_length);
+            tx.inputs[i].signature_length = mxd_read_u16_be(&ptr);
+            if (tx.inputs[i].signature_length > 0) {
+                if (ptr + tx.inputs[i].signature_length > end) { mxd_free_transaction(&tx); return; }
+                tx.inputs[i].signature = malloc(tx.inputs[i].signature_length);
+                if (!tx.inputs[i].signature) { mxd_free_transaction(&tx); return; }
+                mxd_read_bytes(&ptr, tx.inputs[i].signature, tx.inputs[i].signature_length);
+            }
+        }
+    }
+
+    // Deserialize outputs
+    if (tx.output_count > 0) {
+        tx.outputs = calloc(tx.output_count, sizeof(mxd_tx_output_t));
+        if (!tx.outputs) { mxd_free_transaction(&tx); return; }
+        for (uint32_t i = 0; i < tx.output_count; i++) {
+            if (ptr + 20 + 8 > end) { mxd_free_transaction(&tx); return; }
+            mxd_read_bytes(&ptr, tx.outputs[i].recipient_addr, 20);
+            tx.outputs[i].amount = mxd_read_u64_be(&ptr);
+        }
+    }
+
+    // Add to local mempool (will silently fail if already present)
+    if (mxd_add_to_mempool(&tx, MXD_PRIORITY_MEDIUM) == 0) {
+        char hash_hex[17] = {0};
+        for (int i = 0; i < 8; i++) snprintf(hash_hex + i*2, 3, "%02x", tx.tx_hash[i]);
+        MXD_LOG_DEBUG("node", "Added P2P transaction %s... to mempool", hash_hex);
+    }
+
+    mxd_free_transaction(&tx);
+}
+
 static void mxd_message_multiplexer(const char *address, uint16_t port,
                                      mxd_message_type_t type,
                                      const void *payload,
@@ -51,7 +120,11 @@ static void mxd_message_multiplexer(const char *address, uint16_t port,
         case MXD_MSG_GENESIS_SYNC:
             mxd_genesis_message_handler(address, port, type, payload, payload_length);
             break;
-        
+
+        case MXD_MSG_TRANSACTIONS:
+            handle_p2p_transaction(payload, payload_length);
+            break;
+
         case MXD_MSG_VALIDATION_SIGNATURE:
         case MXD_MSG_VALIDATION_CHAIN:
         case MXD_MSG_GET_VALIDATION_CHAIN:
@@ -60,7 +133,7 @@ static void mxd_message_multiplexer(const char *address, uint16_t port,
         case MXD_MSG_BLOCK_VALIDATION:
             mxd_validation_message_handler(address, port, type, payload, payload_length);
             break;
-        
+
         default:
             MXD_LOG_WARN("node", "Unhandled message type: %d from %s:%u", type, address, port);
             break;

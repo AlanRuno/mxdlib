@@ -148,6 +148,9 @@ int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipie
 // Deep copy transaction (including pointer fields)
 int mxd_tx_deep_copy(mxd_transaction_t *dst, const mxd_transaction_t *src);
 
+// Serialize transaction to bytes (for P2P broadcast)
+uint8_t* mxd_serialize_transaction(const mxd_transaction_t *tx, size_t *out_len);
+
 // Free transaction resources
 void mxd_free_transaction(mxd_transaction_t *tx);
 

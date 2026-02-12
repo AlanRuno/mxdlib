@@ -421,14 +421,18 @@ int mxd_apply_transaction_to_utxo(const mxd_transaction_t *tx) {
     memcpy(tx_hash, tx->tx_hash, 64);
   }
   
-  // Create UTXOs from transaction outputs
-  if (mxd_create_utxos_from_tx(tx, tx_hash) != 0) {
-    MXD_LOG_ERROR("transaction", "Failed to create UTXOs from transaction outputs");
-    return -1;
-  }
-  
+  // Mark inputs as spent FIRST (before creating outputs)
+  // This prevents supply inflation: if input UTXOs don't exist (e.g. because
+  // the transaction wasn't gossiped to this node), we fail early without
+  // creating orphan output UTXOs that would mint coins from nothing.
   if (!tx->is_coinbase && mxd_mark_tx_inputs_spent(tx) != 0) {
     MXD_LOG_ERROR("transaction", "Failed to mark transaction inputs as spent");
+    return -1;
+  }
+
+  // Create UTXOs from transaction outputs only after inputs are validated
+  if (mxd_create_utxos_from_tx(tx, tx_hash) != 0) {
+    MXD_LOG_ERROR("transaction", "Failed to create UTXOs from transaction outputs");
     return -1;
   }
   
@@ -475,6 +479,54 @@ int mxd_mark_tx_inputs_spent(const mxd_transaction_t *tx) {
   }
   
   return 0;
+}
+
+// Serialize transaction to bytes for P2P broadcast
+uint8_t* mxd_serialize_transaction(const mxd_transaction_t *tx, size_t *out_len) {
+  if (!tx || !out_len) return NULL;
+
+  // Calculate total size
+  size_t size = 4 + 4 + 4 + 8 + 8 + 1 + 64; // header fields
+
+  for (uint32_t i = 0; i < tx->input_count; i++) {
+    size += 64 + 4 + 1 + 2 + tx->inputs[i].public_key_length + 2 + tx->inputs[i].signature_length;
+  }
+
+  for (uint32_t i = 0; i < tx->output_count; i++) {
+    size += 20 + 8;
+  }
+
+  uint8_t *buffer = malloc(size);
+  if (!buffer) return NULL;
+
+  uint8_t *ptr = buffer;
+  mxd_write_u32_be(&ptr, tx->version);
+  mxd_write_u32_be(&ptr, tx->input_count);
+  mxd_write_u32_be(&ptr, tx->output_count);
+  mxd_write_u64_be(&ptr, tx->voluntary_tip);
+  mxd_write_u64_be(&ptr, tx->timestamp);
+  mxd_write_u8(&ptr, tx->is_coinbase);
+  mxd_write_bytes(&ptr, tx->tx_hash, 64);
+
+  for (uint32_t i = 0; i < tx->input_count; i++) {
+    mxd_write_bytes(&ptr, tx->inputs[i].prev_tx_hash, 64);
+    mxd_write_u32_be(&ptr, tx->inputs[i].output_index);
+    mxd_write_u8(&ptr, tx->inputs[i].algo_id);
+    mxd_write_u16_be(&ptr, tx->inputs[i].public_key_length);
+    mxd_write_bytes(&ptr, tx->inputs[i].public_key, tx->inputs[i].public_key_length);
+    mxd_write_u16_be(&ptr, tx->inputs[i].signature_length);
+    if (tx->inputs[i].signature_length > 0 && tx->inputs[i].signature) {
+      mxd_write_bytes(&ptr, tx->inputs[i].signature, tx->inputs[i].signature_length);
+    }
+  }
+
+  for (uint32_t i = 0; i < tx->output_count; i++) {
+    mxd_write_bytes(&ptr, tx->outputs[i].recipient_addr, 20);
+    mxd_write_u64_be(&ptr, tx->outputs[i].amount);
+  }
+
+  *out_len = size;
+  return buffer;
 }
 
 int mxd_create_coinbase_transaction(mxd_transaction_t *tx, const uint8_t recipient_addr[20],

@@ -195,11 +195,12 @@ static char* handle_transaction_submit(const char *post_data, int *status_code) 
         return strdup("{\"error\":\"No UTXOs found for sender address\"}");
     }
     
-    // Select UTXOs to cover the amount
+    // Select unspent UTXOs to cover the amount
     mxd_amount_t total_input = 0;
     size_t inputs_added = 0;
     for (size_t i = 0; i < utxo_count && total_input < amount; i++) {
-        if (mxd_add_tx_input(&tx, utxos[i].tx_hash, utxos[i].output_index, 
+        if (utxos[i].is_spent) continue;
+        if (mxd_add_tx_input(&tx, utxos[i].tx_hash, utxos[i].output_index,
                              algo_id, pubkey, (size_t)pubkey_len) == 0) {
             total_input += utxos[i].amount;
             inputs_added++;
@@ -267,7 +268,18 @@ static char* handle_transaction_submit(const char *post_data, int *status_code) 
         *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
         return strdup("{\"error\":\"Failed to add transaction to mempool\"}");
     }
-    
+
+    // Broadcast transaction to all peers so they have it in their mempool
+    // before the proposer includes it in a block
+    {
+        size_t tx_data_len = 0;
+        uint8_t *tx_data = mxd_serialize_transaction(&tx, &tx_data_len);
+        if (tx_data && tx_data_len > 0) {
+            mxd_broadcast_message(MXD_MSG_TRANSACTIONS, tx_data, tx_data_len);
+            free(tx_data);
+        }
+    }
+
     // Build success response with transaction hash
     char tx_hash_hex[129] = {0};
     for (int i = 0; i < 64; i++) {
@@ -565,7 +577,12 @@ static char* handle_balance(const char *address_hex, int *status_code) {
     
     if (mxd_get_utxos_by_pubkey_hash(address, &utxos, &utxo_count) == 0) {
         for (size_t i = 0; i < utxo_count; i++) {
-            balance += utxos[i].amount;
+            if (!utxos[i].is_spent) {
+                balance += utxos[i].amount;
+            }
+        }
+        for (size_t i = 0; i < utxo_count; i++) {
+            mxd_free_utxo(&utxos[i]);
         }
         free(utxos);
     }

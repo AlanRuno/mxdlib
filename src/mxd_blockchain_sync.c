@@ -198,7 +198,14 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
         
         // Apply transactions to create UTXOs (critical for genesis block)
         if (mxd_apply_block_transactions(&block) != 0) {
-            MXD_LOG_WARN("sync", "Failed to apply transactions for unsolicited block at height %u", block.height);
+            if (block.height == 0) {
+                // Genesis block must always be accepted
+                MXD_LOG_WARN("sync", "Failed to apply transactions for genesis block, storing anyway");
+            } else {
+                MXD_LOG_WARN("sync", "Failed to apply transactions for unsolicited block at height %u, rejecting", block.height);
+                mxd_free_block(&block);
+                return;
+            }
         }
 
         // Guard against overwriting a block that already has more validation signatures.

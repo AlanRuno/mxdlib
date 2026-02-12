@@ -170,10 +170,19 @@ static int init_lru_cache() {
 static void add_to_lru_cache(const mxd_utxo_t *utxo) {
     if (!utxo || !lru_cache) return;
     
-    // Check if UTXO is already in cache
+    // Check if UTXO is already in cache - update it if found
     for (size_t i = 0; i < lru_cache_count; i++) {
         if (memcmp(lru_cache[i].tx_hash, utxo->tx_hash, 64) == 0 &&
             lru_cache[i].output_index == utxo->output_index) {
+            free(lru_cache[i].cosigner_keys);
+            lru_cache[i].cosigner_keys = NULL;
+            memcpy(&lru_cache[i], utxo, sizeof(mxd_utxo_t));
+            if (utxo->cosigner_count > 0 && utxo->cosigner_keys) {
+                lru_cache[i].cosigner_keys = malloc(utxo->cosigner_count * 20);
+                if (lru_cache[i].cosigner_keys) {
+                    memcpy(lru_cache[i].cosigner_keys, utxo->cosigner_keys, utxo->cosigner_count * 20);
+                }
+            }
             lru_access_counter[i] = ++current_access_count;
             return;
         }

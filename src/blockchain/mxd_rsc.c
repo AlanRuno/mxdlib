@@ -1183,9 +1183,16 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
                         
                         // Calculate transaction hash
                         mxd_calculate_tx_hash(&tip_tx, tip_tx.tx_hash);
-                        
-                        mxd_create_utxos_from_tx(&tip_tx, tip_tx.tx_hash);
-                        
+
+                        // Guard: only create tip UTXOs if they don't already exist
+                        // (prevents double-creation when validation chain is reprocessed)
+                        mxd_utxo_t check_utxo;
+                        if (mxd_get_utxo(tip_tx.tx_hash, 0, &check_utxo) != 0) {
+                            mxd_create_utxos_from_tx(&tip_tx, tip_tx.tx_hash);
+                        } else {
+                            MXD_LOG_DEBUG("rsc", "Tip UTXOs already exist for block %u, skipping", block->height);
+                        }
+
                         // Free transaction resources
                         mxd_free_transaction(&tip_tx);
                     }
