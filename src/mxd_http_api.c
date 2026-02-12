@@ -703,7 +703,13 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
         return strdup("{\"error\":\"Missing or invalid 'function' field\"}");
     }
 
-    const char *function_name = function_item->valuestring;
+    // Copy function name before freeing JSON
+    char *function_name = strdup(function_item->valuestring);
+    if (!function_name) {
+        cJSON_Delete(json);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Memory allocation failed\"}");
+    }
 
     // Extract params (optional, hex string)
     const char *params_hex = "";
@@ -718,23 +724,27 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     if (params_len > 0) {
         // SECURITY FIX: Limit params size to prevent DoS (1MB max = 2MB hex)
         if (params_len > MXD_MAX_CONTRACT_SIZE * 2) {
+            free(function_name);
             cJSON_Delete(json);
             *status_code = MHD_HTTP_BAD_REQUEST;
             return strdup("{\"error\":\"Params too large (max 1MB)\"}");
         }
 
         if (params_len % 2 != 0) {
+            free(function_name);
             cJSON_Delete(json);
             *status_code = MHD_HTTP_BAD_REQUEST;
             return strdup("{\"error\":\"Invalid params hex encoding\"}");
         }
         params = malloc(params_len / 2);
         if (!params) {
+            free(function_name);
             cJSON_Delete(json);
             *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
             return strdup("{\"error\":\"Memory allocation failed\"}");
         }
         if (hex_to_bytes(params_hex, params, params_len / 2) != (int)(params_len / 2)) {
+            free(function_name);
             free(params);
             cJSON_Delete(json);
             *status_code = MHD_HTTP_BAD_REQUEST;
@@ -750,6 +760,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     memset(&contract_metadata, 0, sizeof(contract_metadata));
 
     if (mxd_contracts_db_load_contract(contract_hash, &contract_metadata) != 0) {
+        free(function_name);
         if (params) free(params);
         *status_code = MHD_HTTP_NOT_FOUND;
         return strdup("{\"error\":\"Contract not found in database\"}");
@@ -762,6 +773,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     uint8_t zero_address[20] = {0};
     if (mxd_deploy_contract(contract_metadata.bytecode, contract_metadata.bytecode_size,
                            zero_address, &state) != 0) {
+        free(function_name);
         free(contract_metadata.bytecode);
         if (params) free(params);
         *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
@@ -776,6 +788,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     IM3Function func;
     M3Result result = m3_FindFunction(&func, runtime, function_name);
     if (result) {
+        free(function_name);
         if (params) free(params);
         mxd_free_contract_state(&state);
 
@@ -786,6 +799,9 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
         *status_code = MHD_HTTP_NOT_FOUND;
         return strdup(error_msg);
     }
+
+    // Function name no longer needed after finding function
+    free(function_name);
 
     // Calculate gas cost
     uint64_t gas_used = mxd_calculate_gas_from_bytecode(state.bytecode, state.bytecode_size);
