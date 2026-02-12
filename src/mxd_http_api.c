@@ -824,7 +824,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     // Load module into runtime
     result = m3_LoadModule(runtime, module);
     if (result) {
-        m3_FreeModule(module);
+        // Note: module is freed when runtime is freed
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(state.bytecode);
@@ -844,7 +844,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     IM3Function func;
     result = m3_FindFunction(&func, runtime, function_name);
     if (result) {
-        m3_FreeModule(module);
+        // Note: module is freed when runtime is freed
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(state.bytecode);
@@ -867,7 +867,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
 
     // Check gas limit
     if (gas_used > state.gas_limit) {
-        m3_FreeModule(module);
+        // Note: module is freed when runtime is freed
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(state.bytecode);
@@ -897,7 +897,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
         memcpy(&param2, params + 4, 4);
         result = m3_CallV(func, param1, param2);
     } else {
-        m3_FreeModule(module);
+        // Note: module is freed when runtime is freed
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(state.bytecode);
@@ -911,7 +911,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     if (params) free(params);
 
     if (result) {
-        m3_FreeModule(module);
+        // Note: module is freed when runtime is freed
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(state.bytecode);
@@ -927,7 +927,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     // Get result
     result = m3_GetResultsV(func, &ret);
     if (result) {
-        m3_FreeModule(module);
+        // Note: module is freed when runtime is freed
         m3_FreeRuntime(runtime);
         m3_FreeEnvironment(env);
         free(state.bytecode);
@@ -954,8 +954,7 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
     char *response_str = cJSON_PrintUnformatted(response);
     cJSON_Delete(response);
 
-    // Cleanup
-    m3_FreeModule(module);
+    // Cleanup - Note: module is freed when runtime is freed
     m3_FreeRuntime(runtime);
     m3_FreeEnvironment(env);
     free(state.bytecode);
