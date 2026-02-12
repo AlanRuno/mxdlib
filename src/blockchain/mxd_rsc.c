@@ -2870,22 +2870,16 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
 
         if (current_timeout_height != next_height) {
             // First time waiting for this height - start timeout tracking
-            // Calculate expected proposer for this height
-            mxd_block_t latest_block;
-            memset(&latest_block, 0, sizeof(latest_block));
+            // Use rapid table to determine expected proposer
+            if (table && table->count > 0) {
+                uint32_t expected_index = next_height % table->count;
+                uint8_t *expected_addr = table->nodes[expected_index]->node_address;
 
-            if (mxd_retrieve_block_by_height(latest_height, &latest_block) == 0) {
-                if (latest_block.rapid_membership_count > 0) {
-                    uint32_t expected_index = next_height % latest_block.rapid_membership_count;
-                    uint8_t *expected_addr = latest_block.rapid_membership_entries[expected_index].node_address;
+                mxd_start_height_timeout(next_height, expected_addr);
 
-                    mxd_start_height_timeout(next_height, expected_addr);
-
-                    MXD_LOG_INFO("rsc", "Started timeout tracking for height %u, expecting validator %02x%02x...%02x%02x",
-                                next_height, expected_addr[0], expected_addr[1],
-                                expected_addr[18], expected_addr[19]);
-                }
-                mxd_free_block(&latest_block);
+                MXD_LOG_INFO("rsc", "Started timeout tracking for height %u, expecting validator %02x%02x...%02x%02x (index %u of %zu validators)",
+                            next_height, expected_addr[0], expected_addr[1],
+                            expected_addr[18], expected_addr[19], expected_index, table->count);
             }
         } else if (mxd_check_timeout_expired()) {
             // Timeout expired! Increment retry count for fallback
