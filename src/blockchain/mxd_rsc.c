@@ -1134,13 +1134,20 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     // Check if block has reached quorum
     if (mxd_block_has_validation_quorum(block, table)) {
         context->status = MXD_VALIDATION_COMPLETE;
-        
+
         if (block->total_supply == 0) {
             size_t total_count = 0;
             size_t pruned_count = 0;
             mxd_amount_t total_value = 0;
-            if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0) {
+            if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0 && total_value > 0) {
                 block->total_supply = total_value;
+            } else if (block->height > 0) {
+                // Fallback: inherit from previous block
+                mxd_block_t prev_block;
+                if (mxd_retrieve_block_by_height(block->height - 1, &prev_block) == 0) {
+                    block->total_supply = prev_block.total_supply;
+                    mxd_free_block(&prev_block);
+                }
             }
         }
         
@@ -1202,16 +1209,22 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     if (mxd_get_next_validator(block, table, next_validator_id) != 0) {
         if (context->signature_count >= context->required_signatures) {
             context->status = MXD_VALIDATION_COMPLETE;
-            
+
             if (block->total_supply == 0) {
                 size_t total_count = 0;
                 size_t pruned_count = 0;
                 mxd_amount_t total_value = 0;
-                if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0) {
+                if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0 && total_value > 0) {
                     block->total_supply = total_value;
+                } else if (block->height > 0) {
+                    mxd_block_t prev_block;
+                    if (mxd_retrieve_block_by_height(block->height - 1, &prev_block) == 0) {
+                        block->total_supply = prev_block.total_supply;
+                        mxd_free_block(&prev_block);
+                    }
                 }
             }
-            
+
             mxd_store_block(block);
             
             return 0;
@@ -2904,18 +2917,21 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         // Start a new block proposal
         mxd_block_t latest_block;
         memset(&latest_block, 0, sizeof(latest_block));
-        
+
         if (mxd_retrieve_block_by_height(latest_height, &latest_block) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to retrieve latest block at height %u for proposal", latest_height);
             return -1;
         }
-        
+
+        // Save total_supply from previous block before freeing
+        mxd_amount_t prev_total_supply = latest_block.total_supply;
+
         if (mxd_start_block_proposal(latest_block.block_hash, next_height) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to start block proposal at height %u", next_height);
             mxd_free_block(&latest_block);
             return -1;
         }
-        
+
         last_proposed_height = next_height;
         mxd_free_block(&latest_block);
 
@@ -2928,6 +2944,13 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
             MXD_LOG_INFO("rsc", "Started PRIMARY block proposal for height %u", next_height);
         }
         current_block = (mxd_block_t *)mxd_get_current_block();
+
+        // Inherit total_supply from previous block
+        if (current_block && prev_total_supply > 0) {
+            current_block->total_supply = prev_total_supply;
+            MXD_LOG_DEBUG("rsc", "Inherited total_supply=%llu from previous block",
+                         (unsigned long long)prev_total_supply);
+        }
     }
     
     // If we have an active proposal, try to add transactions from mempool
