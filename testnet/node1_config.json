@@ -1,10 +1,10 @@
 {
-    "node_id": "NODE_ID_PLACEHOLDER",
+    "node_id": "testnet-node-1",
     "network_type": "testnet",
     "port": 8000,
     "metrics_port": 8080,
-    "data_dir": "/opt/mxdlib/testnet/nodeNODE_NUM/data",
-    "node_name": "MXD Testnet Node NODE_NUM",
+    "data_dir": "/opt/mxdlib/testnet/node1/data",
+    "node_name": "MXD Testnet Node 1",
     "initial_stake": 120.0,
     "preferred_sign_algo": 1,
     "bootstrap_nodes": [

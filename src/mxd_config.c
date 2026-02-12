@@ -44,8 +44,8 @@ static int mxd_validate_config(mxd_config_t* config) {
     // Validate port range
     if (config->port < 1024 || config->port > 65535) return -1;
     
-    // Validate stake amount
-    if (config->initial_stake < 0.0) return -1;
+    // Validate stake amount (mxd_amount_t is uint64_t, check for uninitialized/overflow)
+    if (config->initial_stake > MXD_AMOUNT_MAX) return -1;
     
     // Validate intervals
     if (config->metrics_interval < 100) return -1;
@@ -71,7 +71,7 @@ void mxd_set_default_config(mxd_config_t* config) {
     // Basic settings
     config->port = 8000;
     config->metrics_port = 8080;
-    config->initial_stake = 100ULL * MXD_AMOUNT_MULTIPLIER;  // 100 MXD in base units
+    config->initial_stake = 120ULL * MXD_AMOUNT_MULTIPLIER;  // 120 MXD in base units
     config->metrics_interval = 1000;
     strncpy(config->data_dir, "data", sizeof(config->data_dir) - 1);
     
