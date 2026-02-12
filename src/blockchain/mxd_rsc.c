@@ -13,6 +13,7 @@
 #include "../../include/mxd_blockchain.h"
 #include "../../include/mxd_serialize.h"
 #include "../../include/mxd_validator_management.h"
+#include "../../include/mxd_block_proposer.h"
 #include "../metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
