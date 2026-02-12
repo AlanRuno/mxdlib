@@ -63,6 +63,7 @@ static char* block_to_json(const mxd_block_t *block) {
         "\"version\":%u,"
         "\"difficulty\":%u,"
         "\"nonce\":%lu,"
+        "\"transaction_count\":%u,"
         "\"validation_count\":%u,"
         "\"rapid_membership_count\":%u,"
         "\"total_supply\":%lu"
@@ -75,6 +76,7 @@ static char* block_to_json(const mxd_block_t *block) {
         block->version,
         block->difficulty,
         (unsigned long)block->nonce,
+        block->transaction_count,
         block->validation_count,
         block->rapid_membership_count,
         (unsigned long)block->total_supply
@@ -1081,31 +1083,94 @@ static enum MHD_Result handle_request(void *cls,
     if (strcmp(url, "/status") == 0 || strcmp(url, "/") == 0) {
         uint32_t height = 0;
         mxd_get_blockchain_height(&height);
-        
-        // Get latest block if available
-        mxd_block_t block;
+
+        // Get latest block and calculate statistics
         char latest_hash[129] = {0};
-        if (height > 0 && mxd_retrieve_block_by_height(height - 1, &block) == 0) {
-            for (int i = 0; i < 64; i++) {
-                snprintf(latest_hash + i*2, 3, "%02x", block.block_hash[i]);
+        uint64_t total_transactions = 0;
+        double avg_block_time = 0.0;
+        double current_tps = 0.0;
+        uint32_t validator_count = 0;
+        uint32_t difficulty = 1;
+        uint64_t total_supply = 0;
+
+        // Get validator count from rapid table
+        const mxd_rapid_table_t *table = mxd_get_rapid_table();
+        if (table) {
+            validator_count = (uint32_t)table->count;
+        }
+
+        if (height > 0) {
+            // Get latest block for hash
+            mxd_block_t block;
+            if (mxd_retrieve_block_by_height(height - 1, &block) == 0) {
+                for (int i = 0; i < 64; i++) {
+                    snprintf(latest_hash + i*2, 3, "%02x", block.block_hash[i]);
+                }
+                difficulty = block.difficulty;
+                total_supply = block.total_supply;
+                mxd_free_block(&block);
             }
-            mxd_free_block(&block);
-        } else if (height == 0) {
+
+            // Calculate stats from recent blocks (last 100 or all)
+            uint32_t sample_size = (height > 100) ? 100 : height;
+            uint64_t first_timestamp = 0;
+            uint64_t last_timestamp = 0;
+
+            for (uint32_t i = 0; i < sample_size; i++) {
+                uint32_t bh = height - 1 - i;
+                mxd_block_t b = {0};
+                if (mxd_retrieve_block_by_height(bh, &b) == 0) {
+                    total_transactions += b.transaction_count;
+                    if (i == 0) last_timestamp = b.timestamp;
+                    if (i == sample_size - 1 || bh == 0) first_timestamp = b.timestamp;
+                    mxd_free_block(&b);
+                }
+                if (bh == 0) break;
+            }
+
+            // Average block time
+            if (sample_size > 1 && last_timestamp > first_timestamp) {
+                avg_block_time = (double)(last_timestamp - first_timestamp) / (double)(sample_size - 1);
+            }
+
+            // TPS
+            if (last_timestamp > first_timestamp) {
+                uint64_t time_span = last_timestamp - first_timestamp;
+                if (time_span > 0) {
+                    current_tps = (double)total_transactions / (double)time_span;
+                }
+            }
+        } else {
             // Check for genesis block at height 0
+            mxd_block_t block;
             if (mxd_retrieve_block_by_height(0, &block) == 0) {
                 for (int i = 0; i < 64; i++) {
                     snprintf(latest_hash + i*2, 3, "%02x", block.block_hash[i]);
                 }
-                height = 1; // We have genesis
+                height = 1;
+                total_supply = block.total_supply;
+                total_transactions = block.transaction_count;
                 mxd_free_block(&block);
             }
         }
-        
-        json_response = malloc(512);
+
+        json_response = malloc(1024);
         if (json_response) {
-            snprintf(json_response, 512,
-                "{\"status\":\"ok\",\"height\":%u,\"latest_hash\":\"%s\"}",
-                height, latest_hash);
+            snprintf(json_response, 1024,
+                "{\"status\":\"ok\","
+                "\"height\":%u,"
+                "\"latest_hash\":\"%s\","
+                "\"total_transactions\":%llu,"
+                "\"validator_count\":%u,"
+                "\"difficulty\":%u,"
+                "\"total_supply\":%llu,"
+                "\"avg_block_time\":%.2f,"
+                "\"current_tps\":%.4f}",
+                height, latest_hash,
+                (unsigned long long)total_transactions,
+                validator_count, difficulty,
+                (unsigned long long)total_supply,
+                avg_block_time, current_tps);
         }
     }
     // Handle /block/{height} endpoint
