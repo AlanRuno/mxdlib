@@ -11,11 +11,13 @@
 #include "../include/mxd_rsc.h"
 #include "../include/mxd_smart_contracts.h"
 #include "../include/mxd_contracts_db.h"
+#include "../include/mxd_gas_metering.h"
 #include <microhttpd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <cjson/cJSON.h>
+#include <wasm3/wasm3.h>
 
 // Connection context for POST data accumulation
 typedef struct {
@@ -743,12 +745,224 @@ static char* handle_contract_call(const char *post_data, int *status_code) {
 
     cJSON_Delete(json);
 
-    // TODO: Load contract state from database
-    // For now, return error indicating contracts need to be stored
+    // Load contract metadata from database
+    mxd_contract_metadata_t contract_metadata;
+    memset(&contract_metadata, 0, sizeof(contract_metadata));
+
+    if (mxd_contracts_db_load_contract(contract_hash, &contract_metadata) != 0) {
+        if (params) free(params);
+        *status_code = MHD_HTTP_NOT_FOUND;
+        return strdup("{\"error\":\"Contract not found in database\"}");
+    }
+
+    // Initialize contract state for execution
+    mxd_contract_state_t state;
+    memset(&state, 0, sizeof(state));
+
+    // Calculate contract hash
+    mxd_sha512(contract_metadata.bytecode, contract_metadata.bytecode_size, state.contract_hash);
+
+    // Initialize gas limits
+    state.gas_used = 0;
+    state.gas_limit = MXD_MAX_GAS;
+    state.reentrancy_lock = 0;
+    state.call_depth = 0;
+
+    // Store bytecode
+    state.bytecode = malloc(contract_metadata.bytecode_size);
+    if (!state.bytecode) {
+        free(contract_metadata.bytecode);
+        if (params) free(params);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Failed to allocate bytecode storage\"}");
+    }
+    memcpy(state.bytecode, contract_metadata.bytecode, contract_metadata.bytecode_size);
+    state.bytecode_size = contract_metadata.bytecode_size;
+
+    // Create per-contract WASM environment
+    IM3Environment env = m3_NewEnvironment();
+    if (!env) {
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+        if (params) free(params);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Failed to create WASM environment\"}");
+    }
+    state.env = env;
+
+    // Create per-contract WASM runtime (64KB memory)
+    IM3Runtime runtime = m3_NewRuntime(env, 64 * 1024, NULL);
+    if (!runtime) {
+        m3_FreeEnvironment(env);
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+        if (params) free(params);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup("{\"error\":\"Failed to create WASM runtime\"}");
+    }
+    state.runtime = runtime;
+
+    // Parse WASM module
+    IM3Module module = NULL;
+    M3Result result = m3_ParseModule(env, &module, contract_metadata.bytecode,
+                                     contract_metadata.bytecode_size);
+    if (!module || result) {
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+        if (params) free(params);
+
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg),
+                "{\"error\":\"WASM parse error\",\"details\":\"%s\"}",
+                result ? result : "unknown");
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup(error_msg);
+    }
+
+    // Load module into runtime
+    result = m3_LoadModule(runtime, module);
+    if (result) {
+        m3_FreeModule(module);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+        if (params) free(params);
+
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg),
+                "{\"error\":\"WASM load error\",\"details\":\"%s\"}", result);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup(error_msg);
+    }
+
+    state.module = module;
+
+    // Find the requested function
+    IM3Function func;
+    result = m3_FindFunction(&func, runtime, function_name);
+    if (result) {
+        m3_FreeModule(module);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+        if (params) free(params);
+
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg),
+                "{\"error\":\"Function not found\",\"function\":\"%s\",\"details\":\"%s\"}",
+                function_name, result);
+        *status_code = MHD_HTTP_NOT_FOUND;
+        return strdup(error_msg);
+    }
+
+    // Calculate gas cost
+    uint64_t gas_used = mxd_calculate_gas_from_bytecode(state.bytecode, state.bytecode_size);
+    if (gas_used == 0) {
+        gas_used = 1000 + (state.bytecode_size / 10) + (params_len * 2);
+    }
+
+    // Check gas limit
+    if (gas_used > state.gas_limit) {
+        m3_FreeModule(module);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+        if (params) free(params);
+
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Gas limit exceeded\"}");
+    }
+
+    // Execute function based on parameters
+    // For now, support functions with 0, 1, or 2 i32 parameters
+    uint32_t ret = 0;
+
+    if (params_len == 0) {
+        // No parameters
+        result = m3_CallV(func);
+    } else if (params_len == 4) {
+        // One i32 parameter
+        uint32_t param1;
+        memcpy(&param1, params, 4);
+        result = m3_CallV(func, param1);
+    } else if (params_len == 8) {
+        // Two i32 parameters
+        uint32_t param1, param2;
+        memcpy(&param1, params, 4);
+        memcpy(&param2, params + 4, 4);
+        result = m3_CallV(func, param1, param2);
+    } else {
+        m3_FreeModule(module);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+        if (params) free(params);
+
+        *status_code = MHD_HTTP_BAD_REQUEST;
+        return strdup("{\"error\":\"Unsupported parameter size (must be 0, 4, or 8 bytes for i32 functions)\"}");
+    }
+
     if (params) free(params);
 
-    *status_code = MHD_HTTP_NOT_IMPLEMENTED;
-    return strdup("{\"error\":\"Contract execution not yet implemented\",\"details\":\"Contract state persistence needed\"}");
+    if (result) {
+        m3_FreeModule(module);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg),
+                "{\"error\":\"Contract execution failed\",\"details\":\"%s\"}", result);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup(error_msg);
+    }
+
+    // Get result
+    result = m3_GetResultsV(func, &ret);
+    if (result) {
+        m3_FreeModule(module);
+        m3_FreeRuntime(runtime);
+        m3_FreeEnvironment(env);
+        free(state.bytecode);
+        free(contract_metadata.bytecode);
+
+        char error_msg[256];
+        snprintf(error_msg, sizeof(error_msg),
+                "{\"error\":\"Failed to get function result\",\"details\":\"%s\"}", result);
+        *status_code = MHD_HTTP_INTERNAL_SERVER_ERROR;
+        return strdup(error_msg);
+    }
+
+    // Build JSON response
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddBoolToObject(response, "success", 1);
+    cJSON_AddNumberToObject(response, "result", ret);
+    cJSON_AddNumberToObject(response, "gas_used", gas_used);
+
+    // Convert result to hex
+    char result_hex[9] = {0};
+    snprintf(result_hex, sizeof(result_hex), "%08x", ret);
+    cJSON_AddStringToObject(response, "result_hex", result_hex);
+
+    char *response_str = cJSON_PrintUnformatted(response);
+    cJSON_Delete(response);
+
+    // Cleanup
+    m3_FreeModule(module);
+    m3_FreeRuntime(runtime);
+    m3_FreeEnvironment(env);
+    free(state.bytecode);
+    free(contract_metadata.bytecode);
+
+    *status_code = MHD_HTTP_OK;
+    return response_str;
 }
 
 // Handle GET /contracts - List all deployed contracts
