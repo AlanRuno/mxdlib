@@ -125,6 +125,11 @@ int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time);
 // Check if the expected round-robin proposer missed this block; evict after MXD_EVICTION_THRESHOLD consecutive misses
 int mxd_check_proposer_miss(mxd_rapid_table_t *table, const mxd_block_t *block);
 
+// Chain-derived deterministic scoring
+void mxd_accumulate_block_stats(mxd_rapid_table_t *table, const mxd_block_t *block);
+void mxd_compute_chain_scores(mxd_rapid_table_t *table);
+void mxd_sort_rapid_table_by_score(mxd_rapid_table_t *table);
+
 int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, mxd_amount_t total_supply, int is_genesis);
 
 int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t from_height, 

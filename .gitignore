@@ -19,31 +19,3 @@ wasm3/
 # OS files
 .DS_Store
 Thumbs.db
-/build-test
-/testnet
-/tests
-/deployment
-/build_remote
-/build_tmp
-
-# Binaries and archives
-*.so
-*.tar.gz
-mxd_node_latest
-libmxd_latest.so
-
-# Auto-generated docs
-CONTRACT_STORAGE_IMPLEMENTATION.md
-CRITICAL_VALIDATOR_SET_BUG_ANALYSIS.md
-MEDIUM_FIXES_APPLIED.md
-POST_FIX_SECURITY_ASSESSMENT.md
-SECURITY_AUDIT_REPORT.md
-SECURITY_AUDIT_VALIDATOR_MANAGEMENT.md
-SECURITY_FIXES_APPLIED.md
-SECURITY_STATUS.md
-TESTING_GUIDE.md
-TEST_RESULTS.md
-
-# Temp/junk
-NDH6SA~M
-src/NDH6SA~M

@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <arpa/inet.h>
+#include "../include/mxd_error.h"
 
 #define MXD_VALIDATION_EXPIRY_BLOCKS 5
 #define MXD_MIN_RELAY_SIGNATURES 3
@@ -478,12 +479,17 @@ int mxd_apply_block_transactions(const mxd_block_t *block) {
         }
         
         // Apply the transaction to UTXO state
-        // Skip transactions with already-spent inputs (double-spend protection)
-        // rather than rejecting the entire block
-        if (mxd_apply_transaction_to_utxo(&tx) != 0) {
+        // Distinguish IO errors (must halt) from spent inputs (skip)
+        int ret = mxd_apply_transaction_to_utxo(&tx);
+        if (ret == MXD_ERR_IO) {
+            MXD_LOG_ERROR("sync", "IO error applying transaction %u - halting block processing", i);
+            mxd_free_transaction(&tx);
+            return MXD_ERR_IO;  // HALT - caller must stop
+        }
+        if (ret != 0) {
             MXD_LOG_WARN("sync", "Skipping transaction %u (inputs already spent or invalid)", i);
             mxd_free_transaction(&tx);
-            continue;
+            continue;  // SKIP - normal double-spend protection
         }
         
         mxd_free_transaction(&tx);

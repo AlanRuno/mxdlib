@@ -34,6 +34,12 @@ typedef struct {
     uint8_t in_rapid_table;
     uint32_t rapid_table_position;
     uint32_t consecutive_misses;  // Consecutive round-robin misses (for eviction)
+    // Chain-derived deterministic scoring fields
+    uint32_t blocks_proposed;      // Blocks where this validator was proposer
+    uint32_t blocks_signed;        // Blocks where this validator appears in validation chain
+    uint64_t total_latency_ms;     // Cumulative (sig_timestamp - block_timestamp) for latency avg
+    uint32_t blocks_since_joined;  // Number of blocks processed since this node joined the table
+    uint64_t chain_score;          // Deterministic composite score (0-10000)
 } mxd_node_stake_t;
 
 #ifdef __cplusplus

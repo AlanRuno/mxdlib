@@ -45,6 +45,7 @@ int mxd_retrieve_validator_metadata(const uint8_t validator_id[20], uint8_t *out
 
 int mxd_load_all_validator_metadata(void);
 
+const char *mxd_get_blockchain_db_path(void);
 int mxd_broadcast_block(const mxd_block_t *block);
 
 int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_len, mxd_block_t *block);

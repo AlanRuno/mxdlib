@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "../include/mxd_error.h"
 
 static rocksdb_options_t *options = NULL;
 static char *db_path_global = NULL;
@@ -461,44 +462,42 @@ int mxd_store_block(const mxd_block_t *block) {
         return -1;
     }
     
+    // Use WriteBatch for atomic block storage (height key + hash key + optional height update)
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    rocksdb_writebatch_put(batch, (char *)height_key, height_key_len, (char *)data, data_len);
+    rocksdb_writebatch_put(batch, (char *)hash_key, hash_key_len, (char *)data, data_len);
+    
+    // Include current_height update in the same atomic batch
+    int updating_height = (block->height >= current_height);
+    uint32_t new_height = block->height + 1;
+    if (updating_height) {
+        uint32_t height_be = htonl(new_height);
+        rocksdb_writebatch_put(batch, "current_height", 14, (char *)&height_be, sizeof(height_be));
+    }
+    
     char *err = NULL;
-    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)height_key, height_key_len, (char *)data, data_len, &err);
+    rocksdb_write(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), batch, &err);
+    rocksdb_writebatch_destroy(batch);
+    
     if (err) {
-        MXD_LOG_ERROR("db", "Failed to store block by height: %s", err);
+        int is_io = mxd_is_io_error(err);
+        MXD_LOG_ERROR("db", "Failed to store block: %s", err);
         free(err);
         free(data);
-        return -1;
+        return is_io ? MXD_ERR_IO : MXD_ERR_GENERIC;
     }
     
-    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)hash_key, hash_key_len, (char *)data, data_len, &err);
-    if (err) {
-        MXD_LOG_ERROR("db", "Failed to store block by hash: %s", err);
-        free(err);
-        free(data);
-        return -1;
+    // Update in-memory height after successful write
+    if (updating_height) {
+        current_height = new_height;
     }
     
+    // Signatures stored separately (non-critical, can be re-fetched)
     for (uint32_t i = 0; i < block->validation_count; i++) {
         mxd_store_signature(block->height,
                             block->validation_chain[i].validator_id,
                             block->validation_chain[i].signature,
                             block->validation_chain[i].signature_length);
-    }
-    
-    // Update height if this block extends the chain
-    // For genesis block (height 0), we need >= to set current_height to 1 (meaning we have 1 block)
-    if (block->height >= current_height) {
-        current_height = block->height + 1;  // current_height represents "number of blocks" not "highest height"
-        
-        // CRITICAL FIX: Store current_height with endian conversion for cross-platform compatibility
-        uint8_t height_meta_key[] = "current_height";
-        uint32_t height_be = htonl(current_height);
-        rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)height_meta_key, sizeof(height_meta_key) - 1, 
-                   (char *)&height_be, sizeof(height_be), &err);
-        if (err) {
-            MXD_LOG_ERROR("db", "Failed to store current height: %s", err);
-            free(err);
-        }
     }
     
     free(data);
@@ -1133,4 +1132,8 @@ int mxd_serialize_block_for_network(const mxd_block_t *block, uint8_t **data, si
         return -1;
     }
     return serialize_block(block, data, data_len);
+}
+
+const char *mxd_get_blockchain_db_path(void) {
+    return db_path_global;
 }

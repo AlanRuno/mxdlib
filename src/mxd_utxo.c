@@ -10,6 +10,7 @@
 
 #include "../include/mxd_rocksdb_globals.h"
 #include <pthread.h>
+#include "../include/mxd_error.h"
 
 static rocksdb_options_t *options = NULL;
 static rocksdb_cache_t *block_cache = NULL;
@@ -436,16 +437,7 @@ int mxd_add_utxo(const mxd_utxo_t *utxo) {
         return -1;
     }
     
-    char *err = NULL;
-    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)key, key_len, (char *)data, data_len, &err);
-    if (err) {
-        MXD_LOG_ERROR("utxo", "Failed to store UTXO: %s", err);
-        free(err);
-        free(data);
-        return -1;
-    }
-    
-    // Create secondary index by owner address
+    // Create secondary index key
     uint8_t pubkey_key[7 + 20 + 64 + sizeof(uint32_t)];
     size_t pubkey_key_len;
     create_pubkey_hash_key(utxo->owner_key, pubkey_key, &pubkey_key_len);
@@ -453,12 +445,21 @@ int mxd_add_utxo(const mxd_utxo_t *utxo) {
     memcpy(pubkey_key + pubkey_key_len + 64, &utxo->output_index, sizeof(uint32_t));
     pubkey_key_len += 64 + sizeof(uint32_t);
     
-    rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), (char *)pubkey_key, pubkey_key_len, "", 0, &err);
+    // Use WriteBatch for atomic UTXO + index write
+    rocksdb_writebatch_t *batch = rocksdb_writebatch_create();
+    rocksdb_writebatch_put(batch, (char *)key, key_len, (char *)data, data_len);
+    rocksdb_writebatch_put(batch, (char *)pubkey_key, pubkey_key_len, "", 0);
+    
+    char *err = NULL;
+    rocksdb_write(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(), batch, &err);
+    rocksdb_writebatch_destroy(batch);
+    
     if (err) {
-        MXD_LOG_ERROR("utxo", "Failed to store pubkey hash index: %s", err);
+        int ret = mxd_is_io_error(err) ? MXD_ERR_IO : MXD_ERR_GENERIC;
+        MXD_LOG_ERROR("utxo", "Failed to store UTXO: %s", err);
         free(err);
         free(data);
-        return -1;
+        return ret;
     }
     
     // Add to LRU cache
@@ -961,18 +962,18 @@ int mxd_mark_utxo_spent(const uint8_t tx_hash[64], uint32_t output_index) {
     mxd_utxo_t utxo;
     memset(&utxo, 0, sizeof(mxd_utxo_t));
     if (mxd_find_utxo(tx_hash, output_index, &utxo) != 0) {
-        return -1; // UTXO not found
+        return MXD_ERR_GENERIC; // UTXO not found
     }
     
     // Reject if already spent (prevents double-spend inflation)
     if (utxo.is_spent) {
         mxd_free_utxo(&utxo);
-        return -1; // Already spent - double-spend attempt
+        return MXD_ERR_GENERIC; // Already spent - double-spend attempt
     }
     
     utxo.is_spent = 1;
     
-    // Update UTXO in database
+    // Update UTXO in database - propagates MXD_ERR_IO on write failure
     int result = mxd_add_utxo(&utxo);
     
     mxd_free_utxo(&utxo);

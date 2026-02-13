@@ -341,43 +341,9 @@ int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, mxd_amoun
 }
 
 int mxd_update_rapid_table_rankings(mxd_rapid_table_t *table) {
-    if (!table || !table->nodes || table->count == 0) {
-        return -1;
-    }
-
-    size_t total_count = 0;
-    size_t pruned_count = 0;
-    mxd_amount_t total_stake = 0;
-    if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_stake) != 0 || total_stake == 0) {
-        MXD_LOG_WARN("rsc", "Could not get UTXO stats for rapid table update");
-        return -1;
-    }
-
-    // Update rank and active status IN-PLACE without reordering the array.
-    // The array order must stay deterministic (genesis membership order) because
-    // proposer selection and eviction use height % count as the array index.
-    // Reordering by rank (which depends on per-node metrics) would break
-    // consensus since different nodes would disagree on proposer assignment.
-    uint64_t current_time = mxd_now_ms();
-    for (size_t i = 0; i < table->count; i++) {
-        if (table->nodes[i]) {
-            table->nodes[i]->active = (current_time - table->nodes[i]->metrics.last_update) < MXD_INACTIVE_THRESHOLD;
-            table->nodes[i]->rank = mxd_calculate_node_rank(table->nodes[i], total_stake);
-        }
-    }
-
-    // Compute positional rank (1-based) without reordering
-    for (size_t i = 0; i < table->count; i++) {
-        if (!table->nodes[i]) continue;
-        uint32_t better_count = 0;
-        for (size_t j = 0; j < table->count; j++) {
-            if (j != i && table->nodes[j] && table->nodes[j]->rank > table->nodes[i]->rank)
-                better_count++;
-        }
-        table->nodes[i]->rapid_table_position = better_count + 1;
-    }
-
-    MXD_LOG_DEBUG("rsc", "Updated rapid table rankings for %zu nodes (in-place, no reorder)", table->count);
+    if (!table || !table->nodes || table->count == 0) return -1;
+    mxd_compute_chain_scores(table);
+    mxd_sort_rapid_table_by_score(table);
     return 0;
 }
 
@@ -1215,6 +1181,11 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
         // Check for validator eviction after storing block
         mxd_check_proposer_miss((mxd_rapid_table_t *)table, block);
 
+        // Update chain-derived deterministic scoring
+        mxd_accumulate_block_stats((mxd_rapid_table_t *)table, block);
+        mxd_compute_chain_scores((mxd_rapid_table_t *)table);
+        mxd_sort_rapid_table_by_score((mxd_rapid_table_t *)table);
+
         return 0;
     }
 
@@ -1248,6 +1219,11 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
 
             // Check for validator eviction after storing block
             mxd_check_proposer_miss((mxd_rapid_table_t *)table, block);
+
+            // Update chain-derived deterministic scoring
+            mxd_accumulate_block_stats((mxd_rapid_table_t *)table, block);
+            mxd_compute_chain_scores((mxd_rapid_table_t *)table);
+            mxd_sort_rapid_table_by_score((mxd_rapid_table_t *)table);
 
             return 0;
         } else {
@@ -1550,6 +1526,117 @@ int mxd_check_proposer_miss(mxd_rapid_table_t *table, const mxd_block_t *block) 
     return 0;
 }
 
+void mxd_accumulate_block_stats(mxd_rapid_table_t *table, const mxd_block_t *block) {
+    if (!table || !block) return;
+
+    // Increment blocks_since_joined for all current table members
+    for (size_t i = 0; i < table->count; i++) {
+        if (table->nodes[i]) {
+            table->nodes[i]->blocks_since_joined++;
+        }
+    }
+
+    // Credit the proposer
+    for (size_t i = 0; i < table->count; i++) {
+        if (table->nodes[i] && memcmp(table->nodes[i]->node_address, block->proposer_id, 20) == 0) {
+            table->nodes[i]->blocks_proposed++;
+            break;
+        }
+    }
+
+    // Credit signers and accumulate latency from validation chain
+    if (block->validation_chain && block->validation_count > 0) {
+        for (uint32_t v = 0; v < block->validation_count; v++) {
+            const mxd_validator_signature_t *sig = &block->validation_chain[v];
+            for (size_t i = 0; i < table->count; i++) {
+                if (table->nodes[i] && memcmp(table->nodes[i]->node_address, sig->validator_id, 20) == 0) {
+                    table->nodes[i]->blocks_signed++;
+                    // Latency: sig->timestamp is NTP ms, block->timestamp is seconds
+                    if (sig->timestamp > block->timestamp * 1000) {
+                        table->nodes[i]->total_latency_ms += (sig->timestamp - block->timestamp * 1000);
+                    } else if (sig->timestamp > block->timestamp) {
+                        // block->timestamp might already be in ms for newer blocks
+                        table->nodes[i]->total_latency_ms += (sig->timestamp - block->timestamp);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void mxd_compute_chain_scores(mxd_rapid_table_t *table) {
+    if (!table || table->count == 0) return;
+
+    // Get total stake from UTXO state
+    mxd_amount_t total_stake = 0;
+    {
+        size_t tc, pc;
+        if (mxd_get_utxo_stats(&tc, &pc, &total_stake) != 0 || total_stake == 0) {
+            total_stake = 1; // Prevent division by zero
+        }
+    }
+
+    // Refresh each validator's stake from current UTXO balance
+    for (size_t i = 0; i < table->count; i++) {
+        if (!table->nodes[i]) continue;
+        table->nodes[i]->stake_amount = mxd_get_balance(table->nodes[i]->node_address);
+    }
+
+    for (size_t i = 0; i < table->count; i++) {
+        if (!table->nodes[i]) continue;
+        mxd_node_stake_t *n = table->nodes[i];
+
+        uint64_t bsj = n->blocks_since_joined > 0 ? n->blocks_since_joined : 1;
+
+        // Stake score: (stake * 10000) / total_stake
+        uint64_t stake_score = (n->stake_amount * 10000ULL) / total_stake;
+        if (stake_score > 10000) stake_score = 10000;
+
+        // Proposal success: (blocks_proposed * 10000) / blocks_since_joined
+        uint64_t proposal_score = ((uint64_t)n->blocks_proposed * 10000ULL) / bsj;
+        if (proposal_score > 10000) proposal_score = 10000;
+
+        // Validation participation: (blocks_signed * 10000) / blocks_since_joined
+        uint64_t participation_score = ((uint64_t)n->blocks_signed * 10000ULL) / bsj;
+        if (participation_score > 10000) participation_score = 10000;
+
+        // Latency score: 10000 - min(avg_latency_ms, 10000)
+        uint64_t avg_latency = n->blocks_signed > 0 ? n->total_latency_ms / n->blocks_signed : 10000;
+        uint64_t latency_score = (avg_latency >= 10000) ? 0 : (10000 - avg_latency);
+
+        // Weighted composite: (30*stake + 25*proposal + 25*participation + 20*latency) / 100
+        n->chain_score = (stake_score * 30 + proposal_score * 25 +
+                          participation_score * 25 + latency_score * 20) / 100;
+
+        // Also update the rank field for display purposes
+        n->rank = (uint32_t)n->chain_score;
+    }
+}
+
+static int compare_chain_score(const void *a, const void *b) {
+    const mxd_node_stake_t *na = *(const mxd_node_stake_t * const *)a;
+    const mxd_node_stake_t *nb = *(const mxd_node_stake_t * const *)b;
+    // Higher score first
+    if (na->chain_score != nb->chain_score) {
+        return (na->chain_score > nb->chain_score) ? -1 : 1;
+    }
+    // Tiebreaker: address lexicographic (lower address first)
+    return memcmp(na->node_address, nb->node_address, 20);
+}
+
+void mxd_sort_rapid_table_by_score(mxd_rapid_table_t *table) {
+    if (!table || table->count < 2) return;
+    qsort(table->nodes, table->count, sizeof(mxd_node_stake_t *), compare_chain_score);
+    // Update positional fields
+    for (size_t i = 0; i < table->count; i++) {
+        if (table->nodes[i]) {
+            table->nodes[i]->rapid_table_position = (uint32_t)(i + 1);
+            table->nodes[i]->in_rapid_table = 1;
+        }
+    }
+}
+
 // Structure to preserve metrics during rebuild
 typedef struct {
     uint8_t node_address[20];
@@ -1603,6 +1690,7 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
         size_t count_before = table->count;
         mxd_apply_membership_deltas(table, &block, local_node_id);
         mxd_check_proposer_miss(table, &block);
+        mxd_accumulate_block_stats(table, &block);
         MXD_LOG_INFO("rsc", "After applying deltas from height %u: table count %zu -> %zu (local_node_id=%s)",
                      height, count_before, table->count, local_node_id ? local_node_id : "NULL");
 
@@ -1628,8 +1716,9 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
         free(preserved);
     }
 
-    // Update rapid table rankings after rebuilding from blockchain
-    mxd_update_rapid_table_rankings(table);
+    // Compute chain-derived scores and sort by deterministic ranking
+    mxd_compute_chain_scores(table);
+    mxd_sort_rapid_table_by_score(table);
 
     return 0;
 }
@@ -3118,9 +3207,10 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
             MXD_LOG_INFO("rsc", "Block at height %u broadcast to network", current_block->height);
         }
 
-        // Update rapid table rankings after block finalization
-        // This ensures rankings reflect the latest metrics
-        mxd_update_rapid_table_rankings((mxd_rapid_table_t *)table);
+        // Update chain-derived deterministic scoring after block finalization
+        mxd_accumulate_block_stats((mxd_rapid_table_t *)table, current_block);
+        mxd_compute_chain_scores((mxd_rapid_table_t *)table);
+        mxd_sort_rapid_table_by_score((mxd_rapid_table_t *)table);
 
         // Check eviction (own block — fallback proposer case)
         mxd_check_proposer_miss((mxd_rapid_table_t *)table, current_block);

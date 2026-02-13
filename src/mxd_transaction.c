@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include "../include/mxd_error.h"
 
 static int validation_initialized = 0;
 
@@ -425,15 +426,21 @@ int mxd_apply_transaction_to_utxo(const mxd_transaction_t *tx) {
   // This prevents supply inflation: if input UTXOs don't exist (e.g. because
   // the transaction wasn't gossiped to this node), we fail early without
   // creating orphan output UTXOs that would mint coins from nothing.
-  if (!tx->is_coinbase && mxd_mark_tx_inputs_spent(tx) != 0) {
-    MXD_LOG_ERROR("transaction", "Failed to mark transaction inputs as spent");
-    return -1;
+  if (!tx->is_coinbase) {
+    int ret = mxd_mark_tx_inputs_spent(tx);
+    if (ret == MXD_ERR_IO) return MXD_ERR_IO;  // IO error - halt
+    if (ret != 0) {
+      MXD_LOG_ERROR("transaction", "Failed to mark transaction inputs as spent");
+      return MXD_ERR_GENERIC;
+    }
   }
 
   // Create UTXOs from transaction outputs only after inputs are validated
-  if (mxd_create_utxos_from_tx(tx, tx_hash) != 0) {
+  int ret = mxd_create_utxos_from_tx(tx, tx_hash);
+  if (ret == MXD_ERR_IO) return MXD_ERR_IO;  // IO error - halt
+  if (ret != 0) {
     MXD_LOG_ERROR("transaction", "Failed to create UTXOs from transaction outputs");
-    return -1;
+    return MXD_ERR_GENERIC;
   }
   
   return 0;
@@ -456,9 +463,11 @@ int mxd_create_utxos_from_tx(const mxd_transaction_t *tx, const uint8_t tx_hash[
     utxo.cosigner_count = 0;
     utxo.is_spent = 0;
     
-    if (mxd_add_utxo(&utxo) != 0) {
+    int ret = mxd_add_utxo(&utxo);
+    if (ret == MXD_ERR_IO) return MXD_ERR_IO;  // IO error - halt
+    if (ret != 0) {
       MXD_LOG_ERROR("transaction", "Failed to add UTXO for output %u", i);
-      return -1;
+      return MXD_ERR_GENERIC;
     }
   }
   
@@ -472,9 +481,11 @@ int mxd_mark_tx_inputs_spent(const mxd_transaction_t *tx) {
   }
   
   for (uint32_t i = 0; i < tx->input_count; i++) {
-    if (mxd_mark_utxo_spent(tx->inputs[i].prev_tx_hash, tx->inputs[i].output_index) != 0) {
+    int ret = mxd_mark_utxo_spent(tx->inputs[i].prev_tx_hash, tx->inputs[i].output_index);
+    if (ret == MXD_ERR_IO) return MXD_ERR_IO;  // IO error - halt
+    if (ret != 0) {
       MXD_LOG_ERROR("transaction", "Failed to mark UTXO as spent for input %u", i);
-      return -1;
+      return MXD_ERR_GENERIC;  // not found/spent - skip tx
     }
   }
   
