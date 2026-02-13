@@ -344,7 +344,7 @@ int mxd_update_rapid_table_rankings(mxd_rapid_table_t *table) {
     if (!table || !table->nodes || table->count == 0) {
         return -1;
     }
-    
+
     size_t total_count = 0;
     size_t pruned_count = 0;
     mxd_amount_t total_stake = 0;
@@ -352,33 +352,33 @@ int mxd_update_rapid_table_rankings(mxd_rapid_table_t *table) {
         MXD_LOG_WARN("rsc", "Could not get UTXO stats for rapid table update");
         return -1;
     }
-    
-    mxd_node_stake_t *flat_nodes = malloc(table->count * sizeof(mxd_node_stake_t));
-    if (!flat_nodes) {
-        return -1;
-    }
-    
+
+    // Update rank and active status IN-PLACE without reordering the array.
+    // The array order must stay deterministic (genesis membership order) because
+    // proposer selection and eviction use height % count as the array index.
+    // Reordering by rank (which depends on per-node metrics) would break
+    // consensus since different nodes would disagree on proposer assignment.
+    uint64_t current_time = mxd_now_ms();
     for (size_t i = 0; i < table->count; i++) {
         if (table->nodes[i]) {
-            memcpy(&flat_nodes[i], table->nodes[i], sizeof(mxd_node_stake_t));
-        } else {
-            memset(&flat_nodes[i], 0, sizeof(mxd_node_stake_t));
+            table->nodes[i]->active = (current_time - table->nodes[i]->metrics.last_update) < MXD_INACTIVE_THRESHOLD;
+            table->nodes[i]->rank = mxd_calculate_node_rank(table->nodes[i], total_stake);
         }
     }
-    
-    int result = mxd_update_rapid_table(flat_nodes, table->count, total_stake);
-    
-    if (result == 0) {
-        for (size_t i = 0; i < table->count; i++) {
-            if (table->nodes[i]) {
-                memcpy(table->nodes[i], &flat_nodes[i], sizeof(mxd_node_stake_t));
-            }
+
+    // Compute positional rank (1-based) without reordering
+    for (size_t i = 0; i < table->count; i++) {
+        if (!table->nodes[i]) continue;
+        uint32_t better_count = 0;
+        for (size_t j = 0; j < table->count; j++) {
+            if (j != i && table->nodes[j] && table->nodes[j]->rank > table->nodes[i]->rank)
+                better_count++;
         }
-        MXD_LOG_DEBUG("rsc", "Updated rapid table rankings for %zu nodes", table->count);
+        table->nodes[i]->rapid_table_position = better_count + 1;
     }
-    
-    free(flat_nodes);
-    return result;
+
+    MXD_LOG_DEBUG("rsc", "Updated rapid table rankings for %zu nodes (in-place, no reorder)", table->count);
+    return 0;
 }
 
 // Get node performance statistics
@@ -1212,6 +1212,9 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
 
         mxd_store_block(block);
 
+        // Check for validator eviction after storing block
+        mxd_check_proposer_miss((mxd_rapid_table_t *)table, block);
+
         return 0;
     }
 
@@ -1243,13 +1246,16 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
             mxd_apply_block_transactions(block);
             mxd_store_block(block);
 
+            // Check for validator eviction after storing block
+            mxd_check_proposer_miss((mxd_rapid_table_t *)table, block);
+
             return 0;
         } else {
             context->status = MXD_VALIDATION_REJECTED;
             return -1;
         }
     }
-    
+
     // Update status to in progress
     context->status = MXD_VALIDATION_IN_PROGRESS;
     
@@ -1499,6 +1505,51 @@ int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time) {
     return 0;
 }
 
+int mxd_check_proposer_miss(mxd_rapid_table_t *table, const mxd_block_t *block) {
+    if (!table || !block || table->count < MXD_MIN_VALIDATORS) return 0;
+
+    // Determine expected proposer for this block's height using array index.
+    // The array maintains deterministic genesis/membership ordering because
+    // mxd_update_rapid_table_rankings no longer reorders it.
+    uint32_t expected_index = block->height % table->count;
+    if (expected_index >= table->count || !table->nodes[expected_index]) return 0;
+
+    mxd_node_stake_t *expected = table->nodes[expected_index];
+
+    if (memcmp(expected->node_address, block->proposer_id, 20) == 0) {
+        // Expected proposer produced the block — reset their counter
+        expected->consecutive_misses = 0;
+        return 0;
+    }
+
+    // Mismatch: expected proposer didn't produce this block (timeout/fallback occurred)
+    expected->consecutive_misses++;
+
+    char addr_hex[41];
+    for (int i = 0; i < 20; i++) sprintf(&addr_hex[i*2], "%02x", expected->node_address[i]);
+
+    MXD_LOG_WARN("rsc", "Validator %s missed round-robin turn at height %u (%u/%u consecutive misses)",
+                 addr_hex, block->height, expected->consecutive_misses, MXD_EVICTION_THRESHOLD);
+
+    if (expected->consecutive_misses >= MXD_EVICTION_THRESHOLD) {
+        if (table->count <= MXD_MIN_VALIDATORS) {
+            MXD_LOG_WARN("rsc", "Validator %s exceeded eviction threshold but table at minimum size (%zu/%d)",
+                         addr_hex, table->count, MXD_MIN_VALIDATORS);
+            return 0;
+        }
+
+        MXD_LOG_ERROR("rsc", "EVICTION: Removing validator %s after %u consecutive misses (table: %zu -> %zu)",
+                      addr_hex, expected->consecutive_misses, table->count, table->count - 1);
+
+        // Remove from rapid table using the node_id string
+        mxd_remove_from_rapid_table(table, expected->node_id);
+
+        return 1;  // Eviction occurred
+    }
+
+    return 0;
+}
+
 // Structure to preserve metrics during rebuild
 typedef struct {
     uint8_t node_address[20];
@@ -1551,9 +1602,10 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
         
         size_t count_before = table->count;
         mxd_apply_membership_deltas(table, &block, local_node_id);
+        mxd_check_proposer_miss(table, &block);
         MXD_LOG_INFO("rsc", "After applying deltas from height %u: table count %zu -> %zu (local_node_id=%s)",
                      height, count_before, table->count, local_node_id ? local_node_id : "NULL");
-        
+
         mxd_free_validation_chain(&block);
     }
     
@@ -2765,45 +2817,11 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
     if (!table || !local_address || table->count == 0) {
         return 0;
     }
-    
-    // Get the latest block to extract canonical validator list
-    mxd_block_t latest_block;
-    memset(&latest_block, 0, sizeof(latest_block));
-    
-    uint32_t current_height = 0;
-    if (mxd_get_blockchain_height(&current_height) != 0 || current_height == 0) {
-        return 0;
-    }
 
-    // current_height is "next block height" (number of blocks), so latest block is at current_height - 1
-    uint32_t latest_height = current_height - 1;
-    if (mxd_retrieve_block_by_height(latest_height, &latest_block) != 0) {
-        MXD_LOG_DEBUG("rsc", "Failed to retrieve latest block at height %u for proposer check", latest_height);
-        return 0;
-    }
-    
-    // Use membership entries from the latest block as canonical validator list
-    // If latest block has no membership (e.g., empty blocks), fall back to genesis
-    if (latest_block.rapid_membership_count == 0) {
-        mxd_free_block(&latest_block);
-
-        // Fall back to genesis block for membership
-        if (mxd_retrieve_block_by_height(0, &latest_block) != 0) {
-            MXD_LOG_DEBUG("rsc", "Failed to retrieve genesis block for proposer check fallback");
-            return 0;
-        }
-
-        if (latest_block.rapid_membership_count == 0) {
-            MXD_LOG_WARN("rsc", "Genesis block has no rapid membership entries");
-            mxd_free_block(&latest_block);
-            return 0;
-        }
-
-        MXD_LOG_DEBUG("rsc", "Using genesis block membership for proposer check (latest block had no entries)");
-    }
-    
-    // Calculate proposer index with fallback support
-    uint32_t base_index = height % latest_block.rapid_membership_count;
+    // Use the in-memory rapid table as the authoritative validator set.
+    // The array order is deterministic (genesis membership order, preserved because
+    // mxd_update_rapid_table_rankings updates ranks in-place without reordering).
+    uint32_t base_index = height % table->count;
     uint32_t proposer_index = base_index;
 
     // Get current timeout state for fallback logic (thread-safe)
@@ -2813,37 +2831,34 @@ int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *lo
 
     // If timeout expired for this height, try fallback proposers
     if (timeout_height == height && timeout_retry_count > 0) {
-        // Fallback: (base_index + retry_count) % validator_count
-        proposer_index = (base_index + timeout_retry_count) % latest_block.rapid_membership_count;
-
+        proposer_index = (base_index + timeout_retry_count) % table->count;
         MXD_LOG_INFO("rsc", "Fallback proposer selection: retry %u, proposer index %u (base %u)",
                      timeout_retry_count, proposer_index, base_index);
     }
+
+    if (!table->nodes[proposer_index]) return 0;
 
     // Debug: log both addresses for comparison
     char local_hex[41], proposer_hex[41];
     for (int i = 0; i < 20; i++) {
         sprintf(&local_hex[i*2], "%02x", local_address[i]);
-        sprintf(&proposer_hex[i*2], "%02x", latest_block.rapid_membership_entries[proposer_index].node_address[i]);
+        sprintf(&proposer_hex[i*2], "%02x", table->nodes[proposer_index]->node_address[i]);
     }
-    MXD_LOG_INFO("rsc", "Proposer check for height %u: index=%u, local=%s, expected=%s",
-                 height, proposer_index, local_hex, proposer_hex);
+    MXD_LOG_INFO("rsc", "Proposer check for height %u: index=%u, local=%s, expected=%s (%zu validators)",
+                 height, proposer_index, local_hex, proposer_hex, table->count);
 
-    int is_proposer = (memcmp(local_address,
-                              latest_block.rapid_membership_entries[proposer_index].node_address,
-                              20) == 0);
+    int is_proposer = (memcmp(local_address, table->nodes[proposer_index]->node_address, 20) == 0);
 
     if (is_proposer) {
         if (timeout_retry_count > 0) {
-            MXD_LOG_WARN("rsc", "This node is FALLBACK proposer for height %u (retry %u, index %u of %u validators)",
-                        height, timeout_retry_count, proposer_index, latest_block.rapid_membership_count);
+            MXD_LOG_WARN("rsc", "This node is FALLBACK proposer for height %u (retry %u, index %u of %zu validators)",
+                         height, timeout_retry_count, proposer_index, table->count);
         } else {
-            MXD_LOG_INFO("rsc", "This node is PRIMARY proposer for height %u (index %u of %u validators)",
-                        height, proposer_index, latest_block.rapid_membership_count);
+            MXD_LOG_INFO("rsc", "This node is PRIMARY proposer for height %u (index %u of %zu validators)",
+                         height, proposer_index, table->count);
         }
     }
 
-    mxd_free_block(&latest_block);
     return is_proposer;
 }
 
@@ -3106,6 +3121,9 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         // Update rapid table rankings after block finalization
         // This ensures rankings reflect the latest metrics
         mxd_update_rapid_table_rankings((mxd_rapid_table_t *)table);
+
+        // Check eviction (own block — fallback proposer case)
+        mxd_check_proposer_miss((mxd_rapid_table_t *)table, current_block);
 
         finalize_ok = 1;
 

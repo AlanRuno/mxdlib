@@ -13,6 +13,10 @@ extern "C" {
 #include "mxd_blockchain_db.h"
 #include "common/mxd_metrics_types.h"
 
+// Validator eviction policy
+#define MXD_EVICTION_THRESHOLD     10   // Consecutive round-robin misses before eviction
+#define MXD_MIN_VALIDATORS          3   // Never evict below this count
+
 int mxd_get_validator_public_key(const uint8_t validator_id[20], uint8_t *out_key, size_t out_capacity, size_t *out_len);
 int mxd_get_validator_algo_id(const uint8_t validator_id[20], uint8_t *out_algo_id);
 int mxd_test_register_validator_pubkey(const uint8_t validator_id[20], const uint8_t *pub, size_t pub_len);
@@ -117,6 +121,9 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
                                 const char *local_node_id);
 
 int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time);
+
+// Check if the expected round-robin proposer missed this block; evict after MXD_EVICTION_THRESHOLD consecutive misses
+int mxd_check_proposer_miss(mxd_rapid_table_t *table, const mxd_block_t *block);
 
 int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, mxd_amount_t total_supply, int is_genesis);
 

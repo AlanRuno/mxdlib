@@ -33,6 +33,7 @@ typedef struct {
     uint8_t active;
     uint8_t in_rapid_table;
     uint32_t rapid_table_position;
+    uint32_t consecutive_misses;  // Consecutive round-robin misses (for eviction)
 } mxd_node_stake_t;
 
 #ifdef __cplusplus
