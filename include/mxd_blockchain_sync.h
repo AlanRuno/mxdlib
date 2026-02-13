@@ -41,6 +41,9 @@ int mxd_prune_expired_validation_chains(uint32_t current_height);
 // Call this periodically to catch blocks that failed to broadcast
 int mxd_pull_missing_blocks(void);
 
+// Apply block transactions to UTXO state (deserializes and processes each tx)
+int mxd_apply_block_transactions(const mxd_block_t *block);
+
 #ifdef __cplusplus
 }
 #endif

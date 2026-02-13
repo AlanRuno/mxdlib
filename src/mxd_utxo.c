@@ -547,16 +547,17 @@ int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
     if (!tx_hash || !utxo || !mxd_get_rocksdb_db()) {
         return -1;
     }
-    
-    if (find_in_lru_cache(tx_hash, output_index, utxo) == 0) {
-        return 0;
-    }
-    
+
+    // Always read from RocksDB (authoritative source of truth).
+    // The LRU cache has no thread safety and caused stale is_spent values
+    // to be served during concurrent block processing + HTTP queries.
+    // RocksDB has its own block cache, so performance impact is negligible.
+
     // Create key for UTXO lookup
     uint8_t key[5 + 64 + sizeof(uint32_t)];
     size_t key_len;
     create_utxo_key(tx_hash, output_index, key, &key_len);
-    
+
     char *err = NULL;
     char *value = NULL;
     size_t value_len = 0;
@@ -566,18 +567,13 @@ int mxd_find_utxo(const uint8_t tx_hash[64], uint32_t output_index,
         free(err);
         return -1;
     }
-    
+
     if (!value) {
         return -1; // UTXO not found
     }
-    
+
     int result = deserialize_utxo((uint8_t *)value, value_len, utxo);
-    
-    // Add to LRU cache
-    if (result == 0) {
-        add_to_lru_cache(utxo);
-    }
-    
+
     free(value);
     return result;
 }
@@ -968,10 +964,10 @@ int mxd_mark_utxo_spent(const uint8_t tx_hash[64], uint32_t output_index) {
         return -1; // UTXO not found
     }
     
-    // Check if already spent
+    // Reject if already spent (prevents double-spend inflation)
     if (utxo.is_spent) {
         mxd_free_utxo(&utxo);
-        return 0; // Already spent
+        return -1; // Already spent - double-spend attempt
     }
     
     utxo.is_spent = 1;

@@ -24,7 +24,7 @@
 
 static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t *height);
 static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count);
-static int mxd_apply_block_transactions(const mxd_block_t *block);
+int mxd_apply_block_transactions(const mxd_block_t *block);
 static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height);
 int mxd_sign_and_broadcast_block(const mxd_block_t *block);
 extern void mxd_drain_pending_validation_sigs(const uint8_t *block_hash);
@@ -379,7 +379,7 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
     return blocks;
 }
 
-static int mxd_apply_block_transactions(const mxd_block_t *block) {
+int mxd_apply_block_transactions(const mxd_block_t *block) {
     if (!block) return -1;
     
     // Apply each transaction in the block to the UTXO state
@@ -478,10 +478,12 @@ static int mxd_apply_block_transactions(const mxd_block_t *block) {
         }
         
         // Apply the transaction to UTXO state
+        // Skip transactions with already-spent inputs (double-spend protection)
+        // rather than rejecting the entire block
         if (mxd_apply_transaction_to_utxo(&tx) != 0) {
-            MXD_LOG_ERROR("sync", "Failed to apply transaction %u to UTXO state", i);
+            MXD_LOG_WARN("sync", "Skipping transaction %u (inputs already spent or invalid)", i);
             mxd_free_transaction(&tx);
-            return -1;
+            continue;
         }
         
         mxd_free_transaction(&tx);

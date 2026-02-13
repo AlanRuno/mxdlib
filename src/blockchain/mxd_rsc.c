@@ -1135,7 +1135,9 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     if (mxd_block_has_validation_quorum(block, table)) {
         context->status = MXD_VALIDATION_COMPLETE;
 
-        if (block->total_supply == 0) {
+        // Always recalculate total_supply from authoritative UTXO scan
+        // (previously only ran when total_supply==0, causing stale inherited values)
+        {
             size_t total_count = 0;
             size_t pruned_count = 0;
             mxd_amount_t total_value = 0;
@@ -1150,7 +1152,7 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
                 }
             }
         }
-        
+
         // Distribute tips to validators in the validation chain
         if (block->validation_count > 0) {
             mxd_node_stake_t *validators = malloc(block->validation_count * sizeof(mxd_node_stake_t));
@@ -1202,11 +1204,17 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
             }
         }
         
+        // Apply block transactions to UTXO state BEFORE storing.
+        // Without this, the proposer's UTXO database becomes stale and
+        // allows accepting transactions that reference already-spent UTXOs,
+        // causing supply inflation via double-spend.
+        mxd_apply_block_transactions(block);
+
         mxd_store_block(block);
-        
+
         return 0;
     }
-    
+
     if (mxd_verify_validation_chain_integrity(block) != 0) {
         context->status = MXD_VALIDATION_REJECTED;
         return -1;
@@ -1217,7 +1225,7 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
         if (context->signature_count >= context->required_signatures) {
             context->status = MXD_VALIDATION_COMPLETE;
 
-            if (block->total_supply == 0) {
+            {
                 size_t total_count = 0;
                 size_t pruned_count = 0;
                 mxd_amount_t total_value = 0;
@@ -1232,8 +1240,9 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
                 }
             }
 
+            mxd_apply_block_transactions(block);
             mxd_store_block(block);
-            
+
             return 0;
         } else {
             context->status = MXD_VALIDATION_REJECTED;
@@ -3037,64 +3046,74 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
             MXD_LOG_ERROR("rsc", "Failed to close block");
             return -1;
         }
-        
+
+        // After close_block, the transaction set is frozen and cannot be reopened.
+        // If any subsequent step fails, we MUST still stop the proposal to avoid
+        // a permanent stall where current_block stays non-NULL forever.
+        int finalize_ok = 0;
+
         // Calculate block hash
         if (mxd_calculate_block_hash(current_block, current_block->block_hash) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to calculate block hash");
-            return -1;
+            goto block_finalize_cleanup;
         }
-        
+
         // Sign the block as proposer (position 0) using chain_hash format
-        uint64_t timestamp = mxd_now_ms();
-        uint8_t signature[MXD_SIGNATURE_MAX];
-        size_t sig_len = sizeof(signature);
+        {
+            uint64_t timestamp = mxd_now_ms();
+            uint8_t signature[MXD_SIGNATURE_MAX];
+            size_t sig_len = sizeof(signature);
 
-        // chain_hash_0 = SHA-512(block_hash) for position 0
-        uint8_t chain_hash_0[64];
-        mxd_compute_chain_hash(current_block, 0, chain_hash_0);
+            // chain_hash_0 = SHA-512(block_hash) for position 0
+            uint8_t chain_hash_0[64];
+            mxd_compute_chain_hash(current_block, 0, chain_hash_0);
 
-        // Sign: block_hash(64) + chain_hash(64) + timestamp(8) = 136 bytes
-        uint8_t sign_msg[64 + 64 + 8];
-        memcpy(sign_msg, current_block->block_hash, 64);
-        memcpy(sign_msg + 64, chain_hash_0, 64);
-        uint64_t ts_be = mxd_htonll(timestamp);
-        memcpy(sign_msg + 64 + 64, &ts_be, 8);
+            // Sign: block_hash(64) + chain_hash(64) + timestamp(8) = 136 bytes
+            uint8_t sign_msg[64 + 64 + 8];
+            memcpy(sign_msg, current_block->block_hash, 64);
+            memcpy(sign_msg + 64, chain_hash_0, 64);
+            uint64_t ts_be = mxd_htonll(timestamp);
+            memcpy(sign_msg + 64 + 64, &ts_be, 8);
 
-        if (mxd_sig_sign(algo_id, signature, &sig_len, sign_msg, sizeof(sign_msg), local_privkey) != 0) {
-            MXD_LOG_ERROR("rsc", "Failed to sign block");
-            return -1;
+            if (mxd_sig_sign(algo_id, signature, &sig_len, sign_msg, sizeof(sign_msg), local_privkey) != 0) {
+                MXD_LOG_ERROR("rsc", "Failed to sign block");
+                goto block_finalize_cleanup;
+            }
+
+            if (mxd_add_validator_signature(current_block, local_address, timestamp, algo_id,
+                                            signature, (uint16_t)sig_len) != 0) {
+                MXD_LOG_ERROR("rsc", "Failed to add proposer signature to block");
+                goto block_finalize_cleanup;
+            }
         }
-        
-        if (mxd_add_validator_signature(current_block, local_address, timestamp, algo_id, 
-                                        signature, (uint16_t)sig_len) != 0) {
-            MXD_LOG_ERROR("rsc", "Failed to add proposer signature to block");
-            return -1;
-        }
-        
+
         // Store the block
         if (mxd_store_block(current_block) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to store proposed block");
-            return -1;
+            goto block_finalize_cleanup;
         }
-        
+
         MXD_LOG_INFO("rsc", "Block at height %u closed, signed, and stored with %u transactions",
                      current_block->height, current_block->transaction_count);
-        
+
         // Broadcast the block to the network
         if (mxd_broadcast_block(current_block) != 0) {
             MXD_LOG_WARN("rsc", "Failed to broadcast block at height %u", current_block->height);
         } else {
             MXD_LOG_INFO("rsc", "Block at height %u broadcast to network", current_block->height);
         }
-        
+
         // Update rapid table rankings after block finalization
         // This ensures rankings reflect the latest metrics
         mxd_update_rapid_table_rankings((mxd_rapid_table_t *)table);
 
-        // Stop the proposal (block is now finalized)
+        finalize_ok = 1;
+
+    block_finalize_cleanup:
+        // Always stop the proposal after close_block to prevent permanent stall
         mxd_stop_block_proposal();
 
-        return 1;  // Block was finalized
+        return finalize_ok ? 1 : -1;
     }
 
     // Periodically try pull-based sync to catch any missed blocks

@@ -574,11 +574,16 @@ static char* handle_balance(const char *address_hex, int *status_code) {
     mxd_utxo_t *utxos = NULL;
     size_t utxo_count = 0;
     mxd_amount_t balance = 0;
-    
+    size_t spent_count = 0;
+    size_t unspent_count = 0;
+
     if (mxd_get_utxos_by_pubkey_hash(address, &utxos, &utxo_count) == 0) {
         for (size_t i = 0; i < utxo_count; i++) {
             if (!utxos[i].is_spent) {
                 balance += utxos[i].amount;
+                unspent_count++;
+            } else {
+                spent_count++;
             }
         }
         for (size_t i = 0; i < utxo_count; i++) {
@@ -586,10 +591,19 @@ static char* handle_balance(const char *address_hex, int *status_code) {
         }
         free(utxos);
     }
-    
-    char *response = malloc(256);
-    snprintf(response, 256, "{\"address\":\"%s\",\"balance\":%llu,\"balance_mxd\":%.8f,\"utxo_count\":%zu}",
-             address_hex, (unsigned long long)balance, (double)balance / 100000000.0, utxo_count);
+
+    // Also get authoritative UTXO stats
+    size_t total_utxo_count = 0, pruned_utxo_count = 0;
+    mxd_amount_t utxo_total_value = 0;
+    mxd_get_utxo_stats(&total_utxo_count, &pruned_utxo_count, &utxo_total_value);
+
+    char *response = malloc(512);
+    snprintf(response, 512, "{\"address\":\"%s\",\"balance\":%llu,\"balance_mxd\":%.8f,"
+             "\"utxo_count\":%zu,\"spent_count\":%zu,\"unspent_count\":%zu,"
+             "\"db_total_utxos\":%zu,\"db_spent_utxos\":%zu,\"db_total_supply\":%llu}",
+             address_hex, (unsigned long long)balance, (double)balance / 100000000.0,
+             utxo_count, spent_count, unspent_count,
+             total_utxo_count, pruned_utxo_count, (unsigned long long)utxo_total_value);
     return response;
 }
 
