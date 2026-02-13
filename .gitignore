@@ -19,3 +19,25 @@ wasm3/
 # OS files
 .DS_Store
 Thumbs.db
+/build-test
+/build_remote
+/build_tmp
+contract_implementations.tar.gz
+contract_implementations_fixed.tar.gz
+CONTRACT_STORAGE_IMPLEMENTATION.md
+CRITICAL_VALIDATOR_SET_BUG_ANALYSIS.md
+/deployment
+libmxd_latest.so
+MEDIUM_FIXES_APPLIED.md
+mxd_node_latest
+NDH6SA~M
+POST_FIX_SECURITY_ASSESSMENT.md
+SECURITY_AUDIT_REPORT.md
+SECURITY_AUDIT_VALIDATOR_MANAGEMENT.md
+SECURITY_FIXES_APPLIED.md
+SECURITY_STATUS.md
+src/NDH6SA~M
+TEST_RESULTS.md
+TESTING_GUIDE.md
+/testnet
+/tests
