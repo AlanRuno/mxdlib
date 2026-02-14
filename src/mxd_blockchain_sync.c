@@ -60,7 +60,7 @@ static uint32_t mxd_discover_network_height(void) {
 
     uint32_t max_height = 0;
     int queried = 0;
-    for (size_t i = 0; i < peer_count; i++) {
+    for (size_t i = 0; i < peer_count && queried < 3; i++) {
         if (peers[i].state == MXD_PEER_CONNECTED) {
             uint32_t peer_height = 0;
             MXD_LOG_INFO("sync", "Querying peer %s:%u for height", peers[i].address, peers[i].port);
@@ -115,7 +115,7 @@ static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t 
     
     // Wait for response with timeout (up to 3 seconds)
     int wait_ms = 0;
-    while (!peer_height_received && wait_ms < 3000) {
+    while (!peer_height_received && wait_ms < 1000) {
         struct timespec ts = {0, 50000000}; // 50ms
         nanosleep(&ts, NULL);
         wait_ms += 50;
@@ -842,7 +842,7 @@ int mxd_pull_missing_blocks(void) {
                                   height, peers[i].address, peers[i].port);
 
                     // Wait briefly for the block to arrive (it will be handled by mxd_handle_blocks_response)
-                    struct timespec ts = {0, 500000000};  // 500ms
+                    struct timespec ts = {0, 100000000};  // 100ms
                     nanosleep(&ts, NULL);
 
                     // Check if we now have the block

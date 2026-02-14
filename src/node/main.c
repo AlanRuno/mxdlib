@@ -153,12 +153,39 @@ const mxd_rapid_table_t* mxd_get_rapid_table(void) {
 }
 static int genesis_initialized = 0;
 static uint64_t last_genesis_announce = 0;
+static volatile int consensus_running = 1;
+static uint8_t node_algo_id = 0;
+static uint8_t node_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
+static uint8_t node_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
+static uint8_t node_address[20] = {0};
 
 void handle_signal(int signum) {
     MXD_LOG_INFO("node", "Received signal %d, terminating node %s...", 
            signum, current_config.node_id);
     keep_running = 0;
     mxd_stop_metrics_server();
+}
+
+static void *consensus_thread_func(void *arg) {
+    (void)arg;
+    while (consensus_running && keep_running) {
+        uint32_t blockchain_height = 0;
+        mxd_get_blockchain_height(&blockchain_height);
+
+        if (genesis_initialized && blockchain_height > 0) {
+            pthread_mutex_lock(&metrics_mutex);
+            int tick_result = mxd_consensus_tick(&rapid_table, node_address,
+                                                  node_pubkey, node_privkey, node_algo_id);
+            pthread_mutex_unlock(&metrics_mutex);
+
+            if (tick_result == 1) {
+                MXD_LOG_INFO("node", "Block finalized by consensus tick");
+            }
+        }
+
+        usleep(200000);  // 200ms — consensus tick fires ~5x/second
+    }
+    return NULL;
 }
 
 void* upnp_nat_thread(void* arg) {
@@ -525,7 +552,7 @@ int main(int argc, char** argv) {
     }
     
     // Get the actual node algo_id from P2P (based on persisted keys)
-    uint8_t node_algo_id = MXD_SIGALG_ED25519; // Default fallback
+    node_algo_id = MXD_SIGALG_ED25519; // Default fallback
     if (mxd_get_node_algo_id(&node_algo_id) != 0) {
         MXD_LOG_WARN("node", "Failed to retrieve node algo_id from P2P, using default Ed25519");
     }
@@ -543,10 +570,10 @@ int main(int argc, char** argv) {
     MXD_LOG_INFO("node", "Using signature algorithm: %s (from persisted keys)", 
                  mxd_sig_alg_name(node_algo_id));
     
-    uint8_t node_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
-    uint8_t node_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
-    uint8_t node_address[20] = {0};
-    
+    memset(node_pubkey, 0, sizeof(node_pubkey));
+    memset(node_privkey, 0, sizeof(node_privkey));
+    memset(node_address, 0, sizeof(node_address));
+
     if (mxd_get_node_keys(node_pubkey, node_privkey) == 0) {
         size_t pubkey_len = mxd_sig_pubkey_len(node_algo_id);
         if (mxd_derive_address(node_algo_id, node_pubkey, pubkey_len, node_address) == 0) {
@@ -568,8 +595,17 @@ int main(int argc, char** argv) {
         MXD_LOG_WARN("node", "Failed to retrieve node keys from P2P");
     }
     
+    // Start dedicated consensus thread — runs mxd_consensus_tick() at ~5Hz
+    // independent of the display loop and slow sync operations
+    pthread_t consensus_tid;
+    if (pthread_create(&consensus_tid, NULL, consensus_thread_func, NULL) != 0) {
+        MXD_LOG_ERROR("node", "Failed to start consensus thread");
+        return 1;
+    }
+    MXD_LOG_INFO("node", "Consensus thread started (200ms tick interval)");
+
     MXD_LOG_INFO("node", "Node started successfully, entering display loop");
-    
+
     // Main display loop
     while (keep_running) {
         mxd_node_metrics_t local_metrics;
@@ -696,27 +732,9 @@ int main(int argc, char** argv) {
             pthread_mutex_unlock(&metrics_mutex);
         }
         
-        // Post-genesis consensus tick - drives block production
-        // Debug: Log consensus tick eligibility every 10 seconds
-        static uint64_t last_consensus_debug = 0;
-        uint64_t now_debug = time(NULL);
-        if (now_debug - last_consensus_debug >= 10) {
-            MXD_LOG_INFO("node", "Consensus tick check: genesis_initialized=%d, blockchain_height=%u, condition=%s",
-                         genesis_initialized, blockchain_height,
-                         (genesis_initialized && blockchain_height > 0) ? "MET" : "NOT MET");
-            last_consensus_debug = now_debug;
-        }
-        if (genesis_initialized && blockchain_height > 0) {
-            pthread_mutex_lock(&metrics_mutex);
-            int tick_result = mxd_consensus_tick(&rapid_table, node_address, node_pubkey, node_privkey, node_algo_id);
-            if (tick_result == 1) {
-                MXD_LOG_INFO("node", "Block finalized by consensus tick");
-            } else if (tick_result < 0) {
-                MXD_LOG_DEBUG("node", "Consensus tick returned error");
-            }
-            pthread_mutex_unlock(&metrics_mutex);
-        }
-        
+        // Consensus tick now runs in dedicated thread (consensus_thread_func)
+        // at ~5Hz, independent of this display loop.
+
         last_blockchain_height = blockchain_height;
 
         // Periodic blockchain sync check - ensures we catch up if behind the network
@@ -767,6 +785,8 @@ int main(int argc, char** argv) {
     }
     
     // Cleanup
+    consensus_running = 0;
+    pthread_join(consensus_tid, NULL);
     pthread_join(collector_thread, NULL);
     mxd_http_api_stop();
     mxd_stop_metrics_server();

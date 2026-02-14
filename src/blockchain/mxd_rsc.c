@@ -2883,8 +2883,6 @@ static uint8_t consensus_local_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
 static uint8_t consensus_local_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
 static uint8_t consensus_algo_id = 0;
 static uint32_t last_proposed_height = 0;
-static uint64_t last_pull_sync_time = 0;
-#define MXD_PULL_SYNC_INTERVAL_MS 10000  // Pull sync every 10 seconds
 
 // Accessor functions for local validator credentials (used by sync module for signing)
 const uint8_t* mxd_get_local_address(void) {
@@ -3222,16 +3220,6 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         mxd_stop_block_proposal();
 
         return finalize_ok ? 1 : -1;
-    }
-
-    // Periodically try pull-based sync to catch any missed blocks
-    // This is a fallback mechanism in case push-based broadcast failed
-    uint64_t now = mxd_now_ms();
-    if (now - last_pull_sync_time >= MXD_PULL_SYNC_INTERVAL_MS) {
-        last_pull_sync_time = now;
-        if (mxd_pull_missing_blocks() > 0) {
-            MXD_LOG_INFO("rsc", "Pull sync found and fetched missing blocks");
-        }
     }
 
     return 0;
