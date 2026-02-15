@@ -712,11 +712,11 @@ int main(int argc, char** argv) {
             mxd_sync_pending_genesis_to_rapid_table(&rapid_table, current_config.node_id);
             pthread_mutex_unlock(&metrics_mutex);
             
-            if (pending_count >= 3) {
+            if (pending_count >= 10) {
                 MXD_LOG_INFO("node", "Have %d pending genesis members, attempting genesis coordination", pending_count);
                 mxd_try_coordinate_genesis_block();
             } else if (connected_peers > 0) {
-                MXD_LOG_DEBUG("node", "Waiting for more genesis members: %d/3 (connected peers: %d)", 
+                MXD_LOG_DEBUG("node", "Waiting for more genesis members: %d/10 (connected peers: %d)",
                              pending_count, connected_peers);
             }
         }

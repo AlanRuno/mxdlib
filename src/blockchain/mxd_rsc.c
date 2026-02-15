@@ -2523,7 +2523,7 @@ int mxd_try_coordinate_genesis_block(void) {
     
     size_t local_pending_count = pending_genesis_count;
     
-    if (local_pending_count < 3) {
+    if (local_pending_count < 10) {
         genesis_quorum_reached_time = 0;  // Reset timeout tracking
         pthread_mutex_unlock(&genesis_mutex);
         return 0;
