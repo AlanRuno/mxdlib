@@ -2619,8 +2619,8 @@ int mxd_try_coordinate_genesis_block(void) {
                      addr_count, local_hex, addr_count > 0 ? first_hex : "(none)");
     }
 
-    // DETERMINISTIC GENESIS: Include ALL participating validators (up to 10)
-    // This ensures all nodes compute the same validator set and all get initial stake
+    // DETERMINISTIC GENESIS: Only include validators that actually signed
+    // This ensures coinbase recipients match membership entries (no ghost validators)
     // Minimum 3 validators required for quorum, maximum 10 for genesis
     size_t genesis_validator_count = addr_count;
 
@@ -2718,15 +2718,41 @@ int mxd_try_coordinate_genesis_block(void) {
     if (collected_signature_count < 3) {
         return 0;
     }
-    
+
+    // Wait for ALL expected signatures before creating genesis block
+    // This prevents a race where fast responders get membership entries
+    // but slow responders only get coinbase transactions (ghost validators)
+    static uint64_t genesis_sig_wait_start = 0;
+    if (collected_signature_count < local_member_count) {
+        if (genesis_sig_wait_start == 0) {
+            genesis_sig_wait_start = mxd_now_ms();
+            MXD_LOG_INFO("rsc", "Waiting for all signatures: have %zu of %zu",
+                         collected_signature_count, local_member_count);
+        }
+        uint64_t waited = mxd_now_ms() - genesis_sig_wait_start;
+        if (waited < 5000) {
+            return 0;  // Keep waiting up to 5 seconds for stragglers
+        }
+        MXD_LOG_WARN("rsc", "Timeout waiting for all signatures after %llu ms: have %zu of %zu",
+                     (unsigned long long)waited, collected_signature_count, local_member_count);
+    }
+
     static int genesis_creation_attempted = 0;
     if (genesis_creation_attempted) {
         return 0;
     }
     genesis_creation_attempted = 1;
-    
-    MXD_LOG_INFO("rsc", "Have %zu signatures, creating genesis block", collected_signature_count);
-    
+
+    // Snapshot the signature count and data BEFORE building the block
+    // The P2P thread can increment collected_signature_count at any time,
+    // so we must freeze the count to keep coinbase and membership in sync
+    const size_t genesis_sig_count = collected_signature_count;
+    mxd_genesis_signature_t genesis_sigs[10];
+    memcpy(genesis_sigs, collected_signatures, genesis_sig_count * sizeof(mxd_genesis_signature_t));
+
+    MXD_LOG_INFO("rsc", "Have %zu of %zu signatures, creating genesis block",
+                 genesis_sig_count, local_member_count);
+
     mxd_block_t genesis_block;
     uint8_t prev_hash[64] = {0};
     
@@ -2747,14 +2773,14 @@ int mxd_try_coordinate_genesis_block(void) {
     MXD_LOG_INFO("rsc", "Genesis block creation: config=%p, initial_stake=%llu, genesis_validator_count=%zu",
                  (void*)config, (unsigned long long)initial_stake, genesis_validator_count);
 
-    // Create coinbase transactions for ALL genesis validators (not just first 3)
-    // This mints the initial token supply for the network - each validator gets initial_stake
-    for (size_t i = 0; i < genesis_validator_count; i++) {
+    // Create coinbase transactions ONLY for validators that signed (from snapshot)
+    // This ensures coinbase recipients exactly match membership entries — no ghost validators
+    for (size_t i = 0; i < genesis_sig_count; i++) {
         if (initial_stake > 0) {
             mxd_transaction_t coinbase_tx;
             memset(&coinbase_tx, 0, sizeof(coinbase_tx));
-            
-            if (mxd_create_coinbase_transaction(&coinbase_tx, addresses[i], initial_stake) == 0) {
+
+            if (mxd_create_coinbase_transaction(&coinbase_tx, genesis_sigs[i].node_address, initial_stake) == 0) {
                 // Serialize the coinbase transaction for block storage
                 size_t tx_len = 0;
                 uint8_t *tx_data = serialize_coinbase_for_block(&coinbase_tx, &tx_len);
@@ -2804,10 +2830,10 @@ int mxd_try_coordinate_genesis_block(void) {
         current_time = mxd_now_ms(); // Use NTP-synchronized time in milliseconds
     }
     
-    // Add ALL collected signatures to membership entries (not just first 3)
+    // Add ALL collected signatures to membership entries (from snapshot)
     // This ensures all participating validators are included in the genesis block
-    for (size_t i = 0; i < collected_signature_count; i++) {
-        mxd_genesis_signature_t *sig = &collected_signatures[i];
+    for (size_t i = 0; i < genesis_sig_count; i++) {
+        mxd_genesis_signature_t *sig = &genesis_sigs[i];
         
         if (mxd_append_membership_entry(&genesis_block, sig->node_address, 
                                         sig->algo_id, sig->public_key, sig->public_key_length,
