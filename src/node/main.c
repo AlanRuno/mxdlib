@@ -721,7 +721,7 @@ int main(int argc, char** argv) {
             }
         }
         
-        if (genesis_initialized && !rapid_table_rebuilt && blockchain_height > 0 && last_blockchain_height == 0) {
+        if (genesis_initialized && !rapid_table_rebuilt && blockchain_height > 0) {
             pthread_mutex_lock(&metrics_mutex);
             if (mxd_rebuild_rapid_table_after_genesis(&rapid_table, current_config.node_id) == 0) {
                 MXD_LOG_INFO("node", "Rapid table rebuilt from genesis block, now has %zu nodes", rapid_table.count);
