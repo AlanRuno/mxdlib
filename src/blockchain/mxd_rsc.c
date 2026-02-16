@@ -411,14 +411,10 @@ int mxd_add_to_rapid_table(mxd_rapid_table_t *table, mxd_node_stake_t *node, con
     uint32_t blockchain_height = 0;
     int is_genesis = (mxd_get_blockchain_height(&blockchain_height) != 0 || blockchain_height == 0);
     
-    if (!is_genesis && local_node_id && strcmp(node->node_id, local_node_id) == 0) {
-        MXD_LOG_DEBUG("rsc", "Skipping self-node %s from rapid table (non-genesis mode)", node->node_id);
-        return 0; // Not an error, just skip
-    }
-    
-    if (is_genesis && local_node_id && strcmp(node->node_id, local_node_id) == 0) {
-        MXD_LOG_INFO("rsc", "Adding self-node %s to rapid table (genesis mode)", node->node_id);
-    }
+    // NOTE: Do NOT skip the local node in any mode. All nodes must have identical
+    // rapid tables for deterministic proposer selection to agree across the network.
+    (void)is_genesis;
+    (void)local_node_id;
     
     // Check if node is already in table
     for (size_t i = 0; i < table->count; i++) {
@@ -1372,18 +1368,11 @@ int mxd_apply_membership_deltas(mxd_rapid_table_t *table, const mxd_block_t *blo
         MXD_LOG_INFO("rsc", "Processing membership entry %u: timestamp=%lu, algo_id=%u, pk_len=%u, sig_len=%u",
                      i, entry->timestamp, entry->algo_id, entry->public_key_length, entry->signature_length);
         
-        if (local_node_id) {
-            char node_id_str[41];
-            // Convert address bytes to hex string for comparison
-            for (int j = 0; j < 20; j++) {
-                snprintf(node_id_str + (j * 2), 3, "%02x", entry->node_address[j]);
-            }
-            node_id_str[40] = '\0';
-            
-            if (strcmp(node_id_str, local_node_id) == 0) {
-                continue;
-            }
-        }
+        // NOTE: Do NOT skip the local node. All nodes must have identical rapid tables
+        // for deterministic proposer selection (height % count) to agree across the network.
+        // Previously this skipped local_node_id, causing each node to have a different
+        // 9-of-10 table, breaking round-robin consensus.
+        (void)local_node_id;
         
         // Check if node already exists in table
         int found = 0;
@@ -2485,11 +2474,13 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
         return -1;
     }
     
+    pthread_mutex_lock(&genesis_mutex);
     if (collected_signature_count >= 10) {
+        pthread_mutex_unlock(&genesis_mutex);
         MXD_LOG_WARN("rsc", "Too many collected signatures");
         return -1;
     }
-    
+
     mxd_genesis_signature_t *sig = &collected_signatures[collected_signature_count];
     memcpy(sig->node_address, signer_address, 20);
     sig->algo_id = signer_algo_id;
@@ -2499,8 +2490,9 @@ int mxd_handle_genesis_sign_response(const uint8_t *signer_address, const uint8_
     sig->signature_length = signature_length;
     sig->received = 1;
     collected_signature_count++;
-    
-    MXD_LOG_INFO("rsc", "Collected genesis signature (%zu/3)", collected_signature_count);
+    pthread_mutex_unlock(&genesis_mutex);
+
+    MXD_LOG_INFO("rsc", "Collected genesis signature (%zu)", collected_signature_count);
     return 0;
 }
 
@@ -2743,12 +2735,13 @@ int mxd_try_coordinate_genesis_block(void) {
     }
     genesis_creation_attempted = 1;
 
-    // Snapshot the signature count and data BEFORE building the block
-    // The P2P thread can increment collected_signature_count at any time,
-    // so we must freeze the count to keep coinbase and membership in sync
+    // Snapshot the signature count and data under lock to prevent partial reads
+    // while the P2P thread is writing a new signature entry
+    pthread_mutex_lock(&genesis_mutex);
     const size_t genesis_sig_count = collected_signature_count;
     mxd_genesis_signature_t genesis_sigs[10];
     memcpy(genesis_sigs, collected_signatures, genesis_sig_count * sizeof(mxd_genesis_signature_t));
+    pthread_mutex_unlock(&genesis_mutex);
 
     MXD_LOG_INFO("rsc", "Have %zu of %zu signatures, creating genesis block",
                  genesis_sig_count, local_member_count);
