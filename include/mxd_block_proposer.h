@@ -10,8 +10,9 @@ extern "C" {
 #include <stdint.h>
 
 // Block proposer configuration
-#define MXD_BLOCK_CLOSE_TIMEOUT_MS 5000      // 5 seconds
-#define MXD_PROPOSER_TIMEOUT_MS 30000        // 30 seconds per proposer slot
+#define MXD_BLOCK_CLOSE_TIMEOUT_MS 2000      // 2 seconds (smaller blocks propagate faster via gossip)
+#define MXD_PROPOSER_TIMEOUT_MS 10000        // 10 seconds per proposer slot (faster fallback activation)
+#define MXD_MAX_FALLBACK_RETRIES 9           // Max 9 fallback proposers (10 total chances per height)
 
 // Block proposer state
 typedef struct {

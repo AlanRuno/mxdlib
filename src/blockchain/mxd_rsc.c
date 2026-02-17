@@ -2917,55 +2917,37 @@ uint8_t mxd_get_local_algo_id(void) {
 }
 
 // Check if this node is the proposer for the given height
-// Uses deterministic selection: proposer = validators[height % validator_count]
-// Validators are sorted by their 20-byte address lexicographically
+// Primary proposer = validators[height % validator_count]
+// After MXD_PROPOSER_TIMEOUT_MS, allows 1 fallback proposer to prevent permanent stalls
 int mxd_is_proposer_for_height(const mxd_rapid_table_t *table, const uint8_t *local_address, uint32_t height) {
     if (!table || !local_address || table->count == 0) {
         return 0;
     }
 
-    // Use the in-memory rapid table as the authoritative validator set.
-    // The array order is deterministic (genesis membership order, preserved because
-    // mxd_update_rapid_table_rankings updates ranks in-place without reordering).
-    uint32_t base_index = height % table->count;
-    uint32_t proposer_index = base_index;
+    uint32_t primary_index = height % table->count;
 
-    // Get current timeout state for fallback logic (thread-safe)
-    uint32_t timeout_height = 0;
-    uint32_t timeout_retry_count = 0;
-    mxd_get_timeout_state(&timeout_height, &timeout_retry_count);
-
-    // If timeout expired for this height, try fallback proposers
-    if (timeout_height == height && timeout_retry_count > 0) {
-        proposer_index = (base_index + timeout_retry_count) % table->count;
-        MXD_LOG_INFO("rsc", "Fallback proposer selection: retry %u, proposer index %u (base %u)",
-                     timeout_retry_count, proposer_index, base_index);
+    // Check primary proposer (always allowed, no timeout needed)
+    if (table->nodes[primary_index] &&
+        memcmp(local_address, table->nodes[primary_index]->node_address, 20) == 0) {
+        MXD_LOG_INFO("rsc", "This node is PRIMARY proposer for height %u (index %u of %zu validators)",
+                     height, primary_index, table->count);
+        return 1;
     }
 
-    if (!table->nodes[proposer_index]) return 0;
-
-    // Debug: log both addresses for comparison
-    char local_hex[41], proposer_hex[41];
-    for (int i = 0; i < 20; i++) {
-        sprintf(&local_hex[i*2], "%02x", local_address[i]);
-        sprintf(&proposer_hex[i*2], "%02x", table->nodes[proposer_index]->node_address[i]);
-    }
-    MXD_LOG_INFO("rsc", "Proposer check for height %u: index=%u, local=%s, expected=%s (%zu validators)",
-                 height, proposer_index, local_hex, proposer_hex, table->count);
-
-    int is_proposer = (memcmp(local_address, table->nodes[proposer_index]->node_address, 20) == 0);
-
-    if (is_proposer) {
-        if (timeout_retry_count > 0) {
-            MXD_LOG_WARN("rsc", "This node is FALLBACK proposer for height %u (retry %u, index %u of %zu validators)",
-                         height, timeout_retry_count, proposer_index, table->count);
-        } else {
-            MXD_LOG_INFO("rsc", "This node is PRIMARY proposer for height %u (index %u of %zu validators)",
-                         height, proposer_index, table->count);
+    // After timeout, allow fallback proposers to prevent permanent chain stalls.
+    // Each retry activates the next validator in round-robin order.
+    uint32_t retry_count = mxd_get_timeout_retry_count();
+    for (uint32_t r = 1; r <= retry_count && r <= MXD_MAX_FALLBACK_RETRIES; r++) {
+        uint32_t fallback_index = (primary_index + r) % table->count;
+        if (table->nodes[fallback_index] &&
+            memcmp(local_address, table->nodes[fallback_index]->node_address, 20) == 0) {
+            MXD_LOG_INFO("rsc", "This node is FALLBACK #%u proposer for height %u (index %u of %zu validators)",
+                         r, height, fallback_index, table->count);
+            return 1;
         }
     }
 
-    return is_proposer;
+    return 0;
 }
 
 // Post-genesis consensus tick - drives block production after genesis
@@ -2973,6 +2955,11 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
                        const uint8_t *local_pubkey, const uint8_t *local_privkey, uint8_t algo_id) {
     if (!table || !local_address || !local_pubkey || !local_privkey) {
         return -1;
+    }
+
+    // Cannot do consensus with no validators
+    if (table->count == 0) {
+        return 0;
     }
     
     // Get current blockchain height
@@ -3013,34 +3000,45 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
     // Get current block being proposed (if any)
     mxd_block_t *current_block = (mxd_block_t *)mxd_get_current_block();
 
-    // Check if we're waiting for a block and timeout expired
-    if (!current_block) {
-        // Not currently proposing - check timeout (thread-safe)
-        uint32_t current_timeout_height = mxd_get_timeout_height();
-
-        if (current_timeout_height != next_height) {
-            // First time waiting for this height - start timeout tracking
-            // Use rapid table to determine expected proposer
-            if (table && table->count > 0) {
-                uint32_t expected_index = next_height % table->count;
-                uint8_t *expected_addr = table->nodes[expected_index]->node_address;
-
-                mxd_start_height_timeout(next_height, expected_addr);
-
-                MXD_LOG_INFO("rsc", "Started timeout tracking for height %u, expecting validator %02x%02x...%02x%02x (index %u of %zu validators)",
-                            next_height, expected_addr[0], expected_addr[1],
-                            expected_addr[18], expected_addr[19], expected_index, table->count);
+    // Debug: log consensus tick state periodically (every 10 seconds)
+    {
+        static uint64_t last_tick_debug = 0;
+        uint64_t now_debug = mxd_now_ms();
+        if (now_debug - last_tick_debug >= 10000) {
+            last_tick_debug = now_debug;
+            uint32_t pidx = (table->count > 0) ? (next_height % table->count) : 0;
+            char local_hex[41] = {0}, expected_hex[41] = {0};
+            for (int i = 0; i < 20; i++) sprintf(&local_hex[i*2], "%02x", local_address[i]);
+            if (table->count > 0 && table->nodes[pidx]) {
+                for (int i = 0; i < 20; i++) sprintf(&expected_hex[i*2], "%02x", table->nodes[pidx]->node_address[i]);
             }
-        } else if (mxd_check_timeout_expired()) {
-            // Timeout expired! Increment retry count for fallback
-            int retry_count = mxd_increment_retry_count();
-
-            MXD_LOG_WARN("rsc", "Proposer timeout expired for height %u (retry %d), enabling fallback proposers",
-                        next_height, retry_count);
+            uint32_t retries = mxd_get_timeout_retry_count();
+            MXD_LOG_INFO("rsc", "Consensus tick debug: next_height=%u, table_count=%zu, proposer_idx=%u, local=%s, expected=%s, last_proposed=%u, retries=%u",
+                         next_height, table->count, pidx, local_hex, expected_hex, last_proposed_height, retries);
         }
     }
 
-    // Check if we're the proposer for the next block (includes fallback logic)
+    // Timeout tracking: if we're not proposing and no block is being built,
+    // track how long we've been waiting for the current height's proposer.
+    // After MXD_PROPOSER_TIMEOUT_MS (30s), allow fallback proposers.
+    if (!current_block && next_height > last_proposed_height) {
+        uint32_t timeout_height = mxd_get_timeout_height();
+        if (timeout_height != next_height) {
+            // Start tracking timeout for this new height
+            uint32_t pidx = next_height % table->count;
+            const uint8_t *expected = (table->nodes[pidx]) ? table->nodes[pidx]->node_address : local_address;
+            mxd_start_height_timeout(next_height, expected);
+        } else if (mxd_check_timeout_expired()) {
+            uint32_t retry_count = mxd_get_timeout_retry_count();
+            if (retry_count < MXD_MAX_FALLBACK_RETRIES) {
+                uint32_t new_retry = mxd_increment_retry_count();
+                MXD_LOG_WARN("rsc", "Proposer timeout expired for height %u, activating fallback #%u",
+                             next_height, new_retry);
+            }
+        }
+    }
+
+    // Check if we're the proposer for the next block (primary or fallback after timeout)
     int is_proposer = mxd_is_proposer_for_height(table, local_address, next_height);
 
     // Log proposal conditions
@@ -3072,14 +3070,7 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         last_proposed_height = next_height;
         mxd_free_block(&latest_block);
 
-        // Get retry count (thread-safe)
-        uint32_t current_retry_count = mxd_get_timeout_retry_count();
-        if (current_retry_count > 0) {
-            MXD_LOG_WARN("rsc", "Started FALLBACK block proposal for height %u (retry %d)",
-                        next_height, current_retry_count);
-        } else {
-            MXD_LOG_INFO("rsc", "Started PRIMARY block proposal for height %u", next_height);
-        }
+        MXD_LOG_INFO("rsc", "Started block proposal for height %u", next_height);
         current_block = (mxd_block_t *)mxd_get_current_block();
 
         // Inherit total_supply from previous block

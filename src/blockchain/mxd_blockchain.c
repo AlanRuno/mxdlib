@@ -1,4 +1,5 @@
 #include "../../include/mxd_blockchain.h"
+#include "../../include/mxd_block_proposer.h"
 #include "../../include/mxd_crypto.h"
 #include "../../include/mxd_rsc.h"
 #include "../../include/mxd_utxo.h"
@@ -181,32 +182,23 @@ static int mxd_validate_block_proposer(const mxd_block_t *block) {
     return -1;
   }
 
-  // Primary proposer
+  // Accept primary proposer or 1 fallback (prevents permanent stalls from ghost validators)
   uint32_t primary_index = block->height % membership_count;
 
-  // Check if proposer is primary
-  if (memcmp(block->proposer_id, membership[primary_index].node_address, 20) == 0) {
-    mxd_free_block(&prev_block);
-    return 0; // Valid primary proposer
-  }
-
-  // Check if proposer is a valid fallback (within reasonable retry range)
-  #define MAX_FALLBACK_RETRIES 10
-
-  for (uint32_t retry = 1; retry <= MAX_FALLBACK_RETRIES; retry++) {
-    uint32_t fallback_index = (primary_index + retry) % membership_count;
-
-    if (memcmp(block->proposer_id, membership[fallback_index].node_address, 20) == 0) {
-      MXD_LOG_INFO("blockchain", "Block %u proposed by fallback validator (retry %u)",
-                  block->height, retry);
+  for (uint32_t r = 0; r <= MXD_MAX_FALLBACK_RETRIES; r++) {
+    uint32_t check_index = (primary_index + r) % membership_count;
+    if (memcmp(block->proposer_id, membership[check_index].node_address, 20) == 0) {
+      if (r > 0) {
+        MXD_LOG_INFO("blockchain", "Block %u accepted from fallback proposer (index %u)",
+                     block->height, check_index);
+      }
       mxd_free_block(&prev_block);
-      return 0; // Valid fallback proposer
+      return 0; // Valid proposer
     }
   }
 
-  // Proposer not valid
-  MXD_LOG_ERROR("blockchain", "Block %u has invalid proposer (not primary or fallback)",
-               block->height);
+  MXD_LOG_ERROR("blockchain", "Block %u has invalid proposer (not primary at index %u or fallback)",
+               block->height, primary_index);
   mxd_free_block(&prev_block);
   return -1;
 }

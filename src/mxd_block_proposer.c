@@ -193,11 +193,10 @@ int mxd_should_close_block(void) {
     int is_empty = (proposer_state.current_block->transaction_count == 0 &&
                     proposer_state.current_block->rapid_membership_count == 0);
 
-    // Determine timeout based on whether block has content
-    // - Non-empty blocks: close after 5 seconds (MXD_BLOCK_CLOSE_TIMEOUT_MS)
-    // - Empty blocks: close after 30 seconds to keep chain alive without spamming
-    #define MXD_EMPTY_BLOCK_TIMEOUT_MS 30000
-    uint64_t timeout = is_empty ? MXD_EMPTY_BLOCK_TIMEOUT_MS : MXD_BLOCK_CLOSE_TIMEOUT_MS;
+    // Both empty and non-empty blocks close after 5 seconds.
+    // Fast block closure is critical: the previous 30s empty block timeout collided
+    // with the proposer timeout, causing fallback proposers and chain forks.
+    uint64_t timeout = MXD_BLOCK_CLOSE_TIMEOUT_MS;
 
     if (elapsed >= timeout) {
         if (is_empty) {
