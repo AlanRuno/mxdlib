@@ -154,6 +154,7 @@ const mxd_rapid_table_t* mxd_get_rapid_table(void) {
 static int genesis_initialized = 0;
 static uint64_t last_genesis_announce = 0;
 static volatile int consensus_running = 1;
+static volatile int rapid_table_ready = 0;  // Set after rapid table rebuild from genesis
 static uint8_t node_algo_id = 0;
 static uint8_t node_pubkey[MXD_PUBKEY_MAX_LEN] = {0};
 static uint8_t node_privkey[MXD_PRIVKEY_MAX_LEN] = {0};
@@ -172,7 +173,7 @@ static void *consensus_thread_func(void *arg) {
         uint32_t blockchain_height = 0;
         mxd_get_blockchain_height(&blockchain_height);
 
-        if (genesis_initialized && blockchain_height > 0) {
+        if (genesis_initialized && blockchain_height > 0 && rapid_table_ready) {
             pthread_mutex_lock(&metrics_mutex);
             int tick_result = mxd_consensus_tick(&rapid_table, node_address,
                                                   node_pubkey, node_privkey, node_algo_id);
@@ -725,7 +726,12 @@ int main(int argc, char** argv) {
             pthread_mutex_lock(&metrics_mutex);
             if (mxd_rebuild_rapid_table_after_genesis(&rapid_table, current_config.node_id) == 0) {
                 MXD_LOG_INFO("node", "Rapid table rebuilt from genesis block, now has %zu nodes", rapid_table.count);
-                rapid_table_rebuilt = 1;
+                if (rapid_table.count > 0) {
+                    rapid_table_rebuilt = 1;
+                    rapid_table_ready = 1;  // Allow consensus thread to start proposing
+                } else {
+                    MXD_LOG_WARN("node", "Rapid table rebuild returned 0 nodes (genesis block may not have arrived yet), will retry");
+                }
             } else {
                 MXD_LOG_WARN("node", "Failed to rebuild rapid table from genesis block");
             }
@@ -740,7 +746,7 @@ int main(int argc, char** argv) {
         // Periodic blockchain sync check - ensures we catch up if behind the network
         static uint64_t last_sync_check = 0;
         uint64_t now_sync = time(NULL);
-        if (genesis_initialized && blockchain_height > 0 && now_sync - last_sync_check >= 30) {
+        if (genesis_initialized && blockchain_height > 0 && now_sync - last_sync_check >= 5) {
             last_sync_check = now_sync;
             MXD_LOG_INFO("node", "Checking blockchain sync status...");
             if (mxd_sync_blockchain() == 0) {
