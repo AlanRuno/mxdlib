@@ -249,6 +249,17 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
             }
         }
 
+        // Recalculate total_supply from UTXO state after applying transactions.
+        // The proposer's copy may have total_supply=0 if it inherited from a block
+        // that was itself stored via sync without recalculation.
+        {
+            size_t tc = 0, pc = 0;
+            mxd_amount_t tv = 0;
+            if (mxd_get_utxo_stats(&tc, &pc, &tv) == 0 && tv > 0) {
+                block.total_supply = tv;
+            }
+        }
+
         // Store the block
         if (mxd_store_block(&block) == 0) {
             MXD_LOG_INFO("sync", "Stored unsolicited block at height %u (validators=%u)",
@@ -553,6 +564,15 @@ static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
             MXD_LOG_ERROR("sync", "Failed to apply transactions at height %u", h);
             free(blocks);
             break;
+        }
+
+        // Recalculate total_supply from UTXO state after applying transactions
+        {
+            size_t tc = 0, pc = 0;
+            mxd_amount_t tv = 0;
+            if (mxd_get_utxo_stats(&tc, &pc, &tv) == 0 && tv > 0) {
+                block->total_supply = tv;
+            }
         }
 
         if (mxd_store_block(block) != 0) {
