@@ -1471,11 +1471,22 @@ int mxd_remove_expired_nodes(mxd_rapid_table_t *table, uint64_t current_time) {
 }
 
 int mxd_check_proposer_miss(mxd_rapid_table_t *table, const mxd_block_t *block) {
-    if (!table || !block || table->count < MXD_MIN_VALIDATORS) return 0;
+    if (!table || !block || table->count == 0) return 0;
 
-    // Determine expected proposer for this block's height using array index.
-    // The array maintains deterministic genesis/membership ordering because
-    // mxd_update_rapid_table_rankings no longer reorders it.
+    // Track miss statistics for scoring, but DO NOT evict.
+    //
+    // Eviction is disabled because it is a local decision: each node independently
+    // decides who "missed" based on its own view of the chain. With fallback
+    // proposers, different nodes can receive blocks from different proposers for
+    // the same height, causing them to track different miss counts. After the
+    // eviction threshold, nodes evict different validators, their table sizes
+    // diverge, and height % count produces different proposer indices — permanent
+    // irreversible fork.
+    //
+    // The fallback proposer mechanism (MXD_MAX_FALLBACK_RETRIES) already handles
+    // missed slots gracefully. Eviction should only be re-enabled as a consensus
+    // decision (embedded in blocks and voted on by quorum).
+
     uint32_t expected_index = block->height % table->count;
     if (expected_index >= table->count || !table->nodes[expected_index]) return 0;
 
@@ -1484,35 +1495,12 @@ int mxd_check_proposer_miss(mxd_rapid_table_t *table, const mxd_block_t *block) 
     if (memcmp(expected->node_address, block->proposer_id, 20) == 0) {
         // Expected proposer produced the block — reset their counter
         expected->consecutive_misses = 0;
-        return 0;
+    } else {
+        // Mismatch: expected proposer didn't produce this block (timeout/fallback)
+        expected->consecutive_misses++;
     }
 
-    // Mismatch: expected proposer didn't produce this block (timeout/fallback occurred)
-    expected->consecutive_misses++;
-
-    char addr_hex[41];
-    for (int i = 0; i < 20; i++) sprintf(&addr_hex[i*2], "%02x", expected->node_address[i]);
-
-    MXD_LOG_WARN("rsc", "Validator %s missed round-robin turn at height %u (%u/%u consecutive misses)",
-                 addr_hex, block->height, expected->consecutive_misses, MXD_EVICTION_THRESHOLD);
-
-    if (expected->consecutive_misses >= MXD_EVICTION_THRESHOLD) {
-        if (table->count <= MXD_MIN_VALIDATORS) {
-            MXD_LOG_WARN("rsc", "Validator %s exceeded eviction threshold but table at minimum size (%zu/%d)",
-                         addr_hex, table->count, MXD_MIN_VALIDATORS);
-            return 0;
-        }
-
-        MXD_LOG_ERROR("rsc", "EVICTION: Removing validator %s after %u consecutive misses (table: %zu -> %zu)",
-                      addr_hex, expected->consecutive_misses, table->count, table->count - 1);
-
-        // Remove from rapid table using the node_id string
-        mxd_remove_from_rapid_table(table, expected->node_id);
-
-        return 1;  // Eviction occurred
-    }
-
-    return 0;
+    return 0;  // Never evict
 }
 
 void mxd_accumulate_block_stats(mxd_rapid_table_t *table, const mxd_block_t *block) {
