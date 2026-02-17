@@ -447,18 +447,47 @@ int mxd_store_block(const mxd_block_t *block) {
     if (!block || !mxd_get_rocksdb_db()) {
         return -1;
     }
-    
+
+    // Defensive guard: preserve membership entries on genesis block overwrites.
+    // The genesis block's membership entries are critical for rapid table rebuild
+    // but are not covered by the block hash. If this store would overwrite a
+    // genesis block that has membership entries with one that doesn't, merge them.
+    mxd_block_t merged_block;
+    int using_merged = 0;
+    if (block->height == 0 && block->rapid_membership_count == 0) {
+        mxd_block_t existing;
+        memset(&existing, 0, sizeof(existing));
+        if (mxd_retrieve_block_by_height(0, &existing) == 0 && existing.rapid_membership_count > 0) {
+            // Copy the incoming block and attach existing membership entries
+            memcpy(&merged_block, block, sizeof(mxd_block_t));
+            merged_block.rapid_membership_count = existing.rapid_membership_count;
+            merged_block.rapid_membership_capacity = existing.rapid_membership_capacity;
+            merged_block.rapid_membership_entries = existing.rapid_membership_entries;
+            // Null out existing's pointer so free doesn't release them
+            existing.rapid_membership_entries = NULL;
+            existing.rapid_membership_count = 0;
+            block = &merged_block;
+            using_merged = 1;
+            MXD_LOG_INFO("db", "Preserved %u membership entries during genesis block overwrite",
+                         merged_block.rapid_membership_count);
+        }
+        mxd_free_block(&existing);
+    }
+
     uint8_t height_key[13 + sizeof(uint32_t)];
     size_t height_key_len;
     create_block_height_key(block->height, height_key, &height_key_len);
-    
+
     uint8_t hash_key[11 + 64];
     size_t hash_key_len;
     create_block_hash_key(block->block_hash, hash_key, &hash_key_len);
-    
+
     uint8_t *data = NULL;
     size_t data_len = 0;
     if (serialize_block(block, &data, &data_len) != 0) {
+        if (using_merged) {
+            free(merged_block.rapid_membership_entries);
+        }
         return -1;
     }
     
@@ -484,14 +513,15 @@ int mxd_store_block(const mxd_block_t *block) {
         MXD_LOG_ERROR("db", "Failed to store block: %s", err);
         free(err);
         free(data);
+        if (using_merged) free(merged_block.rapid_membership_entries);
         return is_io ? MXD_ERR_IO : MXD_ERR_GENERIC;
     }
-    
+
     // Update in-memory height after successful write
     if (updating_height) {
         current_height = new_height;
     }
-    
+
     // Signatures stored separately (non-critical, can be re-fetched)
     for (uint32_t i = 0; i < block->validation_count; i++) {
         mxd_store_signature(block->height,
@@ -499,8 +529,9 @@ int mxd_store_block(const mxd_block_t *block) {
                             block->validation_chain[i].signature,
                             block->validation_chain[i].signature_length);
     }
-    
+
     free(data);
+    if (using_merged) free(merged_block.rapid_membership_entries);
     return 0;
 }
 
