@@ -502,32 +502,18 @@ int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta
             }
         }
 
-        // Compute this transaction's supply delta BEFORE applying.
-        // Coinbase: delta = +outputs (new supply).
-        // Non-coinbase: delta = outputs - inputs + voluntary_tip = 0
-        //   (voluntary_tip is redistributed via separate coinbase UTXOs
-        //    outside the block's tx list, so we add it back here)
-        int64_t tx_output_sum = 0;
-        int64_t tx_input_sum = 0;
-        for (uint32_t j = 0; j < tx.output_count; j++) {
-            tx_output_sum += (int64_t)tx.outputs[j].amount;
-        }
-        if (!tx.is_coinbase) {
-            for (uint32_t j = 0; j < tx.input_count; j++) {
-                mxd_utxo_t input_utxo;
-                if (mxd_find_utxo(tx.inputs[j].prev_tx_hash, tx.inputs[j].output_index, &input_utxo) == 0) {
-                    tx_input_sum += (int64_t)input_utxo.amount;
-                }
+        // Compute this transaction's supply delta purely from block data.
+        // Non-coinbase txs are always supply-neutral by definition:
+        //   sum(outputs) + voluntary_tip == sum(inputs)
+        // so their delta is 0 — no need to look up input UTXOs.
+        // Only coinbase txs create new supply (delta = sum of outputs).
+        // This avoids depending on UTXO database state, which varies
+        // across nodes and across repeated calls on the same node.
+        if (tx.is_coinbase) {
+            for (uint32_t j = 0; j < tx.output_count; j++) {
+                delta += (int64_t)tx.outputs[j].amount;
             }
-            // Add back voluntary_tip: tips are deducted from sender's
-            // outputs but redistributed as coinbase UTXOs outside the
-            // block's transaction list, making transfers supply-neutral.
-            tx_output_sum += (int64_t)tx.voluntary_tip;
         }
-
-        // Always accumulate delta from block data — this is deterministic
-        // regardless of whether UTXOs were already applied (proposer case)
-        delta += tx_output_sum - tx_input_sum;
 
         // Apply the transaction to UTXO state
         // Distinguish IO errors (must halt) from spent inputs (skip)
