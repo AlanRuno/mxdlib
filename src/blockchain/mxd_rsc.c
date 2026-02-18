@@ -1097,24 +1097,6 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
     if (mxd_block_has_validation_quorum(block, table)) {
         context->status = MXD_VALIDATION_COMPLETE;
 
-        // Always recalculate total_supply from authoritative UTXO scan
-        // (previously only ran when total_supply==0, causing stale inherited values)
-        {
-            size_t total_count = 0;
-            size_t pruned_count = 0;
-            mxd_amount_t total_value = 0;
-            if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0 && total_value > 0) {
-                block->total_supply = total_value;
-            } else if (block->height > 0) {
-                // Fallback: inherit from previous block
-                mxd_block_t prev_block;
-                if (mxd_retrieve_block_by_height(block->height - 1, &prev_block) == 0) {
-                    block->total_supply = prev_block.total_supply;
-                    mxd_free_block(&prev_block);
-                }
-            }
-        }
-
         // Distribute tips to validators in the validation chain
         if (block->validation_count > 0) {
             mxd_node_stake_t *validators = malloc(block->validation_count * sizeof(mxd_node_stake_t));
@@ -1170,7 +1152,19 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
         // Without this, the proposer's UTXO database becomes stale and
         // allows accepting transactions that reference already-spent UTXOs,
         // causing supply inflation via double-spend.
-        mxd_apply_block_transactions(block);
+        {
+            int64_t supply_delta = 0;
+            mxd_apply_block_transactions(block, &supply_delta);
+            // Compute total_supply deterministically from previous block + delta
+            if (block->height > 0) {
+                mxd_block_t prev;
+                memset(&prev, 0, sizeof(prev));
+                if (mxd_retrieve_block_by_height(block->height - 1, &prev) == 0) {
+                    block->total_supply = (uint64_t)((int64_t)prev.total_supply + supply_delta);
+                    mxd_free_block(&prev);
+                }
+            }
+        }
 
         if (mxd_store_block(block) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to store relayed block at height %u", block->height);
@@ -1202,21 +1196,17 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
             context->status = MXD_VALIDATION_COMPLETE;
 
             {
-                size_t total_count = 0;
-                size_t pruned_count = 0;
-                mxd_amount_t total_value = 0;
-                if (mxd_get_utxo_stats(&total_count, &pruned_count, &total_value) == 0 && total_value > 0) {
-                    block->total_supply = total_value;
-                } else if (block->height > 0) {
-                    mxd_block_t prev_block;
-                    if (mxd_retrieve_block_by_height(block->height - 1, &prev_block) == 0) {
-                        block->total_supply = prev_block.total_supply;
-                        mxd_free_block(&prev_block);
+                int64_t supply_delta = 0;
+                mxd_apply_block_transactions(block, &supply_delta);
+                if (block->height > 0) {
+                    mxd_block_t prev;
+                    memset(&prev, 0, sizeof(prev));
+                    if (mxd_retrieve_block_by_height(block->height - 1, &prev) == 0) {
+                        block->total_supply = (uint64_t)((int64_t)prev.total_supply + supply_delta);
+                        mxd_free_block(&prev);
                     }
                 }
             }
-
-            mxd_apply_block_transactions(block);
             if (mxd_store_block(block) != 0) {
                 MXD_LOG_ERROR("rsc", "Failed to store validated block at height %u", block->height);
             }
@@ -3397,9 +3387,6 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
             return -1;
         }
 
-        // Save total_supply from previous block before freeing
-        mxd_amount_t prev_total_supply = latest_block.total_supply;
-
         if (mxd_start_block_proposal(latest_block.block_hash, next_height) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to start block proposal at height %u", next_height);
             mxd_free_block(&latest_block);
@@ -3411,13 +3398,6 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
 
         MXD_LOG_INFO("rsc", "Started block proposal for height %u", next_height);
         current_block = (mxd_block_t *)mxd_get_current_block();
-
-        // Inherit total_supply from previous block
-        if (current_block && prev_total_supply > 0) {
-            current_block->total_supply = prev_total_supply;
-            MXD_LOG_DEBUG("rsc", "Inherited total_supply=%llu from previous block",
-                         (unsigned long long)prev_total_supply);
-        }
     }
     
     // If we have an active proposal, try to add transactions from mempool

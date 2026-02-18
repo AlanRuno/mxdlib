@@ -1142,14 +1142,7 @@ static enum MHD_Result handle_request(void *cls,
                 mxd_free_block(&block);
             }
 
-            // If block's total_supply is 0, recalculate from UTXO state
-            if (total_supply == 0) {
-                size_t tc = 0, pc = 0;
-                mxd_amount_t tv = 0;
-                if (mxd_get_utxo_stats(&tc, &pc, &tv) == 0 && tv > 0) {
-                    total_supply = tv;
-                }
-            }
+            // total_supply comes directly from the block — no fallback needed
 
             // Calculate stats from recent blocks (last 100 or all)
             uint32_t sample_size = (height > 100) ? 100 : height;

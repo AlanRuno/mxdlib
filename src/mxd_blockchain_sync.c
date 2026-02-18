@@ -25,7 +25,7 @@
 
 static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t *height);
 static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count);
-int mxd_apply_block_transactions(const mxd_block_t *block);
+int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta);
 static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height);
 int mxd_sign_and_broadcast_block(const mxd_block_t *block);
 extern void mxd_drain_pending_validation_sigs(const uint8_t *block_hash);
@@ -211,7 +211,8 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
         }
         
         // Apply transactions to create UTXOs (critical for genesis block)
-        if (mxd_apply_block_transactions(&block) != 0) {
+        int64_t supply_delta = 0;
+        if (mxd_apply_block_transactions(&block, &supply_delta) != 0) {
             if (block.height == 0) {
                 // Genesis block must always be accepted
                 MXD_LOG_WARN("sync", "Failed to apply transactions for genesis block, storing anyway");
@@ -249,15 +250,17 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
             }
         }
 
-        // Recalculate total_supply from UTXO state after applying transactions.
-        // The proposer's copy may have total_supply=0 if it inherited from a block
-        // that was itself stored via sync without recalculation.
-        {
-            size_t tc = 0, pc = 0;
-            mxd_amount_t tv = 0;
-            if (mxd_get_utxo_stats(&tc, &pc, &tv) == 0 && tv > 0) {
-                block.total_supply = tv;
+        // Compute total_supply deterministically from previous block + delta
+        if (block.height > 0) {
+            mxd_block_t prev;
+            memset(&prev, 0, sizeof(prev));
+            if (mxd_retrieve_block_by_height(block.height - 1, &prev) == 0) {
+                block.total_supply = (uint64_t)((int64_t)prev.total_supply + supply_delta);
+                mxd_free_block(&prev);
             }
+        } else {
+            // Genesis: delta IS the total supply
+            block.total_supply = (uint64_t)supply_delta;
         }
 
         // Store the block
@@ -366,29 +369,31 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
     return blocks;
 }
 
-int mxd_apply_block_transactions(const mxd_block_t *block) {
+int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta) {
     if (!block) return -1;
-    
+
+    int64_t delta = 0;
+
     // Apply each transaction in the block to the UTXO state
     for (uint32_t i = 0; i < block->transaction_count; i++) {
         if (!block->transactions[i].data || block->transactions[i].length == 0) {
             MXD_LOG_WARN("sync", "Skipping empty transaction at index %u", i);
             continue;
         }
-        
+
         // Deserialize the transaction from block storage format
         mxd_transaction_t tx;
         memset(&tx, 0, sizeof(mxd_transaction_t));
-        
+
         const uint8_t *ptr = block->transactions[i].data;
         const uint8_t *end = ptr + block->transactions[i].length;
-        
+
         // Read header fields
         if (ptr + 4 + 4 + 4 + 8 + 8 + 1 + 64 > end) {
             MXD_LOG_ERROR("sync", "Transaction data too short at index %u", i);
             continue;
         }
-        
+
         tx.version = mxd_read_u32_be(&ptr);
         tx.input_count = mxd_read_u32_be(&ptr);
         tx.output_count = mxd_read_u32_be(&ptr);
@@ -396,7 +401,7 @@ int mxd_apply_block_transactions(const mxd_block_t *block) {
         tx.timestamp = mxd_read_u64_be(&ptr);
         tx.is_coinbase = mxd_read_u8(&ptr);
         mxd_read_bytes(&ptr, tx.tx_hash, 64);
-        
+
         // Allocate and read inputs
         if (tx.input_count > 0) {
             tx.inputs = calloc(tx.input_count, sizeof(mxd_tx_input_t));
@@ -404,31 +409,31 @@ int mxd_apply_block_transactions(const mxd_block_t *block) {
                 MXD_LOG_ERROR("sync", "Failed to allocate inputs for transaction %u", i);
                 continue;
             }
-            
+
             for (uint32_t j = 0; j < tx.input_count; j++) {
                 if (ptr + 64 + 4 + 1 + 2 > end) {
                     mxd_free_transaction(&tx);
                     MXD_LOG_ERROR("sync", "Transaction input data truncated at index %u", i);
                     goto next_tx;
                 }
-                
+
                 mxd_read_bytes(&ptr, tx.inputs[j].prev_tx_hash, 64);
                 tx.inputs[j].output_index = mxd_read_u32_be(&ptr);
                 tx.inputs[j].algo_id = mxd_read_u8(&ptr);
                 tx.inputs[j].public_key_length = mxd_read_u16_be(&ptr);
-                
+
                 if (ptr + tx.inputs[j].public_key_length + 2 > end) {
                     mxd_free_transaction(&tx);
                     goto next_tx;
                 }
-                
+
                 tx.inputs[j].public_key = malloc(tx.inputs[j].public_key_length);
                 if (!tx.inputs[j].public_key) {
                     mxd_free_transaction(&tx);
                     goto next_tx;
                 }
                 mxd_read_bytes(&ptr, tx.inputs[j].public_key, tx.inputs[j].public_key_length);
-                
+
                 tx.inputs[j].signature_length = mxd_read_u16_be(&ptr);
                 if (tx.inputs[j].signature_length > 0) {
                     if (ptr + tx.inputs[j].signature_length > end) {
@@ -444,7 +449,7 @@ int mxd_apply_block_transactions(const mxd_block_t *block) {
                 }
             }
         }
-        
+
         // Allocate and read outputs
         if (tx.output_count > 0) {
             tx.outputs = calloc(tx.output_count, sizeof(mxd_tx_output_t));
@@ -453,7 +458,7 @@ int mxd_apply_block_transactions(const mxd_block_t *block) {
                 MXD_LOG_ERROR("sync", "Failed to allocate outputs for transaction %u", i);
                 continue;
             }
-            
+
             for (uint32_t j = 0; j < tx.output_count; j++) {
                 if (ptr + 20 + 8 > end) {
                     mxd_free_transaction(&tx);
@@ -463,29 +468,50 @@ int mxd_apply_block_transactions(const mxd_block_t *block) {
                 tx.outputs[j].amount = mxd_read_u64_be(&ptr);
             }
         }
-        
+
+        // Compute this transaction's supply delta BEFORE applying
+        // (need to look up input UTXOs while they still exist)
+        int64_t tx_output_sum = 0;
+        int64_t tx_input_sum = 0;
+        for (uint32_t j = 0; j < tx.output_count; j++) {
+            tx_output_sum += (int64_t)tx.outputs[j].amount;
+        }
+        if (!tx.is_coinbase) {
+            for (uint32_t j = 0; j < tx.input_count; j++) {
+                mxd_utxo_t input_utxo;
+                if (mxd_find_utxo(tx.inputs[j].prev_tx_hash, tx.inputs[j].output_index, &input_utxo) == 0) {
+                    tx_input_sum += (int64_t)input_utxo.amount;
+                }
+            }
+        }
+
         // Apply the transaction to UTXO state
         // Distinguish IO errors (must halt) from spent inputs (skip)
         int ret = mxd_apply_transaction_to_utxo(&tx);
         if (ret == MXD_ERR_IO) {
             MXD_LOG_ERROR("sync", "IO error applying transaction %u - halting block processing", i);
             mxd_free_transaction(&tx);
+            if (supply_delta) *supply_delta = delta;
             return MXD_ERR_IO;  // HALT - caller must stop
         }
         if (ret != 0) {
             MXD_LOG_WARN("sync", "Skipping transaction %u (inputs already spent or invalid)", i);
             mxd_free_transaction(&tx);
-            continue;  // SKIP - normal double-spend protection
+            continue;  // SKIP - don't count delta for skipped transactions
         }
-        
+
+        // Transaction applied successfully — accumulate its delta
+        delta += tx_output_sum - tx_input_sum;
+
         mxd_free_transaction(&tx);
         continue;
-        
+
     next_tx:
         MXD_LOG_ERROR("sync", "Failed to deserialize transaction %u", i);
         continue;
     }
-    
+
+    if (supply_delta) *supply_delta = delta;
     return 0;
 }
 
@@ -522,19 +548,23 @@ static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
             break;
         }
 
-        if (mxd_apply_block_transactions(block) != 0) {
+        int64_t supply_delta = 0;
+        if (mxd_apply_block_transactions(block, &supply_delta) != 0) {
             MXD_LOG_ERROR("sync", "Failed to apply transactions at height %u", h);
             free(blocks);
             break;
         }
 
-        // Recalculate total_supply from UTXO state after applying transactions
-        {
-            size_t tc = 0, pc = 0;
-            mxd_amount_t tv = 0;
-            if (mxd_get_utxo_stats(&tc, &pc, &tv) == 0 && tv > 0) {
-                block->total_supply = tv;
+        // Compute total_supply deterministically from previous block + delta
+        if (block->height > 0) {
+            mxd_block_t prev;
+            memset(&prev, 0, sizeof(prev));
+            if (mxd_retrieve_block_by_height(block->height - 1, &prev) == 0) {
+                block->total_supply = (uint64_t)((int64_t)prev.total_supply + supply_delta);
+                mxd_free_block(&prev);
             }
+        } else {
+            block->total_supply = (uint64_t)supply_delta;
         }
 
         if (mxd_store_block(block) != 0) {

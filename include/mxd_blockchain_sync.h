@@ -42,7 +42,8 @@ int mxd_prune_expired_validation_chains(uint32_t current_height);
 int mxd_pull_missing_blocks(void);
 
 // Apply block transactions to UTXO state (deserializes and processes each tx)
-int mxd_apply_block_transactions(const mxd_block_t *block);
+// If supply_delta is non-NULL, outputs the net supply change (outputs - inputs)
+int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta);
 
 // Parallel sync configuration
 #define MXD_SYNC_WORKERS_DEFAULT  4   // Default worker threads
