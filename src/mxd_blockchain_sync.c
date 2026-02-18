@@ -26,6 +26,7 @@
 static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t *height);
 static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count);
 int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta);
+static void mxd_propagate_supply_forward(uint32_t from_height, uint64_t from_supply);
 static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height);
 int mxd_sign_and_broadcast_block(const mxd_block_t *block);
 extern void mxd_drain_pending_validation_sigs(const uint8_t *block_hash);
