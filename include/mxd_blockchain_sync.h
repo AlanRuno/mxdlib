@@ -45,6 +45,10 @@ int mxd_pull_missing_blocks(void);
 // If supply_delta is non-NULL, outputs the net supply change (outputs - inputs)
 int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta);
 
+// Forward-propagate total_supply to subsequent blocks that have supply=0.
+// Called after storing a block with valid (non-zero) supply.
+void mxd_propagate_supply_forward(uint32_t from_height, uint64_t from_supply);
+
 // Parallel sync configuration
 #define MXD_SYNC_WORKERS_DEFAULT  4   // Default worker threads
 #define MXD_SYNC_WORKERS_MAX      8   // Maximum worker threads

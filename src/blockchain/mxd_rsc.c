@@ -1168,6 +1168,8 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
 
         if (mxd_store_block(block) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to store relayed block at height %u", block->height);
+        } else if (block->total_supply > 0) {
+            mxd_propagate_supply_forward(block->height, block->total_supply);
         }
 
         // Check for validator eviction after storing block
@@ -1209,6 +1211,8 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
             }
             if (mxd_store_block(block) != 0) {
                 MXD_LOG_ERROR("rsc", "Failed to store validated block at height %u", block->height);
+            } else if (block->total_supply > 0) {
+                mxd_propagate_supply_forward(block->height, block->total_supply);
             }
 
             // Check for validator eviction after storing block
@@ -3542,14 +3546,37 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
             }
         }
 
+        // Compute total_supply before storing so it's correct from the start.
+        // total_supply is NOT part of the block hash, so setting it here is safe.
+        {
+            int64_t supply_delta = 0;
+            mxd_apply_block_transactions(current_block, &supply_delta);
+            if (current_block->height > 0) {
+                mxd_block_t prev;
+                memset(&prev, 0, sizeof(prev));
+                if (mxd_retrieve_block_by_height(current_block->height - 1, &prev) == 0) {
+                    current_block->total_supply = (uint64_t)((int64_t)prev.total_supply + supply_delta);
+                    mxd_free_block(&prev);
+                }
+            } else {
+                current_block->total_supply = (uint64_t)supply_delta;
+            }
+        }
+
         // Store the block
         if (mxd_store_block(current_block) != 0) {
             MXD_LOG_ERROR("rsc", "Failed to store proposed block");
             goto block_finalize_cleanup;
         }
 
-        MXD_LOG_INFO("rsc", "Block at height %u closed, signed, and stored with %u transactions",
-                     current_block->height, current_block->transaction_count);
+        // Forward-propagate supply to any subsequent blocks stored with supply=0
+        if (current_block->total_supply > 0) {
+            mxd_propagate_supply_forward(current_block->height, current_block->total_supply);
+        }
+
+        MXD_LOG_INFO("rsc", "Block at height %u closed, signed, and stored with %u transactions (supply=%llu)",
+                     current_block->height, current_block->transaction_count,
+                     (unsigned long long)current_block->total_supply);
 
         // Broadcast the block to the network
         if (mxd_broadcast_block(current_block) != 0) {
