@@ -265,8 +265,13 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
 
         // Store the block
         if (mxd_store_block(&block) == 0) {
-            MXD_LOG_INFO("sync", "Stored unsolicited block at height %u (validators=%u)",
-                         block.height, block.validation_count);
+            MXD_LOG_INFO("sync", "Stored unsolicited block at height %u (validators=%u, supply=%llu)",
+                         block.height, block.validation_count, (unsigned long long)block.total_supply);
+
+            // Forward-propagate supply to any subsequent blocks stored with supply=0
+            if (block.total_supply > 0) {
+                mxd_propagate_supply_forward(block.height, block.total_supply);
+            }
 
             // Drain any validation signatures that arrived before this block
             mxd_drain_pending_validation_sigs(block.block_hash);
@@ -369,6 +374,33 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
     return blocks;
 }
 
+// Forward-propagate total_supply to subsequent blocks that have supply=0.
+// Called after storing a block with valid (non-zero) supply.
+// Re-computes delta for each forward block from its transaction data.
+static void mxd_propagate_supply_forward(uint32_t from_height, uint64_t from_supply) {
+    for (uint32_t h = from_height + 1; ; h++) {
+        mxd_block_t next;
+        memset(&next, 0, sizeof(next));
+        if (mxd_retrieve_block_by_height(h, &next) != 0) {
+            break;  // No block at this height — stop
+        }
+        if (next.total_supply > 0) {
+            mxd_free_block(&next);
+            break;  // Already has valid supply — stop
+        }
+        // Recompute delta for this block (UTXOs are already applied, but
+        // mxd_find_utxo returns spent UTXOs so delta is still correct)
+        int64_t delta = 0;
+        mxd_apply_block_transactions(&next, &delta);
+        next.total_supply = (uint64_t)((int64_t)from_supply + delta);
+        mxd_store_block(&next);
+        MXD_LOG_INFO("sync", "Forward-propagated supply to height %u: %llu",
+                     h, (unsigned long long)next.total_supply);
+        from_supply = next.total_supply;
+        mxd_free_block(&next);
+    }
+}
+
 int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta) {
     if (!block) return -1;
 
@@ -469,8 +501,11 @@ int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta
             }
         }
 
-        // Compute this transaction's supply delta BEFORE applying
-        // (need to look up input UTXOs while they still exist)
+        // Compute this transaction's supply delta BEFORE applying.
+        // Coinbase: delta = +outputs (new supply).
+        // Non-coinbase: delta = outputs - inputs + voluntary_tip = 0
+        //   (voluntary_tip is redistributed via separate coinbase UTXOs
+        //    outside the block's tx list, so we add it back here)
         int64_t tx_output_sum = 0;
         int64_t tx_input_sum = 0;
         for (uint32_t j = 0; j < tx.output_count; j++) {
@@ -483,6 +518,10 @@ int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta
                     tx_input_sum += (int64_t)input_utxo.amount;
                 }
             }
+            // Add back voluntary_tip: tips are deducted from sender's
+            // outputs but redistributed as coinbase UTXOs outside the
+            // block's transaction list, making transfers supply-neutral.
+            tx_output_sum += (int64_t)tx.voluntary_tip;
         }
 
         // Always accumulate delta from block data — this is deterministic
