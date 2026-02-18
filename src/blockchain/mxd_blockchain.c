@@ -24,6 +24,7 @@ int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]) {
   block->version = 1; // Current version (will be 3 after protocol upgrade)
   memcpy(block->prev_block_hash, prev_hash, 64);
   memset(block->contracts_state_root, 0, 64); // Initialize to zero (v3+)
+  memset(block->validator_scores_root, 0, 64); // Initialize to zero (v4+)
   block->timestamp = mxd_now_ms() / 1000; // NTP-synchronized time in seconds
   block->difficulty = 1; // Initial difficulty
   block->nonce = 0;
@@ -31,6 +32,9 @@ int mxd_init_block(mxd_block_t *block, const uint8_t prev_hash[64]) {
   block->rapid_membership_count = 0;
   block->rapid_membership_capacity = 0;
   block->total_supply = 0;
+  block->validator_scores = NULL;
+  block->validator_scores_count = 0;
+  block->validator_scores_capacity = 0;
   block->transaction_set_frozen = 0;
   block->transactions = NULL;
   block->transaction_count = 0;
@@ -90,11 +94,14 @@ int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]) {
   }
 
   // Calculate buffer size based on version
-  // v3+ includes contracts_state_root (additional 64 bytes)
+  // v3+ includes contracts_state_root, v4+ also includes validator_scores_root
   size_t header_size = sizeof(uint32_t) + 64 + 64 + sizeof(uint64_t) +
                        sizeof(uint32_t) + sizeof(uint64_t);
   if (block->version >= 3) {
     header_size += 64; // contracts_state_root
+  }
+  if (block->version >= 4) {
+    header_size += 64; // validator_scores_root
   }
 
   uint8_t *header = malloc(header_size);
@@ -120,6 +127,12 @@ int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]) {
     offset += 64;
   }
 
+  // Include validator_scores_root for v4+ blocks
+  if (block->version >= 4) {
+    memcpy(header + offset, block->validator_scores_root, 64);
+    offset += 64;
+  }
+
   uint64_t timestamp_be = mxd_htonll(block->timestamp);
   memcpy(header + offset, &timestamp_be, sizeof(uint64_t));
   offset += sizeof(uint64_t);
@@ -142,7 +155,23 @@ int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]) {
   return mxd_sha512(temp_hash, 64, hash);
 }
 
-// Validate block structure and contents
+// Helper struct for score-sorted proposer validation (v4+)
+typedef struct {
+  uint8_t address[20];
+  uint64_t chain_score;
+} scored_validator_t;
+
+static int compare_scored_validators(const void *a, const void *b) {
+  const scored_validator_t *va = (const scored_validator_t *)a;
+  const scored_validator_t *vb = (const scored_validator_t *)b;
+  // Higher score first
+  if (va->chain_score != vb->chain_score) {
+    return (va->chain_score > vb->chain_score) ? -1 : 1;
+  }
+  // Tiebreaker: address lexicographic (lower address first)
+  return memcmp(va->address, vb->address, 20);
+}
+
 // Validate that the block proposer is valid (primary or fallback)
 static int mxd_validate_block_proposer(const mxd_block_t *block) {
   if (!block) {
@@ -163,6 +192,69 @@ static int mxd_validate_block_proposer(const mxd_block_t *block) {
     return -1;
   }
 
+  // For v4+ blocks: use score-sorted order from previous block's on-chain scores
+  if (block->version >= 4 && prev_block.validator_scores_count > 0 && prev_block.validator_scores) {
+    uint32_t count = prev_block.validator_scores_count;
+
+    scored_validator_t *sorted = malloc(count * sizeof(scored_validator_t));
+    if (!sorted) {
+      mxd_free_block(&prev_block);
+      return -1;
+    }
+
+    // Compute chain_score for each validator using the same formula as mxd_compute_chain_scores
+    // total_stake = sum of all stakes
+    uint64_t total_stake = 0;
+    for (uint32_t i = 0; i < count; i++) {
+      total_stake += prev_block.validator_scores[i].stake_amount;
+    }
+    if (total_stake == 0) total_stake = 1;
+
+    for (uint32_t i = 0; i < count; i++) {
+      const mxd_validator_score_entry_t *e = &prev_block.validator_scores[i];
+      memcpy(sorted[i].address, e->validator_address, 20);
+
+      uint64_t bsj = e->blocks_since_joined > 0 ? e->blocks_since_joined : 1;
+      uint64_t stake_score = (e->stake_amount * 10000ULL) / total_stake;
+      if (stake_score > 10000) stake_score = 10000;
+      uint64_t proposal_score = ((uint64_t)e->blocks_proposed * 10000ULL) / bsj;
+      if (proposal_score > 10000) proposal_score = 10000;
+      uint64_t participation_score = ((uint64_t)e->blocks_signed * 10000ULL) / bsj;
+      if (participation_score > 10000) participation_score = 10000;
+      uint64_t avg_latency = e->blocks_signed > 0 ? e->total_latency_ms / e->blocks_signed : 10000;
+      uint64_t latency_score = (avg_latency >= 10000) ? 0 : (10000 - avg_latency);
+
+      sorted[i].chain_score = (stake_score * 30 + proposal_score * 25 +
+                                participation_score * 25 + latency_score * 20) / 100;
+    }
+
+    // Sort by score descending, address tiebreaker
+    qsort(sorted, count, sizeof(scored_validator_t), compare_scored_validators);
+
+    // Check primary proposer and fallbacks
+    uint32_t primary_index = block->height % count;
+    int valid = 0;
+    for (uint32_t r = 0; r <= MXD_MAX_FALLBACK_RETRIES; r++) {
+      uint32_t check_index = (primary_index + r) % count;
+      if (memcmp(block->proposer_id, sorted[check_index].address, 20) == 0) {
+        if (r > 0) {
+          MXD_LOG_INFO("blockchain", "Block %u accepted from fallback proposer (v4 score-sorted index %u)",
+                       block->height, check_index);
+        }
+        valid = 1;
+        break;
+      }
+    }
+
+    free(sorted);
+    mxd_free_block(&prev_block);
+    if (!valid) {
+      MXD_LOG_ERROR("blockchain", "Block %u has invalid proposer (v4 score-sorted check failed)", block->height);
+    }
+    return valid ? 0 : -1;
+  }
+
+  // Pre-v4: use raw membership insertion order
   uint32_t membership_count = prev_block.rapid_membership_count;
   mxd_rapid_membership_entry_t *membership = prev_block.rapid_membership_entries;
 
@@ -213,8 +305,8 @@ int mxd_validate_block(const mxd_block_t *block) {
     return -1;
   }
 
-  // Verify block version is within valid range (v1, v2, v3)
-  if (block->version < 1 || block->version > 3) {
+  // Verify block version is within valid range (v1, v2, v3, v4)
+  if (block->version < 1 || block->version > 4) {
     MXD_LOG_ERROR("blockchain", "Invalid block version: %u", block->version);
     return -1;
   }
@@ -239,6 +331,26 @@ int mxd_validate_block(const mxd_block_t *block) {
 
     if (memcmp(computed_state_root, block->contracts_state_root, 64) != 0) {
       MXD_LOG_ERROR("blockchain", "Contracts state root mismatch");
+      return -1;
+    }
+  }
+
+  // For v4+ blocks, verify validator_scores_root
+  if (block->version >= 4) {
+    uint8_t computed_scores_root[64];
+    if (mxd_calculate_validator_scores_root(block, computed_scores_root) != 0) {
+      MXD_LOG_ERROR("blockchain", "Failed to compute validator scores root");
+      return -1;
+    }
+
+    if (memcmp(computed_scores_root, block->validator_scores_root, 64) != 0) {
+      MXD_LOG_ERROR("blockchain", "Validator scores root mismatch at height %u", block->height);
+      return -1;
+    }
+
+    // Verify score values match expected computation from previous block
+    if (mxd_verify_block_validator_scores(block) != 0) {
+      MXD_LOG_ERROR("blockchain", "Validator score values verification failed at height %u", block->height);
       return -1;
     }
   }
@@ -378,6 +490,46 @@ int mxd_calculate_contracts_state_root(const mxd_block_t *block, uint8_t root[64
   return 0;
 }
 
+// Calculate validator scores root for v4+ blocks
+// root = SHA-512(serialized score entries sorted by address)
+int mxd_calculate_validator_scores_root(const mxd_block_t *block, uint8_t root[64]) {
+  if (!block || !root) {
+    return -1;
+  }
+
+  if (block->validator_scores_count == 0 || !block->validator_scores) {
+    memset(root, 0, 64);
+    return 0;
+  }
+
+  // Serialize all entries: 48 bytes each (address[20] + stake[8] + bp[4] + bs[4] + latency[8] + bsj[4])
+  size_t buf_size = (size_t)block->validator_scores_count * 48;
+  uint8_t *buf = malloc(buf_size);
+  if (!buf) {
+    return -1;
+  }
+
+  uint8_t *ptr = buf;
+  for (uint32_t i = 0; i < block->validator_scores_count; i++) {
+    const mxd_validator_score_entry_t *e = &block->validator_scores[i];
+    memcpy(ptr, e->validator_address, 20); ptr += 20;
+    uint64_t stake_be = mxd_htonll(e->stake_amount);
+    memcpy(ptr, &stake_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    uint32_t bp_be = htonl(e->blocks_proposed);
+    memcpy(ptr, &bp_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    uint32_t bs_be = htonl(e->blocks_signed);
+    memcpy(ptr, &bs_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+    uint64_t lat_be = mxd_htonll(e->total_latency_ms);
+    memcpy(ptr, &lat_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+    uint32_t bsj_be = htonl(e->blocks_since_joined);
+    memcpy(ptr, &bsj_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+  }
+
+  int result = mxd_sha512(buf, buf_size, root);
+  free(buf);
+  return result;
+}
+
 // Freeze transaction set and calculate final merkle root
 // MINOR FIX: Document block closing time enforcement
 // NOTE: Blocks should close after 5 seconds if they contain transactions.
@@ -478,7 +630,15 @@ int mxd_freeze_transaction_set(mxd_block_t *block) {
     }
   }
 
-  // Mark as frozen - merkle_root and contracts_state_root are now immutable
+  // Calculate validator scores root for v4+ blocks
+  if (block->version >= 4) {
+    if (mxd_calculate_validator_scores_root(block, block->validator_scores_root) != 0) {
+      MXD_LOG_ERROR("blockchain", "Failed to calculate validator scores root during freeze");
+      return -1;
+    }
+  }
+
+  // Mark as frozen - merkle_root, contracts_state_root, and validator_scores_root are now immutable
   block->transaction_set_frozen = 1;
   return 0;
 }

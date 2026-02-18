@@ -52,6 +52,10 @@ int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_len, mxd
 
 int mxd_serialize_block_for_network(const mxd_block_t *block, uint8_t **data, size_t *data_len);
 
+int mxd_block_exists_at_height(uint32_t height);
+
+int mxd_fill_block_gaps(uint32_t *gaps, uint32_t max_gaps, uint32_t *gap_count);
+
 #ifdef __cplusplus
 }
 #endif

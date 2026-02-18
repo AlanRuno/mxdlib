@@ -10,17 +10,20 @@ static mxd_network_type_t current_network = MXD_NETWORK_TESTNET;
 // Activation heights for each network
 static const mxd_activation_heights_t MAINNET_HEIGHTS = {
     .v2_activation_height = 10000,   // v2 activated at height 10,000 (historical)
-    .v3_activation_height = 100000   // v3 will activate at height 100,000 (future)
+    .v3_activation_height = 100000,  // v3 will activate at height 100,000 (future)
+    .v4_activation_height = 200000   // v4 on-chain scoring (future)
 };
 
 static const mxd_activation_heights_t TESTNET_HEIGHTS = {
     .v2_activation_height = 1000,    // v2 activated at height 1,000 (historical)
-    .v3_activation_height = 5000     // v3 will activate at height 5,000 (near future)
+    .v3_activation_height = 5000,    // v3 will activate at height 5,000 (near future)
+    .v4_activation_height = 0        // v4 from genesis (fresh testnet deploy)
 };
 
 static const mxd_activation_heights_t DEVNET_HEIGHTS = {
     .v2_activation_height = 0,       // v2 from genesis
-    .v3_activation_height = 0        // v3 from genesis (for development)
+    .v3_activation_height = 0,       // v3 from genesis (for development)
+    .v4_activation_height = 0        // v4 from genesis (for development)
 };
 
 // Get activation heights for a specific network
@@ -44,7 +47,9 @@ uint32_t mxd_get_required_protocol_version(uint32_t height, mxd_network_type_t n
     mxd_activation_heights_t heights = mxd_get_activation_heights(network);
 
     // Determine version based on activation heights
-    if (height >= heights.v3_activation_height) {
+    if (height >= heights.v4_activation_height) {
+        return MXD_PROTOCOL_VERSION_4;
+    } else if (height >= heights.v3_activation_height) {
         return MXD_PROTOCOL_VERSION_3;
     } else if (height >= heights.v2_activation_height) {
         return MXD_PROTOCOL_VERSION_2;

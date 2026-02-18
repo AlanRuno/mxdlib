@@ -394,6 +394,7 @@ const char* mxd_get_status_json(void) {
         uint64_t first_timestamp = 0;
         uint64_t last_timestamp = 0;
         uint64_t recent_tx_count = 0;
+        uint32_t blocks_retrieved = 0;
 
         for (uint32_t i = 0; i < sample_size; i++) {
             uint32_t block_height = height - 1 - i;
@@ -402,24 +403,23 @@ const char* mxd_get_status_json(void) {
                 total_transactions += block.transaction_count;
                 recent_tx_count += block.transaction_count;
 
-                if (i == 0) {
+                if (blocks_retrieved == 0) {
                     last_timestamp = block.timestamp;
                 }
-                if (i == sample_size - 1 || block_height == 0) {
-                    first_timestamp = block.timestamp;
-                }
+                first_timestamp = block.timestamp;
+                blocks_retrieved++;
                 mxd_free_block(&block);
             }
             if (block_height == 0) break;
         }
 
         // Calculate average block time (in seconds)
-        if (sample_size > 1 && last_timestamp > first_timestamp) {
-            avg_block_time = (double)(last_timestamp - first_timestamp) / (double)(sample_size - 1);
+        if (blocks_retrieved > 1 && last_timestamp > first_timestamp) {
+            avg_block_time = (double)(last_timestamp - first_timestamp) / (double)(blocks_retrieved - 1);
         }
 
         // Calculate TPS from recent blocks
-        if (last_timestamp > first_timestamp) {
+        if (blocks_retrieved > 1 && last_timestamp > first_timestamp) {
             uint64_t time_span = last_timestamp - first_timestamp;
             if (time_span > 0) {
                 current_tps = (double)recent_tx_count / (double)time_span;

@@ -281,58 +281,20 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
     }
     
     if (block_index >= pending_blocks_expected) return;
-    
+
     // Deserialize block from received data (for requested blocks)
+    // Use the full network deserializer to capture ALL fields including
+    // v4 validator scores, validation chain, membership entries, etc.
     mxd_block_t *block = &pending_blocks[block_index];
-    
-    const uint8_t *ptr = data;
-    const uint8_t *end = data + data_len;
-    
-    // Read basic block header fields
-    if (ptr + 4 + 64 + 64 + 8 + 4 + 8 + 64 + 20 + 4 > end) {
-        MXD_LOG_ERROR("sync", "Block data too short for block %u", block_index);
+
+    if (mxd_deserialize_block_from_network(data, data_len, block) != 0) {
+        MXD_LOG_ERROR("sync", "Failed to deserialize requested block %u", block_index);
         return;
     }
-    
-    block->version = mxd_read_u32_be(&ptr);
-    mxd_read_bytes(&ptr, block->prev_block_hash, 64);
-    mxd_read_bytes(&ptr, block->merkle_root, 64);
-    block->timestamp = mxd_read_u64_be(&ptr);
-    block->difficulty = mxd_read_u32_be(&ptr);
-    block->nonce = mxd_read_u64_be(&ptr);
-    mxd_read_bytes(&ptr, block->block_hash, 64);
-    mxd_read_bytes(&ptr, block->proposer_id, 20);
-    block->height = mxd_read_u32_be(&ptr);
-    
-    // Read transaction count and allocate
-    if (ptr + 4 > end) return;
-    block->transaction_count = mxd_read_u32_be(&ptr);
-    
-    if (block->transaction_count > 0) {
-        block->transactions = calloc(block->transaction_count, sizeof(mxd_block_transaction_t));
-        if (!block->transactions) {
-            block->transaction_count = 0;
-            return;
-        }
-        block->transaction_capacity = block->transaction_count;
-        
-        // Read each transaction
-        for (uint32_t i = 0; i < block->transaction_count; i++) {
-            if (ptr + 4 > end) break;
-            uint32_t tx_len = mxd_read_u32_be(&ptr);
-            
-            if (ptr + tx_len > end || tx_len == 0) break;
-            
-            block->transactions[i].data = malloc(tx_len);
-            if (!block->transactions[i].data) break;
-            
-            mxd_read_bytes(&ptr, block->transactions[i].data, tx_len);
-            block->transactions[i].length = tx_len;
-        }
-    }
-    
+
     pending_blocks_received++;
-    MXD_LOG_DEBUG("sync", "Received block %u (height %u)", block_index, block->height);
+    MXD_LOG_DEBUG("sync", "Received block %u (height %u, scores=%u)",
+                  block_index, block->height, block->validator_scores_count);
 }
 
 static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count) {
@@ -536,16 +498,16 @@ static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
         size_t block_count = 0;
         mxd_block_t *blocks = mxd_request_blocks_from_peers(h, h, &block_count);
         if (!blocks) {
-            MXD_LOG_WARN("sync", "Failed to request block %u from peers", h);
-            break;
+            MXD_LOG_WARN("sync", "Failed to request block %u from peers, skipping", h);
+            continue;
         }
 
         mxd_block_t *block = &blocks[0];
 
         if (block->version == 0) {
-            MXD_LOG_WARN("sync", "Block %u not received (empty response), will retry later", h);
+            MXD_LOG_WARN("sync", "Block %u not received (empty response), skipping", h);
             free(blocks);
-            break;
+            continue;
         }
 
         if (mxd_validate_block(block) != 0) {
@@ -612,8 +574,7 @@ int mxd_sync_blockchain(void) {
                        start + CHUNK_SIZE - 1 : network_height - 1;
         
         if (mxd_sync_block_range(start, end) != 0) {
-            MXD_LOG_ERROR("sync", "Failed to sync blocks %u-%u", start, end);
-            return -1;
+            MXD_LOG_WARN("sync", "Some blocks in range %u-%u failed, continuing", start, end);
         }
         
         MXD_LOG_INFO("sync", "Synced blocks %u-%u", start, end);
@@ -857,6 +818,41 @@ int mxd_pull_missing_blocks(void) {
         }
     }
 
+    // FIRST: scan for and fill interior block gaps below current_height
+    // This runs before height-based sync so gaps are always detected
+    {
+        uint32_t gaps[100];
+        uint32_t gap_count = 0;
+        if (mxd_fill_block_gaps(gaps, 100, &gap_count) == 0 && gap_count > 0) {
+            MXD_LOG_INFO("sync", "Found %u block gaps below current height, attempting to fill", gap_count);
+            for (uint32_t g = 0; g < gap_count; g++) {
+                int gap_filled = 0;
+                for (size_t i = 0; i < peer_count && !gap_filled; i++) {
+                    if (peers[i].state != MXD_PEER_CONNECTED) continue;
+
+                    uint8_t request[8];
+                    uint8_t *rptr = request;
+                    mxd_write_u32_be(&rptr, gaps[g]);
+                    mxd_write_u32_be(&rptr, gaps[g]);
+
+                    if (mxd_send_message_with_retry(peers[i].address, peers[i].port,
+                                                    MXD_MSG_GET_BLOCKS, request, sizeof(request), 3) == 0) {
+                        struct timespec ts = {0, 200000000};  // 200ms
+                        nanosleep(&ts, NULL);
+
+                        if (mxd_block_exists_at_height(gaps[g])) {
+                            gap_filled = 1;
+                            MXD_LOG_INFO("sync", "Gap fill: received block at height %u", gaps[g]);
+                        }
+                    }
+                }
+                if (!gap_filled) {
+                    MXD_LOG_WARN("sync", "Gap fill: failed to fetch block at height %u", gaps[g]);
+                }
+            }
+        }
+    }
+
     // If any peer has blocks we don't have, request them
     if (max_peer_height > local_height) {
         MXD_LOG_INFO("sync", "Pull sync: fetching missing blocks %u to %u",
@@ -1012,7 +1008,9 @@ int mxd_sign_and_broadcast_block(const mxd_block_t *block) {
                                                    const uint8_t *signature, uint16_t signature_length);
             if (mxd_add_validator_signature(&local_block, local_address, timestamp, algo_id,
                                             signature, (uint16_t)sig_len) == 0) {
-                mxd_store_block(&local_block);
+                if (mxd_store_block(&local_block) != 0) {
+                    MXD_LOG_ERROR("sync", "Failed to store block with own signature at height %u", block->height);
+                }
                 MXD_LOG_INFO("sync", "Stored own chain signature locally for block %u (now %u sigs)",
                              block->height, local_block.validation_count);
             }

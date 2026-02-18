@@ -14,11 +14,13 @@ extern "C" {
  * - v1: Initial blockchain (SHA-512, Ed25519)
  * - v2: Hybrid cryptography (Ed25519 + Dilithium5)
  * - v3: Smart contracts with state root tracking
+ * - v4: Deterministic on-chain validator scoring
  */
 
 #define MXD_PROTOCOL_VERSION_1 1
 #define MXD_PROTOCOL_VERSION_2 2
 #define MXD_PROTOCOL_VERSION_3 3
+#define MXD_PROTOCOL_VERSION_4 4
 
 #define MXD_CURRENT_PROTOCOL_VERSION MXD_PROTOCOL_VERSION_2  // Will be 3 after activation
 
@@ -27,6 +29,7 @@ extern "C" {
 typedef struct {
     uint32_t v2_activation_height;  // Height when v2 activated (historical)
     uint32_t v3_activation_height;  // Height when v3 will activate (future)
+    uint32_t v4_activation_height;  // Height when v4 will activate (on-chain scoring)
 } mxd_activation_heights_t;
 
 // Network-specific activation heights
@@ -49,7 +52,7 @@ mxd_activation_heights_t mxd_get_activation_heights(mxd_network_type_t network);
  *
  * @param height Block height
  * @param network Network type
- * @return Required protocol version (1, 2, or 3)
+ * @return Required protocol version (1, 2, 3, or 4)
  */
 uint32_t mxd_get_required_protocol_version(uint32_t height, mxd_network_type_t network);
 

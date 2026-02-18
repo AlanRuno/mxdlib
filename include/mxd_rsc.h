@@ -130,6 +130,14 @@ void mxd_accumulate_block_stats(mxd_rapid_table_t *table, const mxd_block_t *blo
 void mxd_compute_chain_scores(mxd_rapid_table_t *table);
 void mxd_sort_rapid_table_by_score(mxd_rapid_table_t *table);
 
+// On-chain deterministic scoring (v4+)
+int mxd_compute_block_validator_scores(const mxd_block_t *prev_block,
+                                        const mxd_rapid_table_t *table,
+                                        mxd_validator_score_entry_t **out_scores,
+                                        uint32_t *out_count);
+int mxd_verify_block_validator_scores(const mxd_block_t *block);
+void mxd_load_scores_from_block(mxd_rapid_table_t *table, const mxd_block_t *block);
+
 int mxd_should_add_to_rapid_table(const mxd_node_stake_t *node, mxd_amount_t total_supply, int is_genesis);
 
 int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t from_height, 

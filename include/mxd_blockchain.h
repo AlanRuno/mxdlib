@@ -38,6 +38,17 @@ typedef struct {
     size_t length;
 } mxd_block_transaction_t;
 
+// Per-validator cumulative scoring data embedded in blocks (v4+)
+// 48 bytes per validator: address(20) + stake(8) + bp(4) + bs(4) + latency(8) + bsj(4)
+typedef struct {
+    uint8_t  validator_address[20];   // 20 bytes
+    uint64_t stake_amount;            //  8 bytes - balance snapshot
+    uint32_t blocks_proposed;         //  4 bytes - cumulative
+    uint32_t blocks_signed;           //  4 bytes - cumulative
+    uint64_t total_latency_ms;        //  8 bytes - cumulative signing latency
+    uint32_t blocks_since_joined;     //  4 bytes - cumulative
+} mxd_validator_score_entry_t;
+
 typedef struct {
     uint32_t version;
     uint8_t prev_block_hash[64];
@@ -56,6 +67,10 @@ typedef struct {
     uint32_t rapid_membership_count;
     uint32_t rapid_membership_capacity;
     mxd_amount_t total_supply;   // Total supply in base units (was double)
+    uint8_t validator_scores_root[64];            // SHA-512 of scoring data (v4+)
+    mxd_validator_score_entry_t *validator_scores; // Per-validator cumulative scores (v4+)
+    uint32_t validator_scores_count;
+    uint32_t validator_scores_capacity;
     uint8_t transaction_set_frozen;
     mxd_block_transaction_t *transactions;
     uint32_t transaction_count;
@@ -80,6 +95,8 @@ int mxd_verify_validation_chain(const mxd_block_t *block);
 int mxd_calculate_block_hash(const mxd_block_t *block, uint8_t hash[64]);
 
 int mxd_calculate_contracts_state_root(const mxd_block_t *block, uint8_t root[64]);
+
+int mxd_calculate_validator_scores_root(const mxd_block_t *block, uint8_t root[64]);
 
 int mxd_calculate_membership_digest(const mxd_block_t *block, uint8_t digest[64]);
 

@@ -44,6 +44,13 @@ int mxd_pull_missing_blocks(void);
 // Apply block transactions to UTXO state (deserializes and processes each tx)
 int mxd_apply_block_transactions(const mxd_block_t *block);
 
+// Parallel sync configuration
+#define MXD_SYNC_WORKERS_DEFAULT  4   // Default worker threads
+#define MXD_SYNC_WORKERS_MAX      8   // Maximum worker threads
+#define MXD_SYNC_CHUNK_SIZE       50  // Blocks per sub-range
+#define MXD_SYNC_TIMEOUT_MS       15000 // Per-range timeout (ms)
+#define MXD_SYNC_MAX_RETRIES      3   // Retries per range before fallback
+
 #ifdef __cplusplus
 }
 #endif

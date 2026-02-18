@@ -1155,26 +1155,28 @@ static enum MHD_Result handle_request(void *cls,
             uint32_t sample_size = (height > 100) ? 100 : height;
             uint64_t first_timestamp = 0;
             uint64_t last_timestamp = 0;
+            uint32_t blocks_retrieved = 0;
 
             for (uint32_t i = 0; i < sample_size; i++) {
                 uint32_t bh = height - 1 - i;
                 mxd_block_t b = {0};
                 if (mxd_retrieve_block_by_height(bh, &b) == 0) {
                     total_transactions += b.transaction_count;
-                    if (i == 0) last_timestamp = b.timestamp;
-                    if (i == sample_size - 1 || bh == 0) first_timestamp = b.timestamp;
+                    if (blocks_retrieved == 0) last_timestamp = b.timestamp;
+                    first_timestamp = b.timestamp;
+                    blocks_retrieved++;
                     mxd_free_block(&b);
                 }
                 if (bh == 0) break;
             }
 
             // Average block time
-            if (sample_size > 1 && last_timestamp > first_timestamp) {
-                avg_block_time = (double)(last_timestamp - first_timestamp) / (double)(sample_size - 1);
+            if (blocks_retrieved > 1 && last_timestamp > first_timestamp) {
+                avg_block_time = (double)(last_timestamp - first_timestamp) / (double)(blocks_retrieved - 1);
             }
 
             // TPS
-            if (last_timestamp > first_timestamp) {
+            if (blocks_retrieved > 1 && last_timestamp > first_timestamp) {
                 uint64_t time_span = last_timestamp - first_timestamp;
                 if (time_span > 0) {
                     current_tps = (double)total_transactions / (double)time_span;

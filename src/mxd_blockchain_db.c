@@ -63,6 +63,12 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
     size += sizeof(uint32_t);  // validation_count
     size += sizeof(uint32_t);  // rapid_membership_count
     size += sizeof(uint64_t);  // total_supply (fixed to uint64_t)
+    if (block->version >= 3) {
+        size += 64;            // contracts_state_root (v3+)
+    }
+    if (block->version >= 4) {
+        size += 64;            // validator_scores_root (v4+)
+    }
     size += sizeof(uint8_t);   // transaction_set_frozen
     
     // BLOCKER FIX: Calculate size with field-by-field serialization
@@ -76,6 +82,14 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
         for (uint32_t i = 0; i < block->rapid_membership_count; i++) {
             size += 20 + 8 + 1 + 2 + block->rapid_membership_entries[i].public_key_length +
                     2 + block->rapid_membership_entries[i].signature_length;
+        }
+    }
+
+    // Add validator scores size (v4+): count(4) + 48 bytes per entry
+    if (block->version >= 4) {
+        size += sizeof(uint32_t);  // validator_scores_count
+        if (block->validator_scores_count > 0 && block->validator_scores) {
+            size += block->validator_scores_count * 48;  // 20+8+4+4+8+4 = 48 per entry
         }
     }
 
@@ -125,7 +139,14 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
     
     uint64_t total_supply_be = mxd_htonll(block->total_supply);
     memcpy(ptr, &total_supply_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
-    
+
+    if (block->version >= 3) {
+        memcpy(ptr, block->contracts_state_root, 64); ptr += 64;
+    }
+    if (block->version >= 4) {
+        memcpy(ptr, block->validator_scores_root, 64); ptr += 64;
+    }
+
     memcpy(ptr, &block->transaction_set_frozen, sizeof(uint8_t)); ptr += sizeof(uint8_t);
     
     // BLOCKER FIX: Serialize validation chain with field-by-field endian conversion
@@ -139,6 +160,28 @@ static int serialize_block(const mxd_block_t *block, uint8_t **data, size_t *dat
     if (block->rapid_membership_count > 0 && block->rapid_membership_entries) {
         for (uint32_t i = 0; i < block->rapid_membership_count; i++) {
             serialize_membership_entry(&block->rapid_membership_entries[i], &ptr);
+        }
+    }
+
+    // Serialize validator scores (v4+)
+    if (block->version >= 4) {
+        uint32_t vs_count_be = htonl(block->validator_scores_count);
+        memcpy(ptr, &vs_count_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+        if (block->validator_scores_count > 0 && block->validator_scores) {
+            for (uint32_t i = 0; i < block->validator_scores_count; i++) {
+                const mxd_validator_score_entry_t *e = &block->validator_scores[i];
+                memcpy(ptr, e->validator_address, 20); ptr += 20;
+                uint64_t stake_be = mxd_htonll(e->stake_amount);
+                memcpy(ptr, &stake_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+                uint32_t bp_be = htonl(e->blocks_proposed);
+                memcpy(ptr, &bp_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+                uint32_t bs_be = htonl(e->blocks_signed);
+                memcpy(ptr, &bs_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+                uint64_t lat_be = mxd_htonll(e->total_latency_ms);
+                memcpy(ptr, &lat_be, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+                uint32_t bsj_be = htonl(e->blocks_since_joined);
+                memcpy(ptr, &bsj_be, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+            }
         }
     }
 
@@ -255,9 +298,25 @@ static int deserialize_block(const uint8_t *data, size_t data_len, mxd_block_t *
     uint64_t total_supply_be;
     memcpy(&total_supply_be, ptr, sizeof(uint64_t)); ptr += sizeof(uint64_t);
     block->total_supply = mxd_ntohll(total_supply_be);
-    
+
+    memset(block->contracts_state_root, 0, 64);
+    if (block->version >= 3) {
+        if (ptr + 64 > end) return -1;
+        memcpy(block->contracts_state_root, ptr, 64); ptr += 64;
+    }
+
+    block->validator_scores = NULL;
+    block->validator_scores_count = 0;
+    block->validator_scores_capacity = 0;
+    memset(block->validator_scores_root, 0, 64);
+
+    if (block->version >= 4) {
+        if (ptr + 64 > end) return -1;
+        memcpy(block->validator_scores_root, ptr, 64); ptr += 64;
+    }
+
     memcpy(&block->transaction_set_frozen, ptr, sizeof(uint8_t)); ptr += sizeof(uint8_t);
-    
+
     block->validation_chain = NULL;
     block->validation_capacity = 0;
     block->rapid_membership_entries = NULL;
@@ -301,6 +360,44 @@ static int deserialize_block(const uint8_t *data, size_t data_len, mxd_block_t *
             }
         }
         block->rapid_membership_capacity = block->rapid_membership_count;
+    }
+
+    // Deserialize validator scores (v4+)
+    if (block->version >= 4 && ptr + sizeof(uint32_t) <= end) {
+        uint32_t vs_count_be;
+        memcpy(&vs_count_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+        block->validator_scores_count = ntohl(vs_count_be);
+        if (block->validator_scores_count > 0) {
+            if (ptr + (size_t)block->validator_scores_count * 48 > end) {
+                block->validator_scores_count = 0;
+            } else {
+                block->validator_scores = malloc(block->validator_scores_count * sizeof(mxd_validator_score_entry_t));
+                if (!block->validator_scores) {
+                    block->validator_scores_count = 0;
+                } else {
+                    block->validator_scores_capacity = block->validator_scores_count;
+                    for (uint32_t i = 0; i < block->validator_scores_count; i++) {
+                        mxd_validator_score_entry_t *e = &block->validator_scores[i];
+                        memcpy(e->validator_address, ptr, 20); ptr += 20;
+                        uint64_t stake_be;
+                        memcpy(&stake_be, ptr, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+                        e->stake_amount = mxd_ntohll(stake_be);
+                        uint32_t bp_be;
+                        memcpy(&bp_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+                        e->blocks_proposed = ntohl(bp_be);
+                        uint32_t bs_be;
+                        memcpy(&bs_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+                        e->blocks_signed = ntohl(bs_be);
+                        uint64_t lat_be;
+                        memcpy(&lat_be, ptr, sizeof(uint64_t)); ptr += sizeof(uint64_t);
+                        e->total_latency_ms = mxd_ntohll(lat_be);
+                        uint32_t bsj_be;
+                        memcpy(&bsj_be, ptr, sizeof(uint32_t)); ptr += sizeof(uint32_t);
+                        e->blocks_since_joined = ntohl(bsj_be);
+                    }
+                }
+            }
+        }
     }
 
     // Deserialize transactions
@@ -497,8 +594,13 @@ int mxd_store_block(const mxd_block_t *block) {
     rocksdb_writebatch_put(batch, (char *)hash_key, hash_key_len, (char *)data, data_len);
     
     // Include current_height update in the same atomic batch
-    int updating_height = (block->height >= current_height);
-    uint32_t new_height = block->height + 1;
+    // Only advance height contiguously: block must be exactly at current_height
+    int updating_height = 0;
+    uint32_t new_height = current_height;
+    if (block->height == current_height) {
+        new_height = current_height + 1;
+        updating_height = 1;
+    }
     if (updating_height) {
         uint32_t height_be = htonl(new_height);
         rocksdb_writebatch_put(batch, "current_height", 14, (char *)&height_be, sizeof(height_be));
@@ -520,6 +622,25 @@ int mxd_store_block(const mxd_block_t *block) {
     // Update in-memory height after successful write
     if (updating_height) {
         current_height = new_height;
+        // Scan forward: blocks may have been stored out of order ahead of us
+        while (1) {
+            uint8_t probe_key[13 + sizeof(uint32_t)];
+            size_t probe_key_len;
+            create_block_height_key(current_height, probe_key, &probe_key_len);
+            size_t probe_len = 0;
+            char *probe = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(),
+                                      (char *)probe_key, probe_key_len, &probe_len, NULL);
+            if (probe) {
+                free(probe);
+                current_height++;
+                // Persist the new height
+                uint32_t h_be = htonl(current_height);
+                rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(),
+                            "current_height", 14, (char *)&h_be, sizeof(h_be), NULL);
+            } else {
+                break;
+            }
+        }
     }
 
     // Signatures stored separately (non-critical, can be re-fetched)
@@ -1163,6 +1284,35 @@ int mxd_serialize_block_for_network(const mxd_block_t *block, uint8_t **data, si
         return -1;
     }
     return serialize_block(block, data, data_len);
+}
+
+int mxd_block_exists_at_height(uint32_t height) {
+    if (!mxd_get_rocksdb_db()) return 0;
+    uint8_t key[13 + sizeof(uint32_t)];
+    size_t key_len;
+    create_block_height_key(height, key, &key_len);
+    size_t value_len = 0;
+    char *value = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(),
+                              (char *)key, key_len, &value_len, NULL);
+    if (value) {
+        free(value);
+        return 1;
+    }
+    return 0;
+}
+
+int mxd_fill_block_gaps(uint32_t *gaps, uint32_t max_gaps, uint32_t *gap_count) {
+    if (!gaps || !gap_count) return -1;
+    *gap_count = 0;
+    uint32_t height = 0;
+    if (mxd_get_blockchain_height(&height) != 0 || height == 0) return 0;
+    for (uint32_t h = 0; h < height && *gap_count < max_gaps; h++) {
+        if (!mxd_block_exists_at_height(h)) {
+            gaps[*gap_count] = h;
+            (*gap_count)++;
+        }
+    }
+    return 0;
 }
 
 const char *mxd_get_blockchain_db_path(void) {

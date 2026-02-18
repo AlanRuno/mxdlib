@@ -253,11 +253,15 @@ int mxd_stop_block_proposal(void) {
         if (proposer_state.current_block->validation_chain) {
             free(proposer_state.current_block->validation_chain);
         }
-        
+
         if (proposer_state.current_block->rapid_membership_entries) {
             free(proposer_state.current_block->rapid_membership_entries);
         }
-        
+
+        if (proposer_state.current_block->validator_scores) {
+            free(proposer_state.current_block->validator_scores);
+        }
+
         free(proposer_state.current_block);
         proposer_state.current_block = NULL;
     }

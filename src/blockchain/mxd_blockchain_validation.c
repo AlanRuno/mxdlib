@@ -244,4 +244,10 @@ void mxd_free_validation_chain(mxd_block_t *block) {
         block->rapid_membership_count = 0;
         block->rapid_membership_capacity = 0;
     }
+    if (block && block->validator_scores) {
+        free(block->validator_scores);
+        block->validator_scores = NULL;
+        block->validator_scores_count = 0;
+        block->validator_scores_capacity = 0;
+    }
 }

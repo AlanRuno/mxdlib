@@ -14,6 +14,7 @@
 #include "../../include/mxd_serialize.h"
 #include "../../include/mxd_validator_management.h"
 #include "../../include/mxd_block_proposer.h"
+#include "../../include/mxd_protocol_version.h"
 #include "../metrics/mxd_prometheus.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -342,7 +343,6 @@ int mxd_update_rapid_table(mxd_node_stake_t *nodes, size_t node_count, mxd_amoun
 
 int mxd_update_rapid_table_rankings(mxd_rapid_table_t *table) {
     if (!table || !table->nodes || table->count == 0) return -1;
-    mxd_compute_chain_scores(table);
     mxd_sort_rapid_table_by_score(table);
     return 0;
 }
@@ -1172,13 +1172,19 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
         // causing supply inflation via double-spend.
         mxd_apply_block_transactions(block);
 
-        mxd_store_block(block);
+        if (mxd_store_block(block) != 0) {
+            MXD_LOG_ERROR("rsc", "Failed to store relayed block at height %u", block->height);
+        }
 
         // Check for validator eviction after storing block
         mxd_check_proposer_miss((mxd_rapid_table_t *)table, block);
 
         // Update chain-derived deterministic scoring
-        mxd_accumulate_block_stats((mxd_rapid_table_t *)table, block);
+        if (block->version >= 4 && block->validator_scores) {
+            mxd_load_scores_from_block((mxd_rapid_table_t *)table, block);
+        } else {
+            mxd_accumulate_block_stats((mxd_rapid_table_t *)table, block);
+        }
         mxd_compute_chain_scores((mxd_rapid_table_t *)table);
         mxd_sort_rapid_table_by_score((mxd_rapid_table_t *)table);
 
@@ -1211,13 +1217,19 @@ int mxd_process_validation_chain(mxd_block_t *block, mxd_validation_context_t *c
             }
 
             mxd_apply_block_transactions(block);
-            mxd_store_block(block);
+            if (mxd_store_block(block) != 0) {
+                MXD_LOG_ERROR("rsc", "Failed to store validated block at height %u", block->height);
+            }
 
             // Check for validator eviction after storing block
             mxd_check_proposer_miss((mxd_rapid_table_t *)table, block);
 
             // Update chain-derived deterministic scoring
-            mxd_accumulate_block_stats((mxd_rapid_table_t *)table, block);
+            if (block->version >= 4 && block->validator_scores) {
+                mxd_load_scores_from_block((mxd_rapid_table_t *)table, block);
+            } else {
+                mxd_accumulate_block_stats((mxd_rapid_table_t *)table, block);
+            }
             mxd_compute_chain_scores((mxd_rapid_table_t *)table);
             mxd_sort_rapid_table_by_score((mxd_rapid_table_t *)table);
 
@@ -1545,19 +1557,36 @@ void mxd_accumulate_block_stats(mxd_rapid_table_t *table, const mxd_block_t *blo
 void mxd_compute_chain_scores(mxd_rapid_table_t *table) {
     if (!table || table->count == 0) return;
 
-    // Get total stake from UTXO state
+    // Check if we're in v4+ mode — if so, stake comes from on-chain data,
+    // skip the UTXO refresh to maintain determinism
+    mxd_network_type_t network = mxd_get_network_type();
+    uint32_t blockchain_height = 0;
+    mxd_get_blockchain_height(&blockchain_height);
+    uint32_t current_version = mxd_get_required_protocol_version(
+        blockchain_height > 0 ? blockchain_height - 1 : 0, network);
+    int is_v4 = (current_version >= 4);
+
+    // Get total stake from UTXO state (or sum on-chain stakes for v4+)
     mxd_amount_t total_stake = 0;
-    {
+    if (is_v4) {
+        // For v4+, total_stake = sum of all validator stake_amounts (already loaded from block)
+        for (size_t i = 0; i < table->count; i++) {
+            if (table->nodes[i]) {
+                total_stake += table->nodes[i]->stake_amount;
+            }
+        }
+        if (total_stake == 0) total_stake = 1;
+    } else {
         size_t tc, pc;
         if (mxd_get_utxo_stats(&tc, &pc, &total_stake) != 0 || total_stake == 0) {
             total_stake = 1; // Prevent division by zero
         }
-    }
 
-    // Refresh each validator's stake from current UTXO balance
-    for (size_t i = 0; i < table->count; i++) {
-        if (!table->nodes[i]) continue;
-        table->nodes[i]->stake_amount = mxd_get_balance(table->nodes[i]->node_address);
+        // Pre-v4: Refresh each validator's stake from current UTXO balance
+        for (size_t i = 0; i < table->count; i++) {
+            if (!table->nodes[i]) continue;
+            table->nodes[i]->stake_amount = mxd_get_balance(table->nodes[i]->node_address);
+        }
     }
 
     for (size_t i = 0; i < table->count; i++) {
@@ -1614,6 +1643,297 @@ void mxd_sort_rapid_table_by_score(mxd_rapid_table_t *table) {
     }
 }
 
+// Compare validator score entries by address (for deterministic sorting)
+static int compare_score_entry_by_address(const void *a, const void *b) {
+    const mxd_validator_score_entry_t *ea = (const mxd_validator_score_entry_t *)a;
+    const mxd_validator_score_entry_t *eb = (const mxd_validator_score_entry_t *)b;
+    return memcmp(ea->validator_address, eb->validator_address, 20);
+}
+
+// Compute validator score entries for a new block from the previous block's data + deltas.
+// prev_block: the block at height H-1 (scores reflect state after H-2)
+// table: current rapid table (for membership, used to get current validator set)
+// out_scores: receives allocated array of score entries for the new block
+// out_count: receives number of entries
+// Returns 0 on success, -1 on error.
+int mxd_compute_block_validator_scores(const mxd_block_t *prev_block,
+                                        const mxd_rapid_table_t *table,
+                                        mxd_validator_score_entry_t **out_scores,
+                                        uint32_t *out_count) {
+    if (!prev_block || !table || !out_scores || !out_count) {
+        return -1;
+    }
+
+    // Start from prev_block's validator_scores (or empty if pre-v4/genesis)
+    uint32_t base_count = 0;
+    mxd_validator_score_entry_t *base = NULL;
+    if (prev_block->version >= 4 && prev_block->validator_scores_count > 0 && prev_block->validator_scores) {
+        base_count = prev_block->validator_scores_count;
+        base = prev_block->validator_scores;
+    }
+
+    // Count new validators from prev_block's membership entries (not already in base)
+    uint32_t new_count = 0;
+    if (prev_block->rapid_membership_entries && prev_block->rapid_membership_count > 0) {
+        for (uint32_t m = 0; m < prev_block->rapid_membership_count; m++) {
+            int found = 0;
+            for (uint32_t j = 0; j < base_count; j++) {
+                if (memcmp(base[j].validator_address, prev_block->rapid_membership_entries[m].node_address, 20) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) new_count++;
+        }
+    }
+
+    uint32_t total = base_count + new_count;
+    if (total == 0) {
+        *out_scores = NULL;
+        *out_count = 0;
+        return 0;
+    }
+
+    mxd_validator_score_entry_t *scores = calloc(total, sizeof(mxd_validator_score_entry_t));
+    if (!scores) return -1;
+
+    // Copy base entries
+    if (base_count > 0) {
+        memcpy(scores, base, base_count * sizeof(mxd_validator_score_entry_t));
+    }
+
+    // Add new validators from prev_block's membership entries (initialized to zeros)
+    uint32_t idx = base_count;
+    if (prev_block->rapid_membership_entries && prev_block->rapid_membership_count > 0) {
+        for (uint32_t m = 0; m < prev_block->rapid_membership_count; m++) {
+            int found = 0;
+            for (uint32_t j = 0; j < base_count; j++) {
+                if (memcmp(base[j].validator_address, prev_block->rapid_membership_entries[m].node_address, 20) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found && idx < total) {
+                memset(&scores[idx], 0, sizeof(mxd_validator_score_entry_t));
+                memcpy(scores[idx].validator_address, prev_block->rapid_membership_entries[m].node_address, 20);
+                idx++;
+            }
+        }
+    }
+
+    // Apply deltas from prev_block (H-1):
+    // 1. All validators: blocks_since_joined++
+    for (uint32_t i = 0; i < total; i++) {
+        scores[i].blocks_since_joined++;
+    }
+
+    // 2. prev_block's proposer: blocks_proposed++
+    for (uint32_t i = 0; i < total; i++) {
+        if (memcmp(scores[i].validator_address, prev_block->proposer_id, 20) == 0) {
+            scores[i].blocks_proposed++;
+            break;
+        }
+    }
+
+    // 3. Each signer in prev_block's validation_chain: blocks_signed++, total_latency_ms += latency
+    if (prev_block->validation_chain && prev_block->validation_count > 0) {
+        for (uint32_t v = 0; v < prev_block->validation_count; v++) {
+            const mxd_validator_signature_t *sig = &prev_block->validation_chain[v];
+            for (uint32_t i = 0; i < total; i++) {
+                if (memcmp(scores[i].validator_address, sig->validator_id, 20) == 0) {
+                    scores[i].blocks_signed++;
+                    // Latency: sig->timestamp is NTP ms, prev_block->timestamp is seconds
+                    if (sig->timestamp > prev_block->timestamp * 1000) {
+                        scores[i].total_latency_ms += (sig->timestamp - prev_block->timestamp * 1000);
+                    } else if (sig->timestamp > prev_block->timestamp) {
+                        scores[i].total_latency_ms += (sig->timestamp - prev_block->timestamp);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // 4. Snapshot each validator's stake_amount from current UTXO balance
+    for (uint32_t i = 0; i < total; i++) {
+        scores[i].stake_amount = mxd_get_balance(scores[i].validator_address);
+    }
+
+    // 5. Sort entries by address for deterministic serialization
+    qsort(scores, total, sizeof(mxd_validator_score_entry_t), compare_score_entry_by_address);
+
+    *out_scores = scores;
+    *out_count = total;
+    return 0;
+}
+
+// Verify that a received block's validator scores match expected values
+// computed from the previous block. Called during validation.
+int mxd_verify_block_validator_scores(const mxd_block_t *block) {
+    if (!block || block->version < 4) {
+        return 0; // Nothing to verify for pre-v4 blocks
+    }
+
+    if (block->height == 0) {
+        // Genesis block: all entries should be zero-initialized for genesis validators
+        // We trust the scores root hash verification already done in mxd_validate_block
+        return 0;
+    }
+
+    // Retrieve previous block
+    mxd_block_t prev_block;
+    memset(&prev_block, 0, sizeof(prev_block));
+    if (mxd_retrieve_block_by_height(block->height - 1, &prev_block) != 0) {
+        MXD_LOG_ERROR("rsc", "Failed to retrieve previous block for score verification at height %u", block->height);
+        return -1;
+    }
+
+    // Compute expected scores
+    // Note: we need a temporary table for the computation, but we only use it for
+    // membership tracking. The actual score computation only needs the prev_block data.
+    mxd_validator_score_entry_t *expected_scores = NULL;
+    uint32_t expected_count = 0;
+
+    // Build expected scores from prev_block data
+    // Start from prev_block's scores
+    uint32_t base_count = 0;
+    mxd_validator_score_entry_t *base = NULL;
+    if (prev_block.version >= 4 && prev_block.validator_scores_count > 0 && prev_block.validator_scores) {
+        base_count = prev_block.validator_scores_count;
+        base = prev_block.validator_scores;
+    }
+
+    // Count new validators from prev_block's membership
+    uint32_t new_count = 0;
+    if (prev_block.rapid_membership_entries && prev_block.rapid_membership_count > 0) {
+        for (uint32_t m = 0; m < prev_block.rapid_membership_count; m++) {
+            int found = 0;
+            for (uint32_t j = 0; j < base_count; j++) {
+                if (memcmp(base[j].validator_address, prev_block.rapid_membership_entries[m].node_address, 20) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) new_count++;
+        }
+    }
+
+    expected_count = base_count + new_count;
+    if (expected_count != block->validator_scores_count) {
+        MXD_LOG_ERROR("rsc", "Score count mismatch at height %u: expected %u, got %u",
+                     block->height, expected_count, block->validator_scores_count);
+        mxd_free_block(&prev_block);
+        return -1;
+    }
+
+    if (expected_count == 0) {
+        mxd_free_block(&prev_block);
+        return 0;
+    }
+
+    expected_scores = calloc(expected_count, sizeof(mxd_validator_score_entry_t));
+    if (!expected_scores) {
+        mxd_free_block(&prev_block);
+        return -1;
+    }
+
+    // Copy base + add new entries
+    if (base_count > 0) {
+        memcpy(expected_scores, base, base_count * sizeof(mxd_validator_score_entry_t));
+    }
+    uint32_t idx = base_count;
+    if (prev_block.rapid_membership_entries && prev_block.rapid_membership_count > 0) {
+        for (uint32_t m = 0; m < prev_block.rapid_membership_count; m++) {
+            int found = 0;
+            for (uint32_t j = 0; j < base_count; j++) {
+                if (memcmp(base[j].validator_address, prev_block.rapid_membership_entries[m].node_address, 20) == 0) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found && idx < expected_count) {
+                memset(&expected_scores[idx], 0, sizeof(mxd_validator_score_entry_t));
+                memcpy(expected_scores[idx].validator_address, prev_block.rapid_membership_entries[m].node_address, 20);
+                idx++;
+            }
+        }
+    }
+
+    // Apply deltas from prev_block
+    for (uint32_t i = 0; i < expected_count; i++) {
+        expected_scores[i].blocks_since_joined++;
+    }
+    for (uint32_t i = 0; i < expected_count; i++) {
+        if (memcmp(expected_scores[i].validator_address, prev_block.proposer_id, 20) == 0) {
+            expected_scores[i].blocks_proposed++;
+            break;
+        }
+    }
+    if (prev_block.validation_chain && prev_block.validation_count > 0) {
+        for (uint32_t v = 0; v < prev_block.validation_count; v++) {
+            const mxd_validator_signature_t *sig = &prev_block.validation_chain[v];
+            for (uint32_t i = 0; i < expected_count; i++) {
+                if (memcmp(expected_scores[i].validator_address, sig->validator_id, 20) == 0) {
+                    expected_scores[i].blocks_signed++;
+                    if (sig->timestamp > prev_block.timestamp * 1000) {
+                        expected_scores[i].total_latency_ms += (sig->timestamp - prev_block.timestamp * 1000);
+                    } else if (sig->timestamp > prev_block.timestamp) {
+                        expected_scores[i].total_latency_ms += (sig->timestamp - prev_block.timestamp);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // Sort by address
+    qsort(expected_scores, expected_count, sizeof(mxd_validator_score_entry_t), compare_score_entry_by_address);
+
+    // Compare non-stake fields (stake is a snapshot — we verify the root hash covers it)
+    int match = 1;
+    for (uint32_t i = 0; i < expected_count && match; i++) {
+        if (memcmp(expected_scores[i].validator_address, block->validator_scores[i].validator_address, 20) != 0 ||
+            expected_scores[i].blocks_proposed != block->validator_scores[i].blocks_proposed ||
+            expected_scores[i].blocks_signed != block->validator_scores[i].blocks_signed ||
+            expected_scores[i].total_latency_ms != block->validator_scores[i].total_latency_ms ||
+            expected_scores[i].blocks_since_joined != block->validator_scores[i].blocks_since_joined) {
+            match = 0;
+        }
+    }
+
+    free(expected_scores);
+    mxd_free_block(&prev_block);
+
+    if (!match) {
+        MXD_LOG_ERROR("rsc", "Validator score values mismatch at height %u", block->height);
+        return -1;
+    }
+
+    return 0;
+}
+
+// Copy on-chain score entries into rapid table node structs.
+// Replaces mxd_accumulate_block_stats() for v4+ blocks.
+void mxd_load_scores_from_block(mxd_rapid_table_t *table, const mxd_block_t *block) {
+    if (!table || !block || !block->validator_scores || block->validator_scores_count == 0) {
+        return;
+    }
+
+    for (uint32_t s = 0; s < block->validator_scores_count; s++) {
+        const mxd_validator_score_entry_t *entry = &block->validator_scores[s];
+        for (size_t i = 0; i < table->count; i++) {
+            if (table->nodes[i] && memcmp(table->nodes[i]->node_address, entry->validator_address, 20) == 0) {
+                table->nodes[i]->stake_amount = entry->stake_amount;
+                table->nodes[i]->blocks_proposed = entry->blocks_proposed;
+                table->nodes[i]->blocks_signed = entry->blocks_signed;
+                table->nodes[i]->total_latency_ms = entry->total_latency_ms;
+                table->nodes[i]->blocks_since_joined = entry->blocks_since_joined;
+                break;
+            }
+        }
+    }
+}
+
 // Structure to preserve metrics during rebuild
 typedef struct {
     uint8_t node_address[20];
@@ -1655,19 +1975,29 @@ int mxd_rebuild_rapid_table_from_blockchain(mxd_rapid_table_t *table, uint32_t f
     for (uint32_t height = from_height; height <= to_height; height++) {
         mxd_block_t block;
         memset(&block, 0, sizeof(mxd_block_t));
-        
+
         if (mxd_retrieve_block_by_height(height, &block) != 0) {
             MXD_LOG_WARN("rsc", "Failed to retrieve block at height %u", height);
             continue;
         }
-        
+
         MXD_LOG_INFO("rsc", "Retrieved block at height %u: rapid_membership_count=%u, rapid_membership_entries=%p",
                      height, block.rapid_membership_count, (void*)block.rapid_membership_entries);
-        
+
         size_t count_before = table->count;
         mxd_apply_membership_deltas(table, &block, local_node_id);
         mxd_check_proposer_miss(table, &block);
-        mxd_accumulate_block_stats(table, &block);
+
+        // v4+ optimization: only load scores from the LAST block (cumulative data),
+        // skip intermediate v4 blocks since the last one's scores already reflect all history.
+        if (block.version >= 4 && block.validator_scores) {
+            if (height == to_height) {
+                mxd_load_scores_from_block(table, &block);
+            }
+            // else: skip score loading for intermediate v4 blocks
+        } else {
+            mxd_accumulate_block_stats(table, &block);
+        }
         MXD_LOG_INFO("rsc", "After applying deltas from height %u: table count %zu -> %zu (local_node_id=%s)",
                      height, count_before, table->count, local_node_id ? local_node_id : "NULL");
 
@@ -2800,7 +3130,28 @@ int mxd_try_coordinate_genesis_block(void) {
                 successful_mints,
                 genesis_validator_count,
                 (unsigned long long)initial_stake);
-    
+
+    // For v4+ genesis: create zero-initialized score entries for all genesis validators
+    if (genesis_block.version >= 4 && genesis_sig_count > 0) {
+        genesis_block.validator_scores = calloc(genesis_sig_count, sizeof(mxd_validator_score_entry_t));
+        if (genesis_block.validator_scores) {
+            genesis_block.validator_scores_count = (uint32_t)genesis_sig_count;
+            genesis_block.validator_scores_capacity = (uint32_t)genesis_sig_count;
+            for (size_t i = 0; i < genesis_sig_count; i++) {
+                memcpy(genesis_block.validator_scores[i].validator_address,
+                       genesis_sigs[i].node_address, 20);
+                genesis_block.validator_scores[i].stake_amount =
+                    mxd_get_balance(genesis_sigs[i].node_address);
+                // All other fields are zero (calloc)
+            }
+            // Sort by address for deterministic serialization
+            qsort(genesis_block.validator_scores, genesis_block.validator_scores_count,
+                  sizeof(mxd_validator_score_entry_t), compare_score_entry_by_address);
+            MXD_LOG_INFO("rsc", "Created %u zero-initialized v4 score entries for genesis",
+                        genesis_block.validator_scores_count);
+        }
+    }
+
     if (mxd_freeze_transaction_set(&genesis_block) != 0) {
         MXD_LOG_ERROR("rsc", "Failed to freeze genesis block transaction set");
         genesis_creation_attempted = 0;
@@ -3142,6 +3493,30 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
 
     // Check if block should be closed
     if (current_block && mxd_should_close_block()) {
+        // For v4+ blocks, compute and embed validator scores before freeze
+        if (current_block->version >= 4 && !current_block->validator_scores) {
+            mxd_block_t prev_block;
+            memset(&prev_block, 0, sizeof(prev_block));
+            if (mxd_retrieve_block_by_height(current_block->height - 1, &prev_block) == 0) {
+                mxd_validator_score_entry_t *scores = NULL;
+                uint32_t score_count = 0;
+                if (mxd_compute_block_validator_scores(&prev_block, table, &scores, &score_count) == 0) {
+                    current_block->validator_scores = scores;
+                    current_block->validator_scores_count = score_count;
+                    current_block->validator_scores_capacity = score_count;
+                    MXD_LOG_INFO("rsc", "Embedded %u validator score entries in block %u",
+                                score_count, current_block->height);
+                } else {
+                    MXD_LOG_ERROR("rsc", "Failed to compute validator scores for block %u",
+                                 current_block->height);
+                }
+                mxd_free_block(&prev_block);
+            } else {
+                MXD_LOG_ERROR("rsc", "Failed to retrieve prev block for score computation at height %u",
+                             current_block->height);
+            }
+        }
+
         if (mxd_close_block() != 0) {
             MXD_LOG_ERROR("rsc", "Failed to close block");
             return -1;
@@ -3204,7 +3579,11 @@ int mxd_consensus_tick(mxd_rapid_table_t *table, const uint8_t *local_address,
         }
 
         // Update chain-derived deterministic scoring after block finalization
-        mxd_accumulate_block_stats((mxd_rapid_table_t *)table, current_block);
+        if (current_block->version >= 4 && current_block->validator_scores) {
+            mxd_load_scores_from_block((mxd_rapid_table_t *)table, current_block);
+        } else {
+            mxd_accumulate_block_stats((mxd_rapid_table_t *)table, current_block);
+        }
         mxd_compute_chain_scores((mxd_rapid_table_t *)table);
         mxd_sort_rapid_table_by_score((mxd_rapid_table_t *)table);
 
