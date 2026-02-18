@@ -502,17 +502,20 @@ int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta
             }
         }
 
-        // Compute this transaction's supply delta purely from block data.
-        // Non-coinbase txs are always supply-neutral by definition:
-        //   sum(outputs) + voluntary_tip == sum(inputs)
-        // so their delta is 0 — no need to look up input UTXOs.
-        // Only coinbase txs create new supply (delta = sum of outputs).
-        // This avoids depending on UTXO database state, which varies
-        // across nodes and across repeated calls on the same node.
+        // Compute supply delta purely from block data (no UTXO lookups).
+        // Coinbase txs create new supply: delta = +sum(outputs).
+        // Non-coinbase txs with voluntary tips: the tip is deducted from
+        // outputs (outputs = inputs - tip) but redistributed as a separate
+        // coinbase tx. To avoid double-counting, subtract the tip here:
+        //   non-coinbase delta = -voluntary_tip
+        //   tip-redistribution coinbase delta = +tip
+        //   net = 0 (supply-neutral, correct)
         if (tx.is_coinbase) {
             for (uint32_t j = 0; j < tx.output_count; j++) {
                 delta += (int64_t)tx.outputs[j].amount;
             }
+        } else if (tx.voluntary_tip > 0) {
+            delta -= (int64_t)tx.voluntary_tip;
         }
 
         // Apply the transaction to UTXO state
