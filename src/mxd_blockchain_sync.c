@@ -485,6 +485,10 @@ int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta
             }
         }
 
+        // Always accumulate delta from block data — this is deterministic
+        // regardless of whether UTXOs were already applied (proposer case)
+        delta += tx_output_sum - tx_input_sum;
+
         // Apply the transaction to UTXO state
         // Distinguish IO errors (must halt) from spent inputs (skip)
         int ret = mxd_apply_transaction_to_utxo(&tx);
@@ -495,13 +499,8 @@ int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta
             return MXD_ERR_IO;  // HALT - caller must stop
         }
         if (ret != 0) {
-            MXD_LOG_WARN("sync", "Skipping transaction %u (inputs already spent or invalid)", i);
-            mxd_free_transaction(&tx);
-            continue;  // SKIP - don't count delta for skipped transactions
+            MXD_LOG_DEBUG("sync", "Transaction %u already applied (inputs spent), UTXO skip ok", i);
         }
-
-        // Transaction applied successfully — accumulate its delta
-        delta += tx_output_sum - tx_input_sum;
 
         mxd_free_transaction(&tx);
         continue;
