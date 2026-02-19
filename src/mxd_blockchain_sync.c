@@ -320,7 +320,17 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
         MXD_LOG_WARN("sync", "No peers available to request blocks");
         return NULL;
     }
-    
+
+    // Shuffle connected peers to avoid always trying the same (potentially
+    // stuck) peers first. With N healthy peers out of total, random order
+    // reaches a healthy peer in ~total/N tries on average.
+    for (size_t i = peer_count - 1; i > 0; i--) {
+        size_t j = rand() % (i + 1);
+        mxd_peer_t tmp = peers[i];
+        peers[i] = peers[j];
+        peers[j] = tmp;
+    }
+
     uint32_t count = end_height - start_height + 1;
     mxd_block_t *blocks = calloc(count, sizeof(mxd_block_t));
     if (!blocks) {
