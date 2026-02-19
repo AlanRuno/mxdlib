@@ -40,44 +40,35 @@ static uint32_t mxd_discover_network_height(void) {
         return 0;
     }
 
-    MXD_LOG_INFO("sync", "Discovering network height from %zu peers", peer_count);
+    MXD_LOG_DEBUG("sync", "Discovering network height from %zu peers", peer_count);
 
-    // Count peers by state for debugging
-    int connected_count = 0;
-    int other_count = 0;
-    for (size_t i = 0; i < peer_count; i++) {
-        if (peers[i].state == MXD_PEER_CONNECTED) {
-            connected_count++;
-        } else {
-            other_count++;
-            // Log first few non-connected peers for debugging
-            if (other_count <= 3) {
-                MXD_LOG_INFO("sync", "Peer %s:%u has state=%d (not CONNECTED=%d)",
-                             peers[i].address, peers[i].port, peers[i].state, MXD_PEER_CONNECTED);
-            }
-        }
+    // Shuffle peers to avoid always querying the same ones first.
+    // If the first N peers happen to be other syncing nodes, we'd get
+    // a low network height and never trigger sync.
+    for (size_t i = peer_count - 1; i > 0; i--) {
+        size_t j = rand() % (i + 1);
+        mxd_peer_t tmp = peers[i];
+        peers[i] = peers[j];
+        peers[j] = tmp;
     }
-    MXD_LOG_INFO("sync", "Peer states: %d connected, %d other", connected_count, other_count);
 
     uint32_t max_height = 0;
     int queried = 0;
-    for (size_t i = 0; i < peer_count && queried < 3; i++) {
+    for (size_t i = 0; i < peer_count && queried < 5; i++) {
         if (peers[i].state == MXD_PEER_CONNECTED) {
             uint32_t peer_height = 0;
-            MXD_LOG_INFO("sync", "Querying peer %s:%u for height", peers[i].address, peers[i].port);
             if (mxd_request_peer_height(peers[i].address, peers[i].port, &peer_height) == 0) {
-                MXD_LOG_INFO("sync", "Peer %s:%u reports height=%u", peers[i].address, peers[i].port, peer_height);
+                MXD_LOG_DEBUG("sync", "Peer %s:%u reports height=%u",
+                             peers[i].address, peers[i].port, peer_height);
                 queried++;
                 if (peer_height > max_height) {
                     max_height = peer_height;
                 }
-            } else {
-                MXD_LOG_WARN("sync", "Failed to get height from peer %s:%u", peers[i].address, peers[i].port);
             }
         }
     }
 
-    MXD_LOG_INFO("sync", "Network height discovery complete: queried=%d, max_height=%u", queried, max_height);
+    MXD_LOG_INFO("sync", "Network height: queried=%d, max=%u", queried, max_height);
     return max_height;
 }
 
@@ -898,6 +889,14 @@ int mxd_pull_missing_blocks(void) {
     size_t peer_count = MXD_MAX_PEERS;
     if (mxd_get_peers(peers, &peer_count) != 0 || peer_count == 0) {
         return 0;  // No peers, nothing to do
+    }
+
+    // Shuffle peers to avoid always hitting syncing peers first
+    for (size_t i = peer_count - 1; i > 0; i--) {
+        size_t j = rand() % (i + 1);
+        mxd_peer_t tmp = peers[i];
+        peers[i] = peers[j];
+        peers[j] = tmp;
     }
 
     // Find the maximum height among all peers
