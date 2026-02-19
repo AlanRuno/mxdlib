@@ -128,6 +128,8 @@ static int mxd_request_peer_height(const char *address, uint16_t port, uint32_t 
 static mxd_block_t *pending_blocks = NULL;
 static volatile uint32_t pending_blocks_received = 0;
 static volatile uint32_t pending_blocks_expected = 0;
+static volatile uint32_t pending_blocks_start_height = 0;
+static volatile uint32_t pending_blocks_end_height = 0;
 
 // Forward declaration for deserializing blocks from database format
 extern int mxd_deserialize_block_from_network(const uint8_t *data, size_t data_len, mxd_block_t *block);
@@ -286,19 +288,39 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
     // deserializations into the same memory from duplicate responses.
     if (pending_blocks_received >= pending_blocks_expected) return;
 
-    // Deserialize block from received data (for requested blocks)
-    // Use the full network deserializer to capture ALL fields including
-    // v4 validator scores, validation chain, membership entries, etc.
-    mxd_block_t *block = &pending_blocks[block_index];
+    // Deserialize into a temporary block first to validate height
+    mxd_block_t temp_block;
+    memset(&temp_block, 0, sizeof(temp_block));
 
-    if (mxd_deserialize_block_from_network(data, data_len, block) != 0) {
+    if (mxd_deserialize_block_from_network(data, data_len, &temp_block) != 0) {
         MXD_LOG_ERROR("sync", "Failed to deserialize requested block %u", block_index);
         return;
     }
 
+    // CRITICAL: Verify the received block's height matches what we requested.
+    // Without this check, broadcast blocks from the chain tip can fill
+    // pending_blocks[0] during a sync request, causing the requested block
+    // to be permanently missed (creating a gap in the chain).
+    if (temp_block.height < pending_blocks_start_height ||
+        temp_block.height > pending_blocks_end_height) {
+        MXD_LOG_DEBUG("sync", "Received block height %u but expected %u-%u, routing to unsolicited handler",
+                      temp_block.height, pending_blocks_start_height, pending_blocks_end_height);
+        mxd_free_block(&temp_block);
+        // Re-process as unsolicited block by temporarily clearing pending_blocks
+        mxd_block_t *saved = pending_blocks;
+        pending_blocks = NULL;
+        mxd_handle_blocks_response(data, data_len, 0);
+        pending_blocks = saved;
+        return;
+    }
+
+    // Height matches — copy into pending_blocks slot
+    memcpy(&pending_blocks[block_index], &temp_block, sizeof(mxd_block_t));
+    // Don't free temp_block — its memory is now owned by pending_blocks[block_index]
+
     pending_blocks_received++;
     MXD_LOG_DEBUG("sync", "Received block %u (height %u, scores=%u)",
-                  block_index, block->height, block->validator_scores_count);
+                  block_index, temp_block.height, temp_block.validator_scores_count);
 }
 
 static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_t end_height, size_t *block_count) {
@@ -333,6 +355,8 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
     pending_blocks = blocks;
     pending_blocks_received = 0;
     pending_blocks_expected = count;
+    pending_blocks_start_height = start_height;
+    pending_blocks_end_height = end_height;
 
     // Try peers one at a time with a short timeout per peer.
     // CRITICAL: Do NOT send to ALL peers simultaneously — multiple peers
