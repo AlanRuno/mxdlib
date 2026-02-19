@@ -549,6 +549,12 @@ static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
     // leaving the rest as zeroed structs that fail validation (version=0).
     int synced = 0;
     for (uint32_t h = start_height; h <= end_height; h++) {
+        // Skip blocks we already have in the DB
+        if (mxd_block_exists_at_height(h)) {
+            synced++;
+            continue;
+        }
+
         size_t block_count = 0;
         mxd_block_t *blocks = mxd_request_blocks_from_peers(h, h, &block_count);
         if (!blocks) {
@@ -625,11 +631,15 @@ static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
 }
 
 int mxd_sync_blockchain(void) {
+    // Advance current_height through blocks already in the DB from previous
+    // sync passes. This avoids re-requesting blocks we already have.
+    mxd_advance_height_pointer();
+
     uint32_t local_height = 0;
     if (mxd_get_blockchain_height(&local_height) != 0) {
         local_height = 0;
     }
-    
+
     uint32_t network_height = mxd_discover_network_height();
     if (network_height <= local_height) {
         MXD_LOG_INFO("sync", "Already synced (local: %u, network: %u)", local_height, network_height);
@@ -861,6 +871,9 @@ int mxd_prune_expired_validation_chains(uint32_t current_height) {
 // Pull-based sync fallback - actively request missing blocks from peers
 // This is called periodically to catch blocks that failed to broadcast
 int mxd_pull_missing_blocks(void) {
+    // Advance height through any blocks already in DB
+    mxd_advance_height_pointer();
+
     uint32_t local_height = 0;
     if (mxd_get_blockchain_height(&local_height) != 0) {
         local_height = 0;

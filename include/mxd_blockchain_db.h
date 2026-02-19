@@ -56,6 +56,10 @@ int mxd_block_exists_at_height(uint32_t height);
 
 int mxd_fill_block_gaps(uint32_t *gaps, uint32_t max_gaps, uint32_t *gap_count);
 
+// Advance current_height through any contiguous blocks already in the DB.
+// Call before sync to avoid re-requesting blocks we already have.
+void mxd_advance_height_pointer(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1319,6 +1319,32 @@ int mxd_fill_block_gaps(uint32_t *gaps, uint32_t max_gaps, uint32_t *gap_count) 
     return 0;
 }
 
+void mxd_advance_height_pointer(void) {
+    if (!mxd_get_rocksdb_db()) return;
+    uint32_t start = current_height;
+    while (1) {
+        uint8_t probe_key[13 + sizeof(uint32_t)];
+        size_t probe_key_len;
+        create_block_height_key(current_height, probe_key, &probe_key_len);
+        size_t probe_len = 0;
+        char *probe = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(),
+                                  (char *)probe_key, probe_key_len, &probe_len, NULL);
+        if (probe) {
+            free(probe);
+            current_height++;
+            uint32_t h_be = htonl(current_height);
+            rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(),
+                        "current_height", 14, (char *)&h_be, sizeof(h_be), NULL);
+        } else {
+            break;
+        }
+    }
+    if (current_height > start) {
+        MXD_LOG_INFO("db", "Advanced height pointer from %u to %u (%u blocks)",
+                     start, current_height, current_height - start);
+    }
+}
+
 const char *mxd_get_blockchain_db_path(void) {
     return db_path_global;
 }
