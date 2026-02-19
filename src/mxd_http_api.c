@@ -1208,11 +1208,17 @@ static enum MHD_Result handle_request(void *cls,
                 avg_block_time, current_tps);
         }
     }
-    // Handle /block/{height} endpoint
+    // Handle /block/{height} or /block/latest endpoint
     else if (strncmp(url, "/block/", 7) == 0) {
         const char *height_str = url + 7;
-        uint32_t height = (uint32_t)atoi(height_str);
-        
+        uint32_t height;
+        if (strcmp(height_str, "latest") == 0) {
+            mxd_get_blockchain_height(&height);
+            if (height > 0) height--;  // current_height is count, latest block is at count-1
+        } else {
+            height = (uint32_t)atoi(height_str);
+        }
+
         mxd_block_t block;
         if (mxd_retrieve_block_by_height(height, &block) == 0) {
             json_response = block_to_json(&block);

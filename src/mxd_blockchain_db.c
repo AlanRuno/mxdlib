@@ -622,24 +622,28 @@ int mxd_store_block(const mxd_block_t *block) {
     // Update in-memory height after successful write
     if (updating_height) {
         current_height = new_height;
-        // Scan forward: blocks may have been stored out of order ahead of us
-        while (1) {
-            uint8_t probe_key[13 + sizeof(uint32_t)];
-            size_t probe_key_len;
-            create_block_height_key(current_height, probe_key, &probe_key_len);
-            size_t probe_len = 0;
-            char *probe = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(),
-                                      (char *)probe_key, probe_key_len, &probe_len, NULL);
-            if (probe) {
-                free(probe);
-                current_height++;
-                // Persist the new height
-                uint32_t h_be = htonl(current_height);
-                rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(),
-                            "current_height", 14, (char *)&h_be, sizeof(h_be), NULL);
-            } else {
-                break;
-            }
+    }
+
+    // Always scan forward: advance height through any contiguous blocks.
+    // This handles both normal sequential stores AND out-of-order gap fills
+    // where a previously missing block is finally stored, unblocking the
+    // entire range of blocks that were already stored beyond the gap.
+    while (1) {
+        uint8_t probe_key[13 + sizeof(uint32_t)];
+        size_t probe_key_len;
+        create_block_height_key(current_height, probe_key, &probe_key_len);
+        size_t probe_len = 0;
+        char *probe = rocksdb_get(mxd_get_rocksdb_db(), mxd_get_rocksdb_readoptions(),
+                                  (char *)probe_key, probe_key_len, &probe_len, NULL);
+        if (probe) {
+            free(probe);
+            current_height++;
+            // Persist the new height
+            uint32_t h_be = htonl(current_height);
+            rocksdb_put(mxd_get_rocksdb_db(), mxd_get_rocksdb_writeoptions(),
+                        "current_height", 14, (char *)&h_be, sizeof(h_be), NULL);
+        } else {
+            break;
         }
     }
 

@@ -577,10 +577,11 @@ static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
         }
 
         int64_t supply_delta = 0;
+        int tx_apply_failed = 0;
         if (mxd_apply_block_transactions(block, &supply_delta) != 0) {
-            MXD_LOG_ERROR("sync", "Failed to apply transactions at height %u", h);
-            free(blocks);
-            continue;
+            MXD_LOG_WARN("sync", "Failed to apply transactions at height %u, storing block anyway", h);
+            tx_apply_failed = 1;
+            supply_delta = 0;
         }
 
         // Compute total_supply deterministically from previous block + delta
@@ -595,6 +596,9 @@ static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
             block->total_supply = (uint64_t)supply_delta;
         }
 
+        // Always store the block even if tx apply failed — the block is
+        // consensus-valid and not storing it creates a permanent gap that
+        // prevents current_height from ever advancing past this point.
         if (mxd_store_block(block) != 0) {
             MXD_LOG_ERROR("sync", "Failed to store block at height %u", h);
             free(blocks);
