@@ -549,6 +549,10 @@ int mxd_apply_block_transactions(const mxd_block_t *block, int64_t *supply_delta
 }
 
 static int mxd_sync_block_range(uint32_t start_height, uint32_t end_height) {
+    // Advance height pointer first — blocks may have been stored out of
+    // order by the unsolicited handler while we were syncing other ranges.
+    mxd_advance_height_pointer();
+
     // Sync one block at a time to avoid partial-range failures.
     // The range request mechanism can receive fewer blocks than requested,
     // leaving the rest as zeroed structs that fail validation (version=0).
