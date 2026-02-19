@@ -325,11 +325,13 @@ int mxd_clear_processed_requests(const mxd_block_t *block) {
     size_t new_count = 0;
     for (size_t i = 0; i < g_request_pool.join_count; i++) {
         int found = 0;
-        for (uint32_t j = 0; j < block->rapid_membership_count; j++) {
-            if (memcmp(g_request_pool.join_requests[i].node_address,
-                      block->rapid_membership_entries[j].node_address, 20) == 0) {
-                found = 1;
-                break;
+        if (block->rapid_membership_entries) {
+            for (uint32_t j = 0; j < block->rapid_membership_count; j++) {
+                if (memcmp(g_request_pool.join_requests[i].node_address,
+                          block->rapid_membership_entries[j].node_address, 20) == 0) {
+                    found = 1;
+                    break;
+                }
             }
         }
 

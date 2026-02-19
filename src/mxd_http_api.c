@@ -318,7 +318,7 @@ static char* handle_validators(int *status_code) {
 
     int offset = snprintf(response, buf_size, "{\"count\":%u,\"validators\":[", genesis.rapid_membership_count);
 
-    for (uint32_t i = 0; i < genesis.rapid_membership_count; i++) {
+    for (uint32_t i = 0; i < genesis.rapid_membership_count && genesis.rapid_membership_entries; i++) {
         mxd_rapid_membership_entry_t *entry = &genesis.rapid_membership_entries[i];
 
         // Convert address to hex

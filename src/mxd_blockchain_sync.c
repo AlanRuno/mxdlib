@@ -291,6 +291,10 @@ void mxd_handle_blocks_response(const uint8_t *data, size_t data_len, uint32_t b
     
     if (block_index >= pending_blocks_expected) return;
 
+    // Guard: only accept one response per slot to prevent concurrent
+    // deserializations into the same memory from duplicate responses.
+    if (pending_blocks_received >= pending_blocks_expected) return;
+
     // Deserialize block from received data (for requested blocks)
     // Use the full network deserializer to capture ALL fields including
     // v4 validator scores, validation chain, membership entries, etc.
@@ -328,51 +332,47 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
     pending_blocks = blocks;
     pending_blocks_received = 0;
     pending_blocks_expected = count;
-    
-    // Send request to ALL connected peers (not just one).
-    // Peers that don't have the block won't respond, causing a 30s timeout
-    // if only one peer was queried. By asking all peers, any healthy peer
-    // that has the block will respond quickly and fill pending_blocks.
-    int request_sent = 0;
-    for (size_t i = 0; i < peer_count; i++) {
-        if (peers[i].state == MXD_PEER_CONNECTED) {
-            uint8_t request[8];
-            uint8_t *ptr = request;
-            mxd_write_u32_be(&ptr, start_height);
-            mxd_write_u32_be(&ptr, end_height);
 
-            if (mxd_send_message_with_retry(peers[i].address, peers[i].port,
-                                           MXD_MSG_GET_BLOCKS, request, sizeof(request), 1) == 0) {
-                request_sent++;
-            }
+    // Try peers one at a time with a short timeout per peer.
+    // CRITICAL: Do NOT send to ALL peers simultaneously — multiple peers
+    // responding concurrently causes race conditions in the callback
+    // (concurrent deserializations into the same pending_blocks memory,
+    // and duplicate blocks flooding the unsolicited handler after timeout).
+    int got_response = 0;
+    for (size_t i = 0; i < peer_count && !got_response; i++) {
+        if (peers[i].state != MXD_PEER_CONNECTED) continue;
+
+        uint8_t request[8];
+        uint8_t *ptr = request;
+        mxd_write_u32_be(&ptr, start_height);
+        mxd_write_u32_be(&ptr, end_height);
+
+        if (mxd_send_message_with_retry(peers[i].address, peers[i].port,
+                                       MXD_MSG_GET_BLOCKS, request, sizeof(request), 1) != 0) {
+            continue;
         }
+
+        // Wait up to 3 seconds for this peer to respond
+        int wait_ms = 0;
+        while (pending_blocks_received < count && wait_ms < 3000) {
+            struct timespec ts = {0, 100000000}; // 100ms
+            nanosleep(&ts, NULL);
+            wait_ms += 100;
+        }
+
+        if (pending_blocks_received >= count) {
+            got_response = 1;
+        }
+        // else: this peer didn't respond in time, try next peer
     }
 
-    if (!request_sent) {
-        MXD_LOG_ERROR("sync", "Failed to send block request to any peer");
-        free(blocks);
-        pending_blocks = NULL;
-        return NULL;
-    }
-
-    // Wait for blocks with timeout. Since we asked all peers, a response
-    // should arrive quickly from any peer that has the block. Use a shorter
-    // timeout (5s) since we don't need to wait for a single slow peer.
-    int wait_ms = 0;
-    int timeout_ms = 5000;
-    while (pending_blocks_received < count && wait_ms < timeout_ms) {
-        struct timespec ts = {0, 100000000}; // 100ms
-        nanosleep(&ts, NULL);
-        wait_ms += 100;
-    }
-    
     pending_blocks = NULL;
-    
+
     if (pending_blocks_received < count) {
-        MXD_LOG_WARN("sync", "Only received %u of %u blocks", pending_blocks_received, count);
-        // Still return what we got - caller will validate
+        MXD_LOG_WARN("sync", "Only received %u of %u blocks after trying all peers",
+                     pending_blocks_received, count);
     }
-    
+
     *block_count = count;
     return blocks;
 }

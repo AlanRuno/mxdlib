@@ -742,9 +742,11 @@ int mxd_append_membership_entry(mxd_block_t *block, const uint8_t node_address[2
   }
   
   // Check for duplicate address
-  for (uint32_t i = 0; i < block->rapid_membership_count; i++) {
-    if (memcmp(block->rapid_membership_entries[i].node_address, node_address, 20) == 0) {
-      return -1; // Duplicate entry
+  if (block->rapid_membership_entries) {
+    for (uint32_t i = 0; i < block->rapid_membership_count; i++) {
+      if (memcmp(block->rapid_membership_entries[i].node_address, node_address, 20) == 0) {
+        return -1; // Duplicate entry
+      }
     }
   }
   
