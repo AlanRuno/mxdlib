@@ -352,9 +352,11 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
             continue;
         }
 
-        // Wait up to 3 seconds for this peer to respond
+        // Wait up to 1.5 seconds for this peer to respond.
+        // Short timeout so we quickly move to the next peer if this one
+        // is syncing itself (doesn't have the block).
         int wait_ms = 0;
-        while (pending_blocks_received < count && wait_ms < 3000) {
+        while (pending_blocks_received < count && wait_ms < 1500) {
             struct timespec ts = {0, 100000000}; // 100ms
             nanosleep(&ts, NULL);
             wait_ms += 100;
