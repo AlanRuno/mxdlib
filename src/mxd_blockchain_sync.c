@@ -329,35 +329,37 @@ static mxd_block_t* mxd_request_blocks_from_peers(uint32_t start_height, uint32_
     pending_blocks_received = 0;
     pending_blocks_expected = count;
     
-    // Try to request blocks from connected peers
+    // Send request to ALL connected peers (not just one).
+    // Peers that don't have the block won't respond, causing a 30s timeout
+    // if only one peer was queried. By asking all peers, any healthy peer
+    // that has the block will respond quickly and fill pending_blocks.
     int request_sent = 0;
-    for (size_t i = 0; i < peer_count && i < 3; i++) {
+    for (size_t i = 0; i < peer_count; i++) {
         if (peers[i].state == MXD_PEER_CONNECTED) {
             uint8_t request[8];
             uint8_t *ptr = request;
             mxd_write_u32_be(&ptr, start_height);
             mxd_write_u32_be(&ptr, end_height);
-            
-            if (mxd_send_message_with_retry(peers[i].address, peers[i].port, 
-                                           MXD_MSG_GET_BLOCKS, request, sizeof(request), 2) == 0) {
-                MXD_LOG_DEBUG("sync", "Requested blocks %u-%u from peer %s:%u", 
-                             start_height, end_height, peers[i].address, peers[i].port);
-                request_sent = 1;
-                break;
+
+            if (mxd_send_message_with_retry(peers[i].address, peers[i].port,
+                                           MXD_MSG_GET_BLOCKS, request, sizeof(request), 1) == 0) {
+                request_sent++;
             }
         }
     }
-    
+
     if (!request_sent) {
         MXD_LOG_ERROR("sync", "Failed to send block request to any peer");
         free(blocks);
         pending_blocks = NULL;
         return NULL;
     }
-    
-    // Wait for blocks with timeout (up to 30 seconds for large ranges)
+
+    // Wait for blocks with timeout. Since we asked all peers, a response
+    // should arrive quickly from any peer that has the block. Use a shorter
+    // timeout (5s) since we don't need to wait for a single slow peer.
     int wait_ms = 0;
-    int timeout_ms = 30000;
+    int timeout_ms = 5000;
     while (pending_blocks_received < count && wait_ms < timeout_ms) {
         struct timespec ts = {0, 100000000}; // 100ms
         nanosleep(&ts, NULL);
